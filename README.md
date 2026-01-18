@@ -114,6 +114,25 @@ Workersへのリクエスト例（Pythonから送信）:
 
 `INBOX_JSON_URL`/`TASKS_JSON_URL`/`DAILY_LOG_UPSERT_URL` はWorkersのURLをセットしてください。
 
+## まず最初に必ずやる設定（初心者向け）
+
+> **この項目を終えてから** 次の「セットアップ手順（概要）」に進んでください。
+
+1. **Notionの統合（Integration）を作成**
+   - Notionの「設定とメンバー」→「インテグレーション」→「新規作成」。
+   - 生成された **Internal Integration Token** を控える（後で `NOTION_TOKEN` として使います）。
+2. **Notionデータベースを共有**
+   - `Inbox / Tasks / Daily_Log` の各DBを開き、右上の「共有」から **作成したIntegrationを招待**。
+   - これをしないとNotion APIがDBを読めません。
+3. **Notion DB ID を取得**
+   - 各DBのURLを開き、URL内の長いIDを控える（`INBOX_DB_ID` / `TASK_DB_ID` / `DAILY_LOG_DB_ID`）。
+4. **メール送信に使うGmailアプリパスワードを作成**
+   - Googleアカウントで **2段階認証を有効化** → アプリパスワードを生成。
+   - 生成したパスワードを控える（後で `GMAIL_APP_PASSWORD` として使います）。
+5. **Cloudflare WorkersのURLを確認**
+   - Workersをデプロイ後、 `/api/inbox` などにアクセスできるURLを控える。
+   - 後で `INBOX_JSON_URL` / `TASKS_JSON_URL` / `DAILY_LOG_UPSERT_URL` に使います。
+
 ## セットアップ手順（概要）
 
 1. **Workersデプロイ**
