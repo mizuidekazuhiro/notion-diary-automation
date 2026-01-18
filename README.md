@@ -1,1 +1,128 @@
 # notion-diary-automation
+
+Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub Actions で構築するためのリポジトリです。
+
+## 構成
+
+- **Cloudflare Workers (TypeScript)**: Notion APIの問い合わせ、DBスキーマ検証、Daily_LogのUpsert。
+- **Python**: Workers経由でInbox/Tasksを取得 → メール送信 → Daily_Log Upsert。
+- **GitHub Actions**: JST 07:00 でジョブ実行（UTC 22:00）。
+
+## Notion DBの必須プロパティ
+
+### Tasks DB (`TASK_DB_ID`)
+
+- `Status` (select) : 値 `Do` が存在すること
+- `Since Do` (date)
+- `Priority` (select)
+- `Someday` (checkbox)
+- `Title` (title)
+
+### Inbox DB (`INBOX_DB_ID`)
+
+- `Title` (title)
+
+### Daily_Log DB (`DAILY_LOG_DB_ID`)
+
+> **プロパティ名は完全一致で固定です**。
+
+- `Title` (title)
+- `Target Date` (date) ← **Upsert判定キー**
+- `Activity Summary` (rich_text)
+- `Diary` (rich_text)
+- `Expenses total` (number)
+- `Location summary` (rich_text)
+- `Meal summary` (rich_text)
+- `Mail ID` (rich_text)
+- `Mood` (select)
+- `Notes` (rich_text)
+- `Source` (select)
+- `Weight` (number)
+
+MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
+
+## セキュリティ設計（2段階更新）
+
+- **GET `/confirm/...`**: 確認のみ（更新禁止）
+- **POST `/execute/...`**: 更新実行のみ
+
+メールのリンクが自動踏みされる可能性があるため、更新は必ずPOSTでのみ実行します。
+
+## Cloudflare Workers
+
+### Secrets
+
+Workers環境変数（Secrets）に以下を設定します。
+
+- `NOTION_TOKEN`
+- `INBOX_DB_ID`
+- `TASK_DB_ID`
+- `DAILY_LOG_DB_ID`
+- `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
+
+> **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
+
+### エンドポイント
+
+| Method | Path | 説明 |
+| --- | --- | --- |
+| GET | `/api/inbox` | Inbox DB の一覧取得 |
+| GET | `/api/tasks` | Tasks DB の Status = "Do" と Someday = true を取得 |
+|  |  | ※Someday = true のタスクは `confirm_promote_url` 付きで返却 |
+| GET | `/confirm/daily_log/upsert` | Daily_Log Upsert 確認ページ |
+| POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
+| GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
+| POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
+
+### Daily_Log Upsert
+
+- **検索条件**: `Target Date` が `YYYY-MM-DD` で一致するページを検索
+- 存在すれば更新 / 無ければ作成
+
+Workersへのリクエスト例（Pythonから送信）:
+
+```json
+{
+  "target_date": "YYYY-MM-DD",
+  "title": "YYYY-MM-DD Daily Log",
+  "activity_summary": "string",
+  "mail_id": "string",
+  "source": "automation",
+  "data_json": "string(任意)"
+}
+```
+
+## Python
+
+- Workersの `/api/tasks` / `/api/inbox` を取得
+- HTMLメールを生成してSMTP送信
+- 同じ実行内で `/execute/api/daily_log/upsert` にPOSTしてDaily_Logを作成/更新
+- **UTF-8 / MIME** 対応済み
+- `MAIL_TO` はカンマ区切りで複数対応
+
+## GitHub Actions
+
+- 実行タイミング: JST 07:00（UTC 22:00） + 手動実行
+- Secrets:
+  - `MAIL_FROM`
+  - `MAIL_TO`
+  - `GMAIL_APP_PASSWORD`
+  - `INBOX_JSON_URL`
+  - `TASKS_JSON_URL`
+  - `DAILY_LOG_UPSERT_URL`
+  - `WORKERS_BEARER_TOKEN` (任意)
+
+`INBOX_JSON_URL`/`TASKS_JSON_URL`/`DAILY_LOG_UPSERT_URL` はWorkersのURLをセットしてください。
+
+## セットアップ手順（概要）
+
+1. **Workersデプロイ**
+   - `workers/src/index.ts` をWorkersに配置
+   - Secretsを設定
+2. **Notion DBプロパティ確認**
+   - 上記の必須プロパティが完全一致で存在することを確認
+3. **GitHub Actions Secrets設定**
+   - メール/WorkersのURLをSecretsに登録
+4. **テスト**
+   - `workflow_dispatch` で手動実行
+   - `/confirm/...` で確認 → `/execute/...` で更新が実行されることを確認
