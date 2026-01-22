@@ -30,6 +30,9 @@ export type DailyLogTaskRelationResult = {
 
 const DEFAULT_DONE_STATUS = "Done";
 const DEFAULT_DROP_STATUS = "Drop";
+const TASK_STATUS_PROPERTY = "Status";
+const TASK_DONE_DATE_PROPERTY = "Done date";
+const TASK_DROP_DATE_PROPERTY = "Drop date";
 
 function createTitleProperty(title: string) {
   return {
@@ -68,7 +71,7 @@ async function fetchTaskIdsByStatus(
 ): Promise<string[]> {
   const pages = await queryDatabaseAll(env, env.TASK_DB_ID, {
     and: [
-      { property: "Status", select: { equals: status } },
+      { property: TASK_STATUS_PROPERTY, select: { equals: status } },
       { property: dateProperty, date: { is_not_empty: true } },
       {
         property: dateProperty,
@@ -148,8 +151,8 @@ export async function updateDailyLogTaskRelations(
   );
 
   const [doneTaskIds, dropTaskIds] = await Promise.all([
-    fetchTaskIdsByStatus(env, doneStatus, "Done date", range),
-    fetchTaskIdsByStatus(env, dropStatus, "Drop date", range),
+    fetchTaskIdsByStatus(env, doneStatus, TASK_DONE_DATE_PROPERTY, range),
+    fetchTaskIdsByStatus(env, dropStatus, TASK_DROP_DATE_PROPERTY, range),
   ]);
 
   console.log(

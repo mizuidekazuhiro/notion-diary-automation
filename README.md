@@ -16,7 +16,9 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - 定義:
   - `yesterday_start_jst = 昨日 00:00:00 +09:00`
   - `yesterday_end_jst = 今日 00:00:00 +09:00`
-- `Done date` / `Drop date` が空のタスクは除外されます。
+- `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
+- `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
+- `Notes` は仕様として一切書き込みません。
 - 全件表示ですが、メールが長くならないよう `<details>` の折りたたみ表示を使います。
 
 ## Notion DBの必須プロパティ

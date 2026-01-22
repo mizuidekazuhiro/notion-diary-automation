@@ -86,6 +86,10 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
 };
 
+const TASK_STATUS_PROPERTY = "Status";
+const TASK_DONE_DATE_PROPERTY = "Done date";
+const TASK_DROP_DATE_PROPERTY = "Drop date";
+
 function unauthorized(message = "unauthorized"): Response {
   return new Response(JSON.stringify({ error: "unauthorized", message }), {
     status: 401,
@@ -150,6 +154,30 @@ async function notionErrorResponse(
     `Notion API error in ${context}: status=${details.status}${requestIdLog} ${details.message}`,
   );
   console.error(`Notion API response body: ${bodySnippet}`);
+  const status = details.status >= 400 ? details.status : 500;
+  return new Response(
+    JSON.stringify({
+      error: "notion_error",
+      status,
+      code: details.code ?? null,
+      message: details.notionMessage ?? null,
+      request_id: details.requestId ?? null,
+      body: details.body,
+    }),
+    {
+      status,
+      headers: jsonHeaders,
+    },
+  );
+}
+
+function notionErrorResponseFromDetails(details: {
+  status: number;
+  code?: string;
+  notionMessage?: string;
+  requestId?: string;
+  body: string;
+}): Response {
   const status = details.status >= 400 ? details.status : 500;
   return new Response(
     JSON.stringify({
@@ -561,10 +589,10 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
 
   const donePages = await queryDatabaseAll(env, env.TASK_DB_ID, {
     and: [
-      { property: "Status", select: { equals: doneStatus } },
-      { property: "Done date", date: { is_not_empty: true } },
+      { property: TASK_STATUS_PROPERTY, select: { equals: doneStatus } },
+      { property: TASK_DONE_DATE_PROPERTY, date: { is_not_empty: true } },
       {
-        property: "Done date",
+        property: TASK_DONE_DATE_PROPERTY,
         date: {
           on_or_after: startJst,
           before: endJst,
@@ -575,10 +603,10 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
 
   const dropPages = await queryDatabaseAll(env, env.TASK_DB_ID, {
     and: [
-      { property: "Status", select: { equals: droppedStatus } },
-      { property: "Drop date", date: { is_not_empty: true } },
+      { property: TASK_STATUS_PROPERTY, select: { equals: droppedStatus } },
+      { property: TASK_DROP_DATE_PROPERTY, date: { is_not_empty: true } },
       {
-        property: "Drop date",
+        property: TASK_DROP_DATE_PROPERTY,
         date: {
           on_or_after: startJst,
           before: endJst,
@@ -587,19 +615,23 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
     ],
   });
 
-  const done = donePages.map((page: Record<string, any>) => ({
-    page_id: page.id,
-    title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
-    priority: page.properties?.Priority?.select?.name ?? null,
-    done_date: page.properties?.["Done date"]?.date?.start ?? null,
-  }));
+  const done = donePages
+    .map((page: Record<string, any>) => ({
+      page_id: page.id,
+      title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
+      priority: page.properties?.Priority?.select?.name ?? null,
+      done_date: page.properties?.[TASK_DONE_DATE_PROPERTY]?.date?.start ?? null,
+    }))
+    .filter((item) => item.done_date);
 
-  const drop = dropPages.map((page: Record<string, any>) => ({
-    page_id: page.id,
-    title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
-    priority: page.properties?.Priority?.select?.name ?? null,
-    drop_date: page.properties?.["Drop date"]?.date?.start ?? null,
-  }));
+  const drop = dropPages
+    .map((page: Record<string, any>) => ({
+      page_id: page.id,
+      title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
+      priority: page.properties?.Priority?.select?.name ?? null,
+      drop_date: page.properties?.[TASK_DROP_DATE_PROPERTY]?.date?.start ?? null,
+    }))
+    .filter((item) => item.drop_date);
 
   return new Response(
     JSON.stringify({
@@ -692,7 +724,17 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   }
 
   if (!resultResponse.ok) {
-    return notionErrorResponse(resultResponse, "handleDailyLogUpsert.upsert");
+    const details = await getNotionErrorDetails(resultResponse);
+    const requestIdLog = details.requestId ? ` request_id=${details.requestId}` : "";
+    const codeLog = details.code ? ` code=${details.code}` : "";
+    const messageLog = details.notionMessage ?? details.message;
+    console.error(
+      `Notion API error in handleDailyLogUpsert.upsert: status=${details.status}${requestIdLog}${codeLog} message=${messageLog}`,
+    );
+    console.error(
+      `DailyLog upsert properties: ${Object.keys(properties).join(", ")}`,
+    );
+    return notionErrorResponseFromDetails(details);
   }
 
   const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
