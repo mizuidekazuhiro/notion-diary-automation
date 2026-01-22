@@ -54,6 +54,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Drop Count` (rollup: Drop Tasks の `名前` を Count all)
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
+`Notes` は Notion の rich_text 制限で **2000文字まで**のため、長文は Notes に短文（サマリ/冒頭）を保存し、全文は Daily_Log のページ本文（children blocks）に分割して保存します。
 
 ## セキュリティ設計（2段階更新）
 
