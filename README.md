@@ -20,14 +20,14 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ### Tasks DB (`TASK_DB_ID`)
 
-- `Status` (select) : 値 `Do` / `Done` / `Drop` が存在すること（名称は環境変数で変更可）
+- `Status` (select) : 値 `Do` / `Done` / `Dropped` が存在すること（名称は環境変数で変更可）
 - `Since Do` (date)
 - `Priority` (select)
 - `名前` (title)
 - `Done date` (date)
 - `Drop date` (date)
 
-> **プロパティ名は完全一致で固定です**。
+> **プロパティ名は完全一致で固定です**。`Someday` (checkbox) と `DoneAt` は現在のDBに無いため、コード側でも参照/更新しません（Someday状態は `Status` の値で表現します）。
 
 ### Inbox DB (`INBOX_DB_ID`)
 
@@ -95,8 +95,9 @@ Workers環境変数（Secrets）に以下を設定します。
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
 - `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
-- `TASK_STATUS_DROP` (任意: `Drop` がデフォルト)
+- `TASK_STATUS_DROPPED` (任意: `Dropped` がデフォルト)
 - `TASK_STATUS_SOMEDAY` (任意: Someday判定に使うStatus値がある場合に設定)
+- `REQUIRE_STATUS_EXTRA_OPTIONS` (任意: `true` の場合は Status の `Drop` / `Someday` も必須オプションとして検証)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
@@ -106,8 +107,8 @@ Workers環境変数（Secrets）に以下を設定します。
 | --- | --- | --- |
 | GET | `/health` | 簡易ヘルスチェック（JSONで `{ "status": "ok" }`） |
 | GET | `/api/inbox` | Inbox DB の一覧取得 |
-| GET | `/api/tasks` | Tasks DB の Status = "Do" と Someday = true を取得 |
-|  |  | ※Someday = true のタスクは `confirm_promote_url` 付きで返却 |
+| GET | `/api/tasks` | Tasks DB の Status = "Do" と Status = "Someday" を取得 |
+|  |  | ※Status = "Someday" のタスクは `confirm_promote_url` 付きで返却 |
 | GET | `/api/tasks/closed?date=YYYY-MM-DD` | Tasks DB から「昨日Done/Drop」を取得（date未指定ならJSTの昨日） |
 | GET | `/confirm/daily_log/upsert` | Daily_Log Upsert 確認ページ |
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
@@ -242,7 +243,7 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 ## Daily Log に Done/Drop タスクを Relation で記録する設定
 
 1. **Tasks DB の設定**
-   - `Status` に `Do` / `Done` / `Drop` を用意（名称を変える場合は Workers の `TASK_STATUS_DO` / `TASK_STATUS_DONE` / `TASK_STATUS_DROP` を変更）。
+   - `Status` に `Do` / `Done` / `Dropped` を用意（名称を変える場合は Workers の `TASK_STATUS_DO` / `TASK_STATUS_DONE` / `TASK_STATUS_DROPPED` を変更）。
    - `Done date` / `Drop date` (date) を追加し、完了日/取り下げ日を入れる。
 2. **Daily_Log DB の設定**
    - `Date` (date) を作成し、日付を保存する。

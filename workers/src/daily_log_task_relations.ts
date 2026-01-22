@@ -7,6 +7,7 @@ export type DailyLogTaskRelationEnv = {
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
   TASK_STATUS_DONE?: string;
+  TASK_STATUS_DROPPED?: string;
   TASK_STATUS_DROP_VALUE?: string;
 };
 
@@ -23,7 +24,7 @@ export type DailyLogTaskRelationResult = {
 };
 
 const DEFAULT_DONE_STATUS = "Done";
-const DEFAULT_DROP_STATUS = "Drop";
+const DEFAULT_DROP_STATUS = "Dropped";
 
 function createTitleProperty(title: string) {
   return {
@@ -131,7 +132,8 @@ export async function updateDailyLogTaskRelations(
 ): Promise<DailyLogTaskRelationResult> {
   const range = buildYesterdayRange(targetDate);
   const doneStatus = env.TASK_STATUS_DONE || DEFAULT_DONE_STATUS;
-  const dropStatus = env.TASK_STATUS_DROP_VALUE || DEFAULT_DROP_STATUS;
+  const dropStatus =
+    env.TASK_STATUS_DROPPED || env.TASK_STATUS_DROP_VALUE || DEFAULT_DROP_STATUS;
 
   console.log(
     `DailyLog relations: target=${targetDate} range=${range.startJst}..${range.endJst}`,
