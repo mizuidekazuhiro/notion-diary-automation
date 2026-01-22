@@ -16,6 +16,8 @@ interface Env {
   WORKERS_BEARER_TOKEN?: string;
   TASK_STATUS_DONE?: string;
   TASK_STATUS_DROP?: string;
+  TASK_STATUS_DO?: string;
+  TASK_STATUS_SOMEDAY?: string;
 }
 
 type NotionPropertyType =
@@ -63,7 +65,6 @@ const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
   { name: "Since Do", type: "date" },
   { name: "Priority", type: "select" },
-  { name: "Someday", type: "checkbox" },
   { name: TITLE_PROPERTIES.tasks, type: "title" },
 ];
 
@@ -293,14 +294,17 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
 
   await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_PROPERTIES);
 
+  const doStatus = env.TASK_STATUS_DO ?? "Do";
+  const somedayStatus = env.TASK_STATUS_SOMEDAY ?? "Someday";
+
   const response = await notionFetch(env, `databases/${env.TASK_DB_ID}/query`, {
     method: "POST",
     body: JSON.stringify({
       page_size: 100,
       filter: {
         or: [
-          { property: "Status", select: { equals: "Do" } },
-          { property: "Someday", checkbox: { equals: true } },
+          { property: "Status", select: { equals: doStatus } },
+          { property: "Status", select: { equals: somedayStatus } },
         ],
       },
     }),
@@ -314,7 +318,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   const origin = new URL(request.url).origin;
   const results = (data.results ?? []).map((page: Record<string, any>) => {
     const status = page.properties?.Status?.select?.name ?? null;
-    const someday = page.properties?.Someday?.checkbox ?? false;
+    const someday = status === somedayStatus;
     return {
       id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
@@ -323,7 +327,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
       since_do: page.properties?.["Since Do"]?.date?.start ?? null,
       someday,
       confirm_promote_url:
-        someday && status !== "Do"
+        someday && status !== doStatus
           ? `${origin}/confirm/tasks/promote?id=${page.id}`
           : null,
     };
