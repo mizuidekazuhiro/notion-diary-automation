@@ -11,7 +11,12 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 ## 新機能: 毎朝メールに「昨日の成果」を追加
 
 - 毎朝のメールに **昨日 Done / 昨日 Drop** を追加します。
-- JST基準で「昨日（00:00〜24:00）」の範囲で集計します。
+- Tasks DB の `Done date` / `Drop date` を使って集計します。
+- JST基準で「昨日（00:00〜24:00）」の範囲で集計します（`start <= date < end`）。
+- 定義:
+  - `yesterday_start_jst = 昨日 00:00:00 +09:00`
+  - `yesterday_end_jst = 今日 00:00:00 +09:00`
+- `Done date` / `Drop date` が空のタスクは除外されます。
 - 全件表示ですが、メールが長くならないよう `<details>` の折りたたみ表示を使います。
 
 ## Notion DBの必須プロパティ
@@ -45,7 +50,6 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Meal summary` (rich_text)
 - `Mail ID` (rich_text)
 - `Mood` (select)
-- `Notes` (rich_text)
 - `Source` (select)
 - `Weight` (number)
 - `Done Tasks` (relation -> Tasks DB)
@@ -54,7 +58,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Drop Count` (rollup: Drop Tasks の `名前` を Count all)
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
-`Notes` は Notion の rich_text 制限で **2000文字まで**のため、長文は Notes に短文（サマリ/冒頭）を保存し、全文は Daily_Log のページ本文（children blocks）に分割して保存します。
+`Notes` は仕様として **一切書き込まない** 方針です（DBに存在していても更新対象にしません）。
 
 ## セキュリティ設計（2段階更新）
 
@@ -97,6 +101,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
 - `TASK_STATUS_DROPPED` (任意: `Drop` がデフォルト)
+- `TASK_STATUS_DROP_VALUE` (任意: `Drop` がデフォルト、`TASK_STATUS_DROPPED` の代替)
 - `TASK_STATUS_SOMEDAY` (任意: Someday判定に使うStatus値がある場合に設定)
 - `REQUIRE_STATUS_EXTRA_OPTIONS` (任意: `true` の場合は Status の `Drop` / `Someday` も必須オプションとして検証)
 
@@ -172,6 +177,7 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 - **検索条件**: `Target Date` が `YYYY-MM-DD` で一致するページを検索
 - 存在すれば更新 / 無ければ作成
 - `Date` も `Target Date` と同じ日付で更新されます
+- `Notes` は更新しません（DBに存在していても無視）
 
 Workersへのリクエスト例（Pythonから送信）:
 
@@ -289,3 +295,4 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
    - `Done Count` / `Drop Count` を Rollup で作成（`名前` を Count all）。
 3. **実行**
    - GitHub Actions の日次ジョブが、前日分の `Done date` / `Drop date` を集計して当日の Daily Log に Relation をセットします。
+   - `Done date` / `Drop date` が空のタスクは除外されます。

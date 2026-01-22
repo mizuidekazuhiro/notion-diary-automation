@@ -120,12 +120,15 @@ def parse_closed_tasks(data: Dict[str, Any]) -> ClosedTasks:
     def parse_items(items: List[Dict[str, Any]], date_key: str) -> List[ClosedTaskItem]:
         parsed: List[ClosedTaskItem] = []
         for item in items:
+            closed_date = item.get(date_key)
+            if not closed_date:
+                continue
             parsed.append(
                 ClosedTaskItem(
                     page_id=item.get("page_id", ""),
                     title=item.get("title", ""),
                     priority=item.get("priority"),
-                    closed_date=item.get(date_key),
+                    closed_date=closed_date,
                 )
             )
         return parsed
