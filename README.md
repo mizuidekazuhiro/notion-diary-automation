@@ -11,7 +11,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 ## 新機能: 毎朝メールに「昨日の成果」を追加
 
 - 毎朝のメールに **昨日 Done / 昨日 Drop** を追加します。
-- Tasks DB の `Done date` / `Drop date` を使って集計します。
+- Tasks DB の `Done date` / `Drop date` を使って集計します（プロパティ名は環境変数で変更可）。
 - JST基準で「昨日（00:00〜24:00）」の範囲で集計します（`start <= date < end`）。
 - 定義:
   - `yesterday_start_jst = 昨日 00:00:00 +09:00`
@@ -34,7 +34,9 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Done date` (date)
 - `Drop date` (date)
 
-> **プロパティ名は完全一致で固定です**。`Someday` (checkbox) と `DoneAt` は現在のDBに無いため、コード側でも参照/更新しません（Someday状態は `Status` の値で表現します）。
+> **Status / Done date / Drop date のプロパティ名はNotion側と完全一致である必要があります。**  
+> 変更する場合は `TASK_STATUS_PROPERTY_NAME` / `TASK_DONE_DATE_PROPERTY_NAME` / `TASK_DROP_DATE_PROPERTY_NAME` を設定してください。  
+> `Someday` (checkbox) と `DoneAt` は現在のDBに無いため、コード側でも参照/更新しません（Someday状態は `Status` の値で表現します）。
 
 ### Inbox DB (`INBOX_DB_ID`)
 
@@ -106,6 +108,9 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASK_STATUS_DROP_VALUE` (任意: `Drop` がデフォルト、`TASK_STATUS_DROPPED` の代替)
 - `TASK_STATUS_SOMEDAY` (任意: Someday判定に使うStatus値がある場合に設定)
 - `REQUIRE_STATUS_EXTRA_OPTIONS` (任意: `true` の場合は Status の `Drop` / `Someday` も必須オプションとして検証)
+- `TASK_STATUS_PROPERTY_NAME` (任意: `Status` がデフォルト)
+- `TASK_DONE_DATE_PROPERTY_NAME` (任意: `Done date` がデフォルト)
+- `TASK_DROP_DATE_PROPERTY_NAME` (任意: `Drop date` がデフォルト)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
