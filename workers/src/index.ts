@@ -15,7 +15,7 @@ interface Env {
   DAILY_LOG_DB_ID: string;
   WORKERS_BEARER_TOKEN?: string;
   TASK_STATUS_DONE?: string;
-  TASK_STATUS_DROP?: string;
+  TASK_STATUS_DROP_VALUE?: string;
 }
 
 type NotionPropertyType =
@@ -69,7 +69,8 @@ const TASK_PROPERTIES: ExpectedProperty[] = [
 
 const TASK_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
-  { name: "DoneAt", type: "date" },
+  { name: "Done date", type: "date" },
+  { name: "Drop date", type: "date" },
 ];
 
 const INBOX_PROPERTIES: ExpectedProperty[] = [
