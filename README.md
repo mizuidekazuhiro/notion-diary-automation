@@ -140,23 +140,23 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 
 > `WORKERS_BEARER_TOKEN` を有効化する場合は、**GitHub ActionsのSecretsとWorkersの環境変数に同じ値**を設定してください。
 
-### 404/401/500/502 の切り分け（よくある原因）
+### 404/401/500/Notionエラー の切り分け（よくある原因）
 
 | ステータス | 主な原因 | 確認ポイント |
 | --- | --- | --- |
 | 404 Not Found | ルートのパス誤り / デプロイ先のURL誤り | `/health` のURLが正しいか |
 | 401 Unauthorized | `WORKERS_BEARER_TOKEN` が設定済みなのにヘッダ未指定 | `Authorization: Bearer ...` を付ける |
 | 500 Internal Server Error | 予期せぬ内部エラー | Workersログのスタックトレース |
-| 502 Bad Gateway | Notion APIエラー | 返却されたJSONの `status` / `body` を確認 |
+| 4xx/5xx (Notion) | Notion APIエラー | 返却されたJSONの `status` / `code` / `message` / `request_id` を確認 |
 
-### 401/405/502 が出たときの診断手順（会社PCで手動POSTできない前提）
+### 401/405/4xx/5xx が出たときの診断手順（会社PCで手動POSTできない前提）
 
 1. **GitHub Actionsログを確認**し、HTTPステータスとレスポンスJSONを把握する。
 2. **Cloudflare Workersログ（Tail）を確認**し、`Notion API error` や `WORKERS_BEARER_TOKEN is not set; auth is disabled` などの警告を確認する。
 3. ステータス別の切り分け:
    - `401`: `WORKERS_BEARER_TOKEN` の値が Actions と Workers で一致しているか。
    - `405`: URLが `/execute/api/daily_log/upsert` になっているか、POSTで送信しているか。
-   - `502`: Notion APIエラー。レスポンスJSONの `status` / `body` を確認する。
+   - `4xx/5xx`: Notion APIエラー。レスポンスJSONの `status` / `code` / `message` / `request_id` を確認する。
 
 #### Bearer認証の例
 
@@ -185,6 +185,24 @@ Workersへのリクエスト例（Pythonから送信）:
   "data_json": "string(任意)"
 }
 ```
+
+#### curlでの再現例
+
+```bash
+curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
+  -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_date": "2024-01-01",
+    "title": "2024-01-01 Daily Log",
+    "activity_summary": "summary text",
+    "mail_id": "mail-id-123",
+    "source": "automation",
+    "data_json": "{\"example\":true}"
+  }'
+```
+
+> `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
 
 ## Python
 

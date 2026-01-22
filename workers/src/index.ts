@@ -144,16 +144,27 @@ async function notionErrorResponse(
   context: string,
 ): Promise<Response> {
   const details = await getNotionErrorDetails(response);
-  console.error(`Notion API error in ${context}: ${details.message}`);
-  console.error(`Notion API response body: ${details.body}`);
+  const bodySnippet =
+    details.body.length > 4000
+      ? `${details.body.slice(0, 4000)}...(truncated)`
+      : details.body;
+  const requestIdLog = details.requestId ? ` request_id=${details.requestId}` : "";
+  console.error(
+    `Notion API error in ${context}: status=${details.status}${requestIdLog} ${details.message}`,
+  );
+  console.error(`Notion API response body: ${bodySnippet}`);
+  const status = details.status >= 400 ? details.status : 500;
   return new Response(
     JSON.stringify({
       error: "notion_error",
-      status: details.status,
+      status,
+      code: details.code ?? null,
+      message: details.notionMessage ?? null,
+      request_id: details.requestId ?? null,
       body: details.body,
     }),
     {
-      status: 502,
+      status,
       headers: jsonHeaders,
     },
   );
@@ -261,7 +272,7 @@ async function validateDatabaseSchema(
     return;
   }
 
-  const response = await notionFetch(env, `databases/${dbId}`);
+  const response = await notionFetch(env, `/databases/${dbId}`);
   if (!response.ok) {
     const details = await getNotionErrorDetails(response);
     throw new NotionApiError(details);
@@ -466,7 +477,7 @@ async function handleInbox(request: Request, env: Env): Promise<Response> {
 
   await validateDatabaseSchema(env, env.INBOX_DB_ID, INBOX_PROPERTIES);
 
-  const response = await notionFetch(env, `databases/${env.INBOX_DB_ID}/query`, {
+  const response = await notionFetch(env, `/databases/${env.INBOX_DB_ID}/query`, {
     method: "POST",
     body: JSON.stringify({ page_size: 50 }),
   });
@@ -496,7 +507,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   const { doStatus, somedayStatus } = getTaskStatusConfig(env);
   await validateTasksDatabaseSchema(env);
 
-  const response = await notionFetch(env, `databases/${env.TASK_DB_ID}/query`, {
+  const response = await notionFetch(env, `/databases/${env.TASK_DB_ID}/query`, {
     method: "POST",
     body: JSON.stringify({
       page_size: 100,
@@ -635,7 +646,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
 
   const queryResponse = await notionFetch(
     env,
-    `databases/${env.DAILY_LOG_DB_ID}/query`,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -672,12 +683,12 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
 
   let resultResponse: Response;
   if (existingPage) {
-    resultResponse = await notionFetch(env, `pages/${existingPage.id}`, {
+    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
       method: "PATCH",
       body: JSON.stringify({ properties }),
     });
   } else {
-    resultResponse = await notionFetch(env, "pages", {
+    resultResponse = await notionFetch(env, "/pages", {
       method: "POST",
       body: JSON.stringify({
         parent: { database_id: env.DAILY_LOG_DB_ID },
@@ -696,7 +707,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     if (children.length) {
       const childrenResponse = await notionFetch(
         env,
-        `pages/${pageId}/children`,
+        `/blocks/${pageId}/children`,
         {
           method: "PATCH",
           body: JSON.stringify({ children }),
@@ -760,7 +771,7 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
     "Since Do": createDateProperty(jstDate),
   };
 
-  const response = await notionFetch(env, `pages/${pageId}`, {
+  const response = await notionFetch(env, `/pages/${pageId}`, {
     method: "PATCH",
     body: JSON.stringify({ properties }),
   });
@@ -879,15 +890,26 @@ export default {
       return notFound();
     } catch (error) {
       if (error instanceof NotionApiError) {
-        console.error(`Notion API error: ${error.message}`);
-        console.error(`Notion API response body: ${error.body}`);
+        const bodySnippet =
+          error.body.length > 4000
+            ? `${error.body.slice(0, 4000)}...(truncated)`
+            : error.body;
+        const requestIdLog = error.requestId ? ` request_id=${error.requestId}` : "";
+        console.error(
+          `Notion API error: status=${error.status}${requestIdLog} ${error.message}`,
+        );
+        console.error(`Notion API response body: ${bodySnippet}`);
+        const status = error.status >= 400 ? error.status : 500;
         return new Response(
           JSON.stringify({
             error: "notion_error",
-            status: error.status,
+            status,
+            code: error.code ?? null,
+            message: error.notionMessage ?? null,
+            request_id: error.requestId ?? null,
             body: error.body,
           }),
-          { status: 502, headers: jsonHeaders },
+          { status, headers: jsonHeaders },
         );
       }
 

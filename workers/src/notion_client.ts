@@ -8,18 +8,67 @@ export type NotionErrorDetails = {
   status: number;
   body: string;
   message: string;
+  code?: string;
+  notionMessage?: string;
+  requestId?: string;
 };
 
 export class NotionApiError extends Error {
   status: number;
   body: string;
+  code?: string;
+  requestId?: string;
+  notionMessage?: string;
 
   constructor(details: NotionErrorDetails) {
     super(details.message);
     this.name = "NotionApiError";
     this.status = details.status;
     this.body = details.body;
+    this.code = details.code;
+    this.requestId = details.requestId;
+    this.notionMessage = details.notionMessage;
   }
+}
+
+const NOTION_BASE = "https://api.notion.com/v1";
+
+type ParsedNotionError = {
+  code?: string;
+  message?: string;
+  requestId?: string;
+};
+
+function parseNotionErrorBody(rawText: string): ParsedNotionError {
+  try {
+    const data = JSON.parse(rawText);
+    return {
+      code: typeof data.code === "string" ? data.code : undefined,
+      message: typeof data.message === "string" ? data.message : undefined,
+      requestId:
+        typeof data.request_id === "string"
+          ? data.request_id
+          : typeof data.requestId === "string"
+            ? data.requestId
+            : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function normalizeNotionPath(path: string): string {
+  const trimmed = path.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    throw new Error(`Notion path must be relative, got full URL: ${trimmed}`);
+  }
+  if (trimmed.startsWith("/v1/") || trimmed === "/v1") {
+    throw new Error(`Notion path must not include /v1: ${trimmed}`);
+  }
+  if (trimmed.startsWith("v1/") || trimmed === "v1") {
+    throw new Error(`Notion path must not include v1: ${trimmed}`);
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
 export async function notionFetch(
@@ -27,7 +76,10 @@ export async function notionFetch(
   path: string,
   options: RequestInit = {},
 ): Promise<Response> {
-  const url = `https://api.notion.com/v1/${path}`;
+  const normalizedPath = normalizeNotionPath(path);
+  const url = `${NOTION_BASE}${normalizedPath}`;
+  const method = (options.method ?? "GET").toUpperCase();
+  console.log(`Notion request: ${method} ${url} path=${normalizedPath}`);
   return fetch(url, {
     ...options,
     headers: {
@@ -40,17 +92,16 @@ export async function notionFetch(
 }
 
 function formatNotionErrorBody(status: number, rawText: string): string {
-  try {
-    const data = JSON.parse(rawText);
-    const code = data.code ? ` (${data.code})` : "";
-    const message = data.message ? `: ${data.message}` : "";
+  const parsed = parseNotionErrorBody(rawText);
+  if (parsed.code || parsed.message) {
+    const code = parsed.code ? ` (${parsed.code})` : "";
+    const message = parsed.message ? `: ${parsed.message}` : "";
     return `Notion API error ${status}${code}${message}`;
-  } catch {
-    const trimmed = rawText.trim();
-    return trimmed
-      ? `Notion API error ${status}: ${trimmed}`
-      : `Notion API error ${status}`;
   }
+  const trimmed = rawText.trim();
+  return trimmed
+    ? `Notion API error ${status}: ${trimmed}`
+    : `Notion API error ${status}`;
 }
 
 export async function getNotionErrorDetails(
@@ -58,8 +109,16 @@ export async function getNotionErrorDetails(
 ): Promise<NotionErrorDetails> {
   const status = response.status;
   const rawText = await response.text();
+  const parsed = parseNotionErrorBody(rawText);
   const message = formatNotionErrorBody(status, rawText);
-  return { status, body: rawText, message };
+  return {
+    status,
+    body: rawText,
+    message,
+    code: parsed.code,
+    notionMessage: parsed.message,
+    requestId: parsed.requestId,
+  };
 }
 
 export async function queryDatabaseAll(
@@ -79,7 +138,7 @@ export async function queryDatabaseAll(
     if (startCursor) {
       body.start_cursor = startCursor;
     }
-    const response = await notionFetch(env, `databases/${dbId}/query`, {
+    const response = await notionFetch(env, `/databases/${dbId}/query`, {
       method: "POST",
       body: JSON.stringify(body),
     });
