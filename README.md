@@ -64,6 +64,26 @@ MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を
 
 ## Cloudflare Workers
 
+### デプロイ（GitHub Actions・ブラウザのみ）
+
+このリポジトリは `workers/` にCloudflare Workersプロジェクトを配置しています。ローカルCLIは不要で、GitHub Actionsから `wrangler` を実行して自動デプロイします。
+
+1. **Cloudflare API Token を作成**
+   - Cloudflare Dashboard → **My Profile** → **API Tokens** → **Create Token**。
+   - テンプレートは **Custom Token** を選択し、以下を許可します。
+     - Account: `Account Settings` = Read
+     - Workers: `Workers Scripts` = Edit
+   - 作成したトークンを控える（後で `CF_API_TOKEN` に使います）。
+2. **GitHub Secrets に追加**
+   - GitHub → Settings → Secrets and variables → Actions → New repository secret。
+   - `CF_API_TOKEN` と `CF_ACCOUNT_ID` を追加（Account IDはCloudflare Dashboardの右側に表示）。
+3. **GitHub Actionsでデプロイ**
+   - GitHub → Actions → **Deploy Cloudflare Workers** → Run workflow。
+   - `workers/wrangler.toml` を参照して、`workers/src/index.ts` をビルド＆デプロイします。
+4. **WorkersのSecrets/Variablesを設定**
+   - Cloudflare Dashboard → Workers & Pages → 対象Workers → **Settings** → **Variables and Secrets**。
+   - `NOTION_TOKEN` / `INBOX_DB_ID` / `TASK_DB_ID` / `DAILY_LOG_DB_ID` などを**ここにのみ**設定します。
+
 ### Secrets
 
 Workers環境変数（Secrets）に以下を設定します。
@@ -82,6 +102,7 @@ Workers環境変数（Secrets）に以下を設定します。
 
 | Method | Path | 説明 |
 | --- | --- | --- |
+| GET | `/health` | 簡易ヘルスチェック（JSONで `{ "status": "ok" }`） |
 | GET | `/api/inbox` | Inbox DB の一覧取得 |
 | GET | `/api/tasks` | Tasks DB の Status = "Do" と Someday = true を取得 |
 |  |  | ※Someday = true のタスクは `confirm_promote_url` 付きで返却 |
@@ -90,6 +111,29 @@ Workers環境変数（Secrets）に以下を設定します。
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
+
+### ルーティング簡易チェック
+
+`/health` または `/api/tasks` が返ることを確認すると、**NotFound回避の確認**ができます。
+
+```bash
+curl "https://<worker>.workers.dev/health"
+```
+
+```bash
+curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
+  "https://<worker>.workers.dev/api/tasks"
+```
+
+> `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
+
+### 404/401/500 の切り分け（よくある原因）
+
+| ステータス | 主な原因 | 確認ポイント |
+| --- | --- | --- |
+| 404 Not Found | ルートのパス誤り / デプロイ先のURL誤り | `/health` のURLが正しいか |
+| 401 Unauthorized | `WORKERS_BEARER_TOKEN` が設定済みなのにヘッダ未指定 | `Authorization: Bearer ...` を付ける |
+| 500 Internal Server Error | Notion Secrets未設定 / DBスキーマ不一致 | WorkersのVariables/SecretsとNotion DBプロパティ |
 
 #### Bearer認証の例
 
@@ -140,8 +184,19 @@ Workersへのリクエスト例（Pythonから送信）:
   - `TASKS_CLOSED_URL`
   - `DAILY_LOG_UPSERT_URL`
   - `WORKERS_BEARER_TOKEN` (任意)
+  - `CF_API_TOKEN` (Workersデプロイ用)
+  - `CF_ACCOUNT_ID` (Workersデプロイ用)
 
 `INBOX_JSON_URL`/`TASKS_JSON_URL`/`TASKS_CLOSED_URL`/`DAILY_LOG_UPSERT_URL` はWorkersのURLをセットしてください。
+Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecretsのみを使用します。
+
+### GitHub Actionsで使うWorkers URLの例
+
+- `INBOX_JSON_URL = https://<worker>.workers.dev/api/inbox`
+- `TASKS_JSON_URL = https://<worker>.workers.dev/api/tasks`
+- `TASKS_CLOSED_URL = https://<worker>.workers.dev/api/tasks/closed`
+- `DAILY_LOG_UPSERT_URL = https://<worker>.workers.dev/execute/api/daily_log/upsert`
+- `WORKERS_BEARER_TOKEN` は任意ですが、有効化する場合は **Cloudflare側のVariables/Secretsにも同じ値** を入れてください。
 
 ## まず最初に必ずやる設定（初心者向け）
 
@@ -165,8 +220,8 @@ Workersへのリクエスト例（Pythonから送信）:
 ## セットアップ手順（概要）
 
 1. **Workersデプロイ**
-   - `workers/src/index.ts` をWorkersに配置
-   - Secretsを設定
+   - GitHub Actionsの **Deploy Cloudflare Workers** を実行
+   - Cloudflare WorkersのVariables/Secretsを設定
 2. **Notion DBプロパティ確認**
    - 上記の必須プロパティが完全一致で存在することを確認
 3. **GitHub Actions Secrets設定**

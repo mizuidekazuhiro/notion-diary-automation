@@ -1,0 +1,12 @@
+{
+  "name": "notion-diary-automation-workers",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.64.0"
+  }
+}
