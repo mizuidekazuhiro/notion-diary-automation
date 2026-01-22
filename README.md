@@ -20,7 +20,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ### Tasks DB (`TASK_DB_ID`)
 
-- `Status` (select) : 値 `Do` / `Done` / `Dropped` が存在すること（名称は環境変数で変更可）
+- `Status` (select) : 値 `Do` / `Done` / `Drop` が存在すること（名称は環境変数で変更可）
 - `Since Do` (date)
 - `Priority` (select)
 - `名前` (title)
@@ -95,7 +95,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
 - `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
-- `TASK_STATUS_DROPPED` (任意: `Dropped` がデフォルト)
+- `TASK_STATUS_DROPPED` (任意: `Drop` がデフォルト)
 - `TASK_STATUS_SOMEDAY` (任意: Someday判定に使うStatus値がある場合に設定)
 - `REQUIRE_STATUS_EXTRA_OPTIONS` (任意: `true` の場合は Status の `Drop` / `Someday` も必須オプションとして検証)
 
@@ -243,7 +243,7 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 ## Daily Log に Done/Drop タスクを Relation で記録する設定
 
 1. **Tasks DB の設定**
-   - `Status` に `Do` / `Done` / `Dropped` を用意（名称を変える場合は Workers の `TASK_STATUS_DO` / `TASK_STATUS_DONE` / `TASK_STATUS_DROPPED` を変更）。
+   - `Status` に `Do` / `Done` / `Drop` を用意（名称を変える場合は Workers の `TASK_STATUS_DO` / `TASK_STATUS_DONE` / `TASK_STATUS_DROPPED` を変更）。
    - `Done date` / `Drop date` (date) を追加し、完了日/取り下げ日を入れる。
 2. **Daily_Log DB の設定**
    - `Date` (date) を作成し、日付を保存する。
