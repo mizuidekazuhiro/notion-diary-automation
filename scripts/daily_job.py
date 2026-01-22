@@ -20,6 +20,7 @@ class Config:
     gmail_app_password: str
     inbox_url: str
     tasks_url: str
+    tasks_closed_url: str
     daily_log_url: str
     bearer_token: Optional[str]
 
@@ -39,6 +40,21 @@ class InboxItem:
     title: str
 
 
+@dataclass
+class ClosedTaskItem:
+    page_id: str
+    title: str
+    priority: Optional[str]
+    closed_date: Optional[str]
+
+
+@dataclass
+class ClosedTasks:
+    date: Optional[str]
+    done: List[ClosedTaskItem]
+    drop: List[ClosedTaskItem]
+
+
 def load_config() -> Config:
     def require(name: str) -> str:
         value = os.getenv(name)
@@ -55,6 +71,7 @@ def load_config() -> Config:
         gmail_app_password=require("GMAIL_APP_PASSWORD"),
         inbox_url=require("INBOX_JSON_URL"),
         tasks_url=require("TASKS_JSON_URL"),
+        tasks_closed_url=require("TASKS_CLOSED_URL"),
         daily_log_url=require("DAILY_LOG_UPSERT_URL"),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
     )
@@ -97,6 +114,33 @@ def parse_tasks(data: Dict[str, Any]) -> List[TaskItem]:
 def parse_inbox(data: Dict[str, Any]) -> List[InboxItem]:
     items = data.get("items", [])
     return [InboxItem(title=item.get("title", "")) for item in items]
+
+
+def parse_closed_tasks(data: Dict[str, Any]) -> ClosedTasks:
+    def parse_items(items: List[Dict[str, Any]], date_key: str) -> List[ClosedTaskItem]:
+        parsed: List[ClosedTaskItem] = []
+        for item in items:
+            parsed.append(
+                ClosedTaskItem(
+                    page_id=item.get("page_id", ""),
+                    title=item.get("title", ""),
+                    priority=item.get("priority"),
+                    closed_date=item.get(date_key),
+                )
+            )
+        return parsed
+
+    done_items = parse_items(data.get("done", []), "done_date")
+    drop_items = parse_items(data.get("drop", []), "drop_date")
+    return ClosedTasks(date=data.get("date"), done=done_items, drop=drop_items)
+
+
+def fetch_closed_tasks_safe(url: str, bearer_token: Optional[str]) -> ClosedTasks:
+    try:
+        data = fetch_json(url, bearer_token)
+        return parse_closed_tasks(data)
+    except Exception:
+        return ClosedTasks(date=None, done=[], drop=[])
 
 
 def days_since(date_str: Optional[str], today: datetime) -> Optional[int]:
@@ -150,6 +194,7 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
 def build_email_html(
     tasks: List[TaskItem],
     inbox: List[InboxItem],
+    closed_tasks: ClosedTasks,
     activity_summary: str,
     run_id: str,
 ) -> str:
@@ -161,18 +206,58 @@ def build_email_html(
             return "<li>None</li>"
         return "".join(f"<li>{item}</li>" for item in items)
 
+    def format_closed_items(items: List[ClosedTaskItem], icon: str) -> List[str]:
+        formatted: List[str] = []
+        for item in items:
+            if item.priority:
+                formatted.append(f"{icon} {item.title} (Priority: {item.priority})")
+            else:
+                formatted.append(f"{icon} {item.title}")
+        return formatted
+
+    def render_closed_section(
+        title: str, label: str, icon: str, items: List[ClosedTaskItem]
+    ) -> str:
+        formatted_items = format_closed_items(items, icon)
+        preview_items = formatted_items[:3]
+        preview_html = ""
+        if preview_items:
+            preview_html = f"""
+            <div>
+              <p style="margin: 8px 0 4px 0;">Preview:</p>
+              <ul>
+                {list_items(preview_items)}
+              </ul>
+            </div>
+            """
+        return f"""
+        <details>
+          <summary>{title}（{label}: {len(items)}）</summary>
+          {preview_html}
+          <ul>
+            {list_items(formatted_items)}
+          </ul>
+        </details>
+        """
+
     task_items = [
         f"{task.title} (Priority: {task.priority or '-'}, Since Do: {days_since(task.since_do, now) or '-'})"
         for task in tasks
         if task.status == "Do"
     ]
     inbox_items = [item.title for item in inbox]
+    done_items = closed_tasks.done
+    drop_items = closed_tasks.drop
+    progress_line = f"昨日の前進：Done {len(done_items)}件 / Drop {len(drop_items)}件"
 
     return f"""
     <html>
       <body>
         <h2>{date_str} Daily Summary</h2>
         <p>Run ID: {run_id}</p>
+        {render_closed_section("🎉 昨日完了したこと", "Done", "✅", done_items)}
+        {render_closed_section("🧹 昨日手放したこと", "Drop", "🧹", drop_items)}
+        <p><strong>{progress_line}</strong></p>
         <h3>Tasks (Status: Do)</h3>
         <ul>
           {list_items(task_items)}
@@ -207,6 +292,7 @@ def main() -> None:
 
     tasks_data = fetch_json(config.tasks_url, bearer)
     inbox_data = fetch_json(config.inbox_url, bearer)
+    closed_tasks = fetch_closed_tasks_safe(config.tasks_closed_url, bearer)
 
     tasks = parse_tasks(tasks_data)
     inbox = parse_inbox(inbox_data)
@@ -229,6 +315,11 @@ def main() -> None:
             {
                 "tasks": [task.__dict__ for task in tasks],
                 "inbox": [item.__dict__ for item in inbox],
+                "closed_tasks": {
+                    "date": closed_tasks.date,
+                    "done": [item.__dict__ for item in closed_tasks.done],
+                    "drop": [item.__dict__ for item in closed_tasks.drop],
+                },
             },
             ensure_ascii=False,
         ),
@@ -237,7 +328,7 @@ def main() -> None:
     post_json(config.daily_log_url, upsert_payload, bearer)
 
     subject = f"[Daily Log] {target_date}"
-    html_body = build_email_html(tasks, inbox, activity_summary, run_id)
+    html_body = build_email_html(tasks, inbox, closed_tasks, activity_summary, run_id)
     send_email(config, subject, html_body)
 
 
