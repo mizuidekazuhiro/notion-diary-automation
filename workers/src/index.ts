@@ -14,8 +14,12 @@ interface Env {
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
   WORKERS_BEARER_TOKEN?: string;
+  TASK_STATUS_DO?: string;
   TASK_STATUS_DONE?: string;
+  TASK_STATUS_DROPPED?: string;
   TASK_STATUS_DROP_VALUE?: string;
+  TASK_STATUS_SOMEDAY?: string;
+  REQUIRE_STATUS_EXTRA_OPTIONS?: string;
 }
 
 type NotionPropertyType =
@@ -63,25 +67,13 @@ const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
   { name: "Since Do", type: "date" },
   { name: "Priority", type: "select" },
-  { name: "Someday", type: "checkbox" },
   { name: TITLE_PROPERTIES.tasks, type: "title" },
-];
-
-const TASK_RELATION_PROPERTIES: ExpectedProperty[] = [
-  { name: "Status", type: "select" },
   { name: "Done date", type: "date" },
   { name: "Drop date", type: "date" },
 ];
 
 const INBOX_PROPERTIES: ExpectedProperty[] = [
   { name: TITLE_PROPERTIES.inbox, type: "title" },
-];
-
-const TASKS_CLOSED_PROPERTIES: ExpectedProperty[] = [
-  { name: TITLE_PROPERTIES.tasks, type: "title" },
-  { name: "Done date", type: "date" },
-  { name: "Drop date", type: "date" },
-  { name: "Priority", type: "select" },
 ];
 
 const jsonHeaders = {
@@ -131,19 +123,28 @@ function createHtmlPage(title: string, body: string): Response {
   );
 }
 
-function getSchemaCacheKey(dbId: string, expectedProperties: ExpectedProperty[]): string {
+function getSchemaCacheKey(
+  dbId: string,
+  expectedProperties: ExpectedProperty[],
+  selectOptionRequirements: Record<string, string[]> = {},
+): string {
   const propertiesKey = expectedProperties
     .map((property) => `${property.name}:${property.type}`)
     .join("|");
-  return `${dbId}:${propertiesKey}`;
+  const optionsKey = Object.entries(selectOptionRequirements)
+    .map(([name, options]) => `${name}:${options.join(",")}`)
+    .sort()
+    .join("|");
+  return `${dbId}:${propertiesKey}:${optionsKey}`;
 }
 
 async function validateDatabaseSchema(
   env: Env,
   dbId: string,
   expectedProperties: ExpectedProperty[],
+  selectOptionRequirements: Record<string, string[]> = {},
 ): Promise<void> {
-  const cacheKey = getSchemaCacheKey(dbId, expectedProperties);
+  const cacheKey = getSchemaCacheKey(dbId, expectedProperties, selectOptionRequirements);
   if (schemaCache[cacheKey]) {
     return;
   }
@@ -157,6 +158,7 @@ async function validateDatabaseSchema(
 
   const missing: string[] = [];
   const mismatched: string[] = [];
+  const missingOptions: string[] = [];
 
   expectedProperties.forEach((property) => {
     const schema = properties[property.name];
@@ -169,10 +171,24 @@ async function validateDatabaseSchema(
     }
   });
 
-  if (missing.length || mismatched.length) {
+  Object.entries(selectOptionRequirements).forEach(([propertyName, requiredOptions]) => {
+    const schema = properties[propertyName];
+    if (!schema || schema.type !== "select") {
+      return;
+    }
+    const options = schema.select?.options ?? [];
+    const optionNames = new Set(options.map((option: { name: string }) => option.name));
+    const missingForProperty = requiredOptions.filter((option) => !optionNames.has(option));
+    if (missingForProperty.length) {
+      missingOptions.push(`${propertyName} (${missingForProperty.join(", ")})`);
+    }
+  });
+
+  if (missing.length || mismatched.length || missingOptions.length) {
     const details = [
       missing.length ? `Missing: ${missing.join(", ")}` : null,
       mismatched.length ? `Mismatched: ${mismatched.join(", ")}` : null,
+      missingOptions.length ? `Missing options: ${missingOptions.join(", ")}` : null,
     ]
       .filter(Boolean)
       .join("; ");
@@ -180,6 +196,41 @@ async function validateDatabaseSchema(
   }
 
   schemaCache[cacheKey] = true;
+}
+
+function parseBooleanEnv(value?: string): boolean {
+  if (!value) {
+    return false;
+  }
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function getTaskStatusConfig(env: Env) {
+  const doStatus = env.TASK_STATUS_DO || "Do";
+  const doneStatus = env.TASK_STATUS_DONE || "Done";
+  const droppedStatus =
+    env.TASK_STATUS_DROPPED || env.TASK_STATUS_DROP_VALUE || "Dropped";
+  const somedayStatus = env.TASK_STATUS_SOMEDAY || "Someday";
+  const requireExtraOptions = parseBooleanEnv(env.REQUIRE_STATUS_EXTRA_OPTIONS);
+  return { doStatus, doneStatus, droppedStatus, somedayStatus, requireExtraOptions };
+}
+
+function getTaskStatusOptionRequirements(env: Env): Record<string, string[]> {
+  const { doStatus, doneStatus, droppedStatus, requireExtraOptions } =
+    getTaskStatusConfig(env);
+  const extraOptions = requireExtraOptions ? ["Drop", "Someday"] : [];
+  return {
+    Status: [doStatus, doneStatus, droppedStatus, ...extraOptions],
+  };
+}
+
+async function validateTasksDatabaseSchema(env: Env): Promise<void> {
+  await validateDatabaseSchema(
+    env,
+    env.TASK_DB_ID,
+    TASK_PROPERTIES,
+    getTaskStatusOptionRequirements(env),
+  );
 }
 
 function getPageTitleFromProperty(
@@ -292,7 +343,8 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_PROPERTIES);
+  const { doStatus, somedayStatus } = getTaskStatusConfig(env);
+  await validateTasksDatabaseSchema(env);
 
   const response = await notionFetch(env, `databases/${env.TASK_DB_ID}/query`, {
     method: "POST",
@@ -300,8 +352,8 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
       page_size: 100,
       filter: {
         or: [
-          { property: "Status", select: { equals: "Do" } },
-          { property: "Someday", checkbox: { equals: true } },
+          { property: "Status", select: { equals: doStatus } },
+          { property: "Status", select: { equals: somedayStatus } },
         ],
       },
     }),
@@ -315,7 +367,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   const origin = new URL(request.url).origin;
   const results = (data.results ?? []).map((page: Record<string, any>) => {
     const status = page.properties?.Status?.select?.name ?? null;
-    const someday = page.properties?.Someday?.checkbox ?? false;
+    const someday = status === somedayStatus;
     return {
       id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
@@ -324,7 +376,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
       since_do: page.properties?.["Since Do"]?.date?.start ?? null,
       someday,
       confirm_promote_url:
-        someday && status !== "Do"
+        someday && status !== doStatus
           ? `${origin}/confirm/tasks/promote?id=${page.id}`
           : null,
     };
@@ -344,7 +396,7 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.TASK_DB_ID, TASKS_CLOSED_PROPERTIES);
+  await validateTasksDatabaseSchema(env);
 
   const url = new URL(request.url);
   const dateParam = url.searchParams.get("date");
@@ -490,7 +542,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     });
   }
 
-  await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_RELATION_PROPERTIES);
+  await validateTasksDatabaseSchema(env);
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_RELATION_PROPERTIES);
 
   await updateDailyLogTaskRelations(env, targetDate);
@@ -527,7 +579,8 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_PROPERTIES);
+  const { doStatus } = getTaskStatusConfig(env);
+  await validateTasksDatabaseSchema(env);
 
   const formData = await request.formData();
   const pageId = formData.get("id");
@@ -537,7 +590,7 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
 
   const jstDate = getJstDateString();
   const properties = {
-    Status: createSelectProperty("Do"),
+    Status: createSelectProperty(doStatus),
     "Since Do": createDateProperty(jstDate),
   };
 
