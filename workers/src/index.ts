@@ -68,6 +68,10 @@ const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "Drop Tasks", type: "relation" },
 ];
 
+const NOTES_MAX_LENGTH = 2000;
+const NOTES_TRUNCATION_SUFFIX = "…(truncated)";
+const BODY_CHUNK_LENGTH = 1800;
+
 const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
   { name: "Since Do", type: "date" },
@@ -399,6 +403,42 @@ function createCheckboxProperty(value: boolean) {
   };
 }
 
+function truncateForNotes(content: string): { text: string; truncated: boolean } {
+  if (content.length <= NOTES_MAX_LENGTH) {
+    return { text: content, truncated: false };
+  }
+  const availableLength = Math.max(0, NOTES_MAX_LENGTH - NOTES_TRUNCATION_SUFFIX.length);
+  return {
+    text: `${content.slice(0, availableLength)}${NOTES_TRUNCATION_SUFFIX}`,
+    truncated: true,
+  };
+}
+
+function splitIntoChunks(content: string, maxLength: number): string[] {
+  if (!content) {
+    return [];
+  }
+  const chunks: string[] = [];
+  for (let start = 0; start < content.length; start += maxLength) {
+    chunks.push(content.slice(start, start + maxLength));
+  }
+  return chunks;
+}
+
+function createParagraphBlocksFromText(content: string): Record<string, any>[] {
+  return splitIntoChunks(content, BODY_CHUNK_LENGTH).map((chunk) => ({
+    object: "block",
+    type: "paragraph",
+    paragraph: {
+      rich_text: [
+        {
+          text: { content: chunk },
+        },
+      ],
+    },
+  }));
+}
+
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
   if (!env.WORKERS_BEARER_TOKEN) {
     console.warn("WORKERS_BEARER_TOKEN is not set; auth is disabled");
@@ -626,7 +666,8 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   };
 
   if (dataJson) {
-    properties.Notes = createRichTextProperty(dataJson);
+    const notes = truncateForNotes(dataJson);
+    properties.Notes = createRichTextProperty(notes.text);
   }
 
   let resultResponse: Response;
@@ -647,6 +688,24 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
 
   if (!resultResponse.ok) {
     return notionErrorResponse(resultResponse, "handleDailyLogUpsert.upsert");
+  }
+
+  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  if (dataJson && dataJson.length > NOTES_MAX_LENGTH) {
+    const children = createParagraphBlocksFromText(dataJson);
+    if (children.length) {
+      const childrenResponse = await notionFetch(
+        env,
+        `pages/${pageId}/children`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ children }),
+        },
+      );
+      if (!childrenResponse.ok) {
+        return notionErrorResponse(childrenResponse, "handleDailyLogUpsert.children");
+      }
+    }
   }
 
   await validateTasksDatabaseSchema(env);
