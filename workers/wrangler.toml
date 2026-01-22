@@ -1,0 +1,6 @@
+name = "notion-diary-automation"
+main = "src/index.ts"
+compatibility_date = "2026-01-22"
+
+[vars]
+# Configure secrets in Cloudflare dashboard or via `wrangler secret put`.

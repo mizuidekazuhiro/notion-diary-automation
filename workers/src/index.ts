@@ -112,6 +112,12 @@ function methodNotAllowed(): Response {
   });
 }
 
+function healthCheck(): Response {
+  return new Response(JSON.stringify({ status: "ok" }), {
+    headers: jsonHeaders,
+  });
+}
+
 function createHtmlPage(title: string, body: string): Response {
   return new Response(
     `<!doctype html><html><head><meta charset="utf-8" /><title>${title}</title></head><body>${body}</body></html>`,
@@ -639,6 +645,9 @@ export default {
       }
       if (path === "/execute/tasks/promote") {
         return await handleTaskPromoteExecute(request, env);
+      }
+      if (path === "/health") {
+        return healthCheck();
       }
 
       return notFound();
