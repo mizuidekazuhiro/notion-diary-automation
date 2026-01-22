@@ -5,7 +5,12 @@ import {
   isValidDateString,
 } from "./date_utils";
 import { updateDailyLogTaskRelations } from "./daily_log_task_relations";
-import { formatNotionError, notionFetch, queryDatabaseAll } from "./notion_client";
+import {
+  getNotionErrorDetails,
+  NotionApiError,
+  notionFetch,
+  queryDatabaseAll,
+} from "./notion_client";
 import { TITLE_PROPERTIES } from "./title_properties";
 
 interface Env {
@@ -80,8 +85,8 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
 };
 
-function unauthorized(): Response {
-  return new Response(JSON.stringify({ error: "unauthorized" }), {
+function unauthorized(message = "unauthorized"): Response {
+  return new Response(JSON.stringify({ error: "unauthorized", message }), {
     status: 401,
     headers: jsonHeaders,
   });
@@ -101,8 +106,8 @@ function notFound(): Response {
   });
 }
 
-function methodNotAllowed(): Response {
-  return new Response(JSON.stringify({ error: "method not allowed" }), {
+function methodNotAllowed(message = "method not allowed"): Response {
+  return new Response(JSON.stringify({ error: message }), {
     status: 405,
     headers: jsonHeaders,
   });
@@ -121,6 +126,109 @@ function createHtmlPage(title: string, body: string): Response {
       headers: { "content-type": "text/html; charset=utf-8" },
     },
   );
+}
+
+function normalizePath(path: string): string {
+  if (path.length <= 1) {
+    return path;
+  }
+  return path.replace(/\/+$/, "");
+}
+
+async function notionErrorResponse(
+  response: Response,
+  context: string,
+): Promise<Response> {
+  const details = await getNotionErrorDetails(response);
+  console.error(`Notion API error in ${context}: ${details.message}`);
+  console.error(`Notion API response body: ${details.body}`);
+  return new Response(
+    JSON.stringify({
+      error: "notion_error",
+      status: details.status,
+      body: details.body,
+    }),
+    {
+      status: 502,
+      headers: jsonHeaders,
+    },
+  );
+}
+
+async function parseJsonBody(request: Request): Promise<Record<string, any> | null> {
+  try {
+    const data = await request.json();
+    if (data && typeof data === "object") {
+      return data as Record<string, any>;
+    }
+    return null;
+  } catch (error) {
+    console.error("Failed to parse JSON body.", error);
+    return null;
+  }
+}
+
+function validateDailyLogPayload(payload: Record<string, any>): {
+  data?: {
+    targetDate: string;
+    title: string;
+    activitySummary: string;
+    mailId: string;
+    source: string;
+    dataJson?: string;
+  };
+  error?: Response;
+} {
+  const targetDate =
+    typeof payload.target_date === "string" ? payload.target_date.trim() : "";
+  if (!targetDate) {
+    return { error: badRequest("missing target_date") };
+  }
+  if (!isValidDateString(targetDate)) {
+    return { error: badRequest("invalid target_date format") };
+  }
+
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  if (!title) {
+    return { error: badRequest("missing title") };
+  }
+
+  const activitySummary =
+    typeof payload.activity_summary === "string"
+      ? payload.activity_summary.trim()
+      : "";
+  if (!activitySummary) {
+    return { error: badRequest("missing activity_summary") };
+  }
+
+  const mailId =
+    typeof payload.mail_id === "string" ? payload.mail_id.trim() : "";
+  if (!mailId) {
+    return { error: badRequest("missing mail_id") };
+  }
+
+  const source =
+    typeof payload.source === "string" ? payload.source.trim() : "";
+  if (!source) {
+    return { error: badRequest("missing source") };
+  }
+
+  const dataJson =
+    typeof payload.data_json === "string" ? payload.data_json : undefined;
+  if (payload.data_json !== undefined && typeof payload.data_json !== "string") {
+    return { error: badRequest("data_json must be a string") };
+  }
+
+  return {
+    data: {
+      targetDate,
+      title,
+      activitySummary,
+      mailId,
+      source,
+      dataJson,
+    },
+  };
 }
 
 function getSchemaCacheKey(
@@ -151,7 +259,8 @@ async function validateDatabaseSchema(
 
   const response = await notionFetch(env, `databases/${dbId}`);
   if (!response.ok) {
-    throw new Error(await formatNotionError(response));
+    const details = await getNotionErrorDetails(response);
+    throw new NotionApiError(details);
   }
   const data = await response.json();
   const properties = data.properties ?? {};
@@ -292,15 +401,16 @@ function createCheckboxProperty(value: boolean) {
 
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
   if (!env.WORKERS_BEARER_TOKEN) {
+    console.warn("WORKERS_BEARER_TOKEN is not set; auth is disabled");
     return null;
   }
   const authHeader = request.headers.get("authorization");
   if (!authHeader) {
-    return unauthorized();
+    return unauthorized("missing bearer token");
   }
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (token !== env.WORKERS_BEARER_TOKEN) {
-    return unauthorized();
+  if (!token || token !== env.WORKERS_BEARER_TOKEN) {
+    return unauthorized("invalid bearer token");
   }
   return null;
 }
@@ -321,7 +431,7 @@ async function handleInbox(request: Request, env: Env): Promise<Response> {
     body: JSON.stringify({ page_size: 50 }),
   });
   if (!response.ok) {
-    return new Response(await formatNotionError(response), { status: response.status });
+    return notionErrorResponse(response, "handleInbox");
   }
   const data = await response.json();
   const results = (data.results ?? []).map((page: Record<string, any>) => ({
@@ -360,7 +470,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   });
 
   if (!response.ok) {
-    return new Response(await formatNotionError(response), { status: response.status });
+    return notionErrorResponse(response, "handleTasks");
   }
 
   const data = await response.json();
@@ -459,7 +569,7 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
 
 async function handleDailyLogUpsert(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
-    return methodNotAllowed();
+    return methodNotAllowed("use POST /execute/api/daily_log/upsert");
   }
   const authError = await requireBearerToken(request, env);
   if (authError) {
@@ -468,19 +578,20 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
 
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
 
-  const payload = await request.json();
-  const {
-    target_date: targetDate,
-    title,
-    activity_summary: activitySummary,
-    mail_id: mailId,
-    source,
-    data_json: dataJson,
-  } = payload ?? {};
-
-  if (!targetDate || !title || !activitySummary || !mailId || !source) {
-    return badRequest("missing required fields");
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
   }
+
+  const { data, error } = validateDailyLogPayload(payload);
+  if (error) {
+    return error;
+  }
+  if (!data) {
+    return badRequest("invalid payload");
+  }
+
+  const { targetDate, title, activitySummary, mailId, source, dataJson } = data;
 
   const queryResponse = await notionFetch(
     env,
@@ -498,9 +609,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   );
 
   if (!queryResponse.ok) {
-    return new Response(await formatNotionError(queryResponse), {
-      status: queryResponse.status,
-    });
+    return notionErrorResponse(queryResponse, "handleDailyLogUpsert.query");
   }
 
   const queryData = await queryResponse.json();
@@ -537,9 +646,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   }
 
   if (!resultResponse.ok) {
-    return new Response(await formatNotionError(resultResponse), {
-      status: resultResponse.status,
-    });
+    return notionErrorResponse(resultResponse, "handleDailyLogUpsert.upsert");
   }
 
   await validateTasksDatabaseSchema(env);
@@ -572,7 +679,7 @@ async function handleTaskPromoteConfirm(request: Request): Promise<Response> {
 
 async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
-    return methodNotAllowed();
+    return methodNotAllowed("use POST /execute/tasks/promote");
   }
   const authError = await requireBearerToken(request, env);
   if (authError) {
@@ -600,7 +707,7 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
   });
 
   if (!response.ok) {
-    return new Response(await formatNotionError(response), { status: response.status });
+    return notionErrorResponse(response, "handleTaskPromoteExecute");
   }
 
   return createHtmlPage("Promoted", "<p>Task promoted to Do.</p>");
@@ -639,13 +746,17 @@ async function handleDailyLogConfirm(request: Request): Promise<Response> {
 
 async function handleDailyLogExecute(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
-    return methodNotAllowed();
+    return methodNotAllowed("use POST /execute/api/daily_log/upsert");
   }
   const contentType = request.headers.get("content-type") ?? "";
   let payload: Record<string, string> = {};
 
   if (contentType.includes("application/json")) {
-    payload = await request.json();
+    const parsed = await parseJsonBody(request);
+    if (!parsed) {
+      return badRequest("invalid json body");
+    }
+    payload = parsed as Record<string, string>;
   } else {
     const formData = await request.formData();
     formData.forEach((value, key) => {
@@ -655,9 +766,12 @@ async function handleDailyLogExecute(request: Request, env: Env): Promise<Respon
     });
   }
 
+  const proxyHeaders = new Headers(request.headers);
+  proxyHeaders.set("content-type", "application/json; charset=utf-8");
+
   const proxyRequest = new Request(request.url, {
     method: "POST",
-    headers: request.headers,
+    headers: proxyHeaders,
     body: JSON.stringify(payload),
   });
 
@@ -667,7 +781,7 @@ async function handleDailyLogExecute(request: Request, env: Env): Promise<Respon
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname;
+    const path = normalizePath(url.pathname);
 
     try {
       if (path === "/api/inbox") {
@@ -705,10 +819,28 @@ export default {
 
       return notFound();
     } catch (error) {
-      return new Response(JSON.stringify({ error: (error as Error).message }), {
-        status: 500,
-        headers: jsonHeaders,
-      });
+      if (error instanceof NotionApiError) {
+        console.error(`Notion API error: ${error.message}`);
+        console.error(`Notion API response body: ${error.body}`);
+        return new Response(
+          JSON.stringify({
+            error: "notion_error",
+            status: error.status,
+            body: error.body,
+          }),
+          { status: 502, headers: jsonHeaders },
+        );
+      }
+
+      console.error("Unhandled error.", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return new Response(
+        JSON.stringify({ error: "internal_error", message }),
+        {
+          status: 500,
+          headers: jsonHeaders,
+        },
+      );
     }
   },
 };

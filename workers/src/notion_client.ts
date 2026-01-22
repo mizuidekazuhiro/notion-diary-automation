@@ -4,6 +4,24 @@ export type NotionEnv = {
 
 export const NOTION_VERSION = "2022-06-28";
 
+export type NotionErrorDetails = {
+  status: number;
+  body: string;
+  message: string;
+};
+
+export class NotionApiError extends Error {
+  status: number;
+  body: string;
+
+  constructor(details: NotionErrorDetails) {
+    super(details.message);
+    this.name = "NotionApiError";
+    this.status = details.status;
+    this.body = details.body;
+  }
+}
+
 export async function notionFetch(
   env: NotionEnv,
   path: string,
@@ -19,6 +37,29 @@ export async function notionFetch(
       ...(options.headers || {}),
     },
   });
+}
+
+function formatNotionErrorBody(status: number, rawText: string): string {
+  try {
+    const data = JSON.parse(rawText);
+    const code = data.code ? ` (${data.code})` : "";
+    const message = data.message ? `: ${data.message}` : "";
+    return `Notion API error ${status}${code}${message}`;
+  } catch {
+    const trimmed = rawText.trim();
+    return trimmed
+      ? `Notion API error ${status}: ${trimmed}`
+      : `Notion API error ${status}`;
+  }
+}
+
+export async function getNotionErrorDetails(
+  response: Response,
+): Promise<NotionErrorDetails> {
+  const status = response.status;
+  const rawText = await response.text();
+  const message = formatNotionErrorBody(status, rawText);
+  return { status, body: rawText, message };
 }
 
 export async function queryDatabaseAll(
@@ -43,7 +84,8 @@ export async function queryDatabaseAll(
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(await formatNotionError(response));
+      const details = await getNotionErrorDetails(response);
+      throw new NotionApiError(details);
     }
     const data = await response.json();
     results.push(...(data.results ?? []));
@@ -57,15 +99,5 @@ export async function queryDatabaseAll(
 export async function formatNotionError(response: Response): Promise<string> {
   const status = response.status;
   const rawText = await response.text();
-  try {
-    const data = JSON.parse(rawText);
-    const code = data.code ? ` (${data.code})` : "";
-    const message = data.message ? `: ${data.message}` : "";
-    return `Notion API error ${status}${code}${message}`;
-  } catch {
-    const trimmed = rawText.trim();
-    return trimmed
-      ? `Notion API error ${status}: ${trimmed}`
-      : `Notion API error ${status}`;
-  }
+  return formatNotionErrorBody(status, rawText);
 }
