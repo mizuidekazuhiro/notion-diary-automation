@@ -221,10 +221,12 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 
 - Workersの `/api/tasks` / `/api/inbox` を取得
 - Workersの `/api/tasks/closed` を取得して「昨日の成果」をメールに追加
-- HTMLメールを生成してSMTP送信
+- HTMLメール（multipart/alternative）を生成してSMTP送信
+- text/plain と text/html の両方を送信（HTML非対応の環境向けに保険）
 - 同じ実行内で `/execute/api/daily_log/upsert` にPOSTしてDaily_Logを作成/更新
 - **UTF-8 / MIME** 対応済み
 - `MAIL_TO` はカンマ区切りで複数対応
+- SMTP送信に失敗しても処理は継続（ログにエラーを出力）
 
 ## GitHub Actions
 
@@ -251,6 +253,38 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 - `TASKS_CLOSED_URL = https://<worker>.workers.dev/api/tasks/closed`
 - `DAILY_LOG_UPSERT_URL = https://<worker>.workers.dev/execute/api/daily_log/upsert`
 - `WORKERS_BEARER_TOKEN` は任意ですが、有効化する場合は **Cloudflare側のVariables/Secretsにも同じ値** を入れてください。
+
+## メール送信の設定（初心者向け）
+
+必要な環境変数（GitHub Actions Secrets）:
+
+- `MAIL_FROM`: 送信元メールアドレス（Gmail）
+- `MAIL_TO`: 送信先（カンマ区切りで複数可）
+- `GMAIL_APP_PASSWORD`: Gmailのアプリパスワード
+- `INBOX_JSON_URL`
+- `TASKS_JSON_URL`
+- `TASKS_CLOSED_URL`
+- `DAILY_LOG_UPSERT_URL`
+- `WORKERS_BEARER_TOKEN`（任意）
+
+## HTMLメールの崩れを防ぐチェックリスト
+
+1. **multipart/alternative になっているか**
+   - `text/plain` と `text/html` の両方が含まれていること
+2. **HTMLがエスケープされていないか**
+   - `&lt;div&gt;` のような表示になっている場合はエスケープされている可能性
+3. **charsetがUTF-8か**
+   - `Content-Type: text/html; charset=utf-8` になっているか
+4. **CSSはインラインのみか**
+   - Gmail/iPhoneメールで崩れないために `style=""` を使用
+
+## MIME出力の簡易テスト
+
+multipart/alternative になっているか確認できます:
+
+```bash
+python scripts/test_email_mime.py
+```
 
 ## まず最初に必ずやる設定（初心者向け）
 

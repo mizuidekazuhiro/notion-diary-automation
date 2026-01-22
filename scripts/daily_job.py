@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import smtplib
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import requests
+
+from email_templates import build_email_html, build_email_text
 
 JST = ZoneInfo("Asia/Tokyo")
 TASK_STATUS_DO = os.getenv("TASK_STATUS_DO", "Do")
@@ -197,102 +200,51 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
     return "\n".join(lines)
 
 
-def build_email_html(
-    tasks: List[TaskItem],
-    inbox: List[InboxItem],
-    closed_tasks: ClosedTasks,
-    activity_summary: str,
-    run_id: str,
-) -> str:
-    now = datetime.now(JST)
-    date_str = now.strftime("%Y-%m-%d")
-
-    def list_items(items: List[str]) -> str:
-        if not items:
-            return "<li>None</li>"
-        return "".join(f"<li>{item}</li>" for item in items)
-
-    def format_closed_items(items: List[ClosedTaskItem], icon: str) -> List[str]:
-        formatted: List[str] = []
-        for item in items:
-            if item.priority:
-                formatted.append(f"{icon} {item.title} (Priority: {item.priority})")
-            else:
-                formatted.append(f"{icon} {item.title}")
-        return formatted
-
-    def render_closed_section(
-        title: str, label: str, icon: str, items: List[ClosedTaskItem]
-    ) -> str:
-        formatted_items = format_closed_items(items, icon)
-        preview_items = formatted_items[:3]
-        preview_html = ""
-        if preview_items:
-            preview_html = f"""
-            <div>
-              <p style="margin: 8px 0 4px 0;">Preview:</p>
-              <ul>
-                {list_items(preview_items)}
-              </ul>
-            </div>
-            """
-        return f"""
-        <details>
-          <summary>{title}（{label}: {len(items)}）</summary>
-          {preview_html}
-          <ul>
-            {list_items(formatted_items)}
-          </ul>
-        </details>
-        """
-
-    task_items = [
-        f"{task.title} (Priority: {task.priority or '-'}, Since Do: {days_since(task.since_do, now) or '-'})"
-        for task in tasks
-        if task.status == TASK_STATUS_DO
-    ]
-    inbox_items = [item.title for item in inbox]
-    done_items = closed_tasks.done
-    drop_items = closed_tasks.drop
-    progress_line = f"昨日の前進：Done {len(done_items)}件 / Drop {len(drop_items)}件"
-
-    return f"""
-    <html>
-      <body>
-        <h2>{date_str} Daily Summary</h2>
-        <p>Run ID: {run_id}</p>
-        {render_closed_section("🎉 昨日完了したこと", "Done", "✅", done_items)}
-        {render_closed_section("🧹 昨日手放したこと", "Drop", "🧹", drop_items)}
-        <p><strong>{progress_line}</strong></p>
-        <h3>Tasks (Status: Do)</h3>
-        <ul>
-          {list_items(task_items)}
-        </ul>
-        <h3>Inbox</h3>
-        <ul>
-          {list_items(inbox_items)}
-        </ul>
-        <h3>Activity Summary</h3>
-        <pre style="white-space: pre-wrap;">{activity_summary}</pre>
-      </body>
-    </html>
-    """
+def format_closed_items(items: List[ClosedTaskItem], icon: str) -> List[str]:
+    formatted: List[str] = []
+    for item in items:
+        if item.priority:
+            formatted.append(f"{icon} {item.title} (Priority: {item.priority})")
+        else:
+            formatted.append(f"{icon} {item.title}")
+    return formatted
 
 
-def send_email(config: Config, subject: str, html_body: str) -> None:
+def build_email_message(
+    mail_from: str,
+    mail_to: List[str],
+    subject: str,
+    plain_text: str,
+    html_body: str,
+) -> MIMEMultipart:
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    message["From"] = config.mail_from
-    message["To"] = ", ".join(config.mail_to)
-
+    message["From"] = mail_from
+    message["To"] = ", ".join(mail_to)
+    message.attach(MIMEText(plain_text, "plain", "utf-8"))
     message.attach(MIMEText(html_body, "html", "utf-8"))
+    return message
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(config.mail_from, config.gmail_app_password)
-        server.sendmail(config.mail_from, config.mail_to, message.as_string())
+
+def send_email(
+    config: Config, subject: str, plain_text: str, html_body: str
+) -> None:
+    logger = logging.getLogger(__name__)
+    message = build_email_message(
+        config.mail_from, config.mail_to, subject, plain_text, html_body
+    )
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(config.mail_from, config.gmail_app_password)
+            server.sendmail(config.mail_from, config.mail_to, message.as_string())
+    except Exception:
+        logger.exception(
+            "Failed to send email via SMTP. The job will continue without stopping."
+        )
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     config = load_config()
     bearer = config.bearer_token
 
@@ -334,8 +286,38 @@ def main() -> None:
     post_json(config.daily_log_url, upsert_payload, bearer)
 
     subject = f"[Daily Log] {target_date}"
-    html_body = build_email_html(tasks, inbox, closed_tasks, activity_summary, run_id)
-    send_email(config, subject, html_body)
+    now = datetime.now(JST)
+    date_str = now.strftime("%Y-%m-%d")
+    task_items = [
+        f"{task.title} (Priority: {task.priority or '-'}, Since Do: {days_since(task.since_do, now) or '-'})"
+        for task in tasks
+        if task.status == TASK_STATUS_DO
+    ]
+    inbox_items = [item.title for item in inbox]
+    done_items = format_closed_items(closed_tasks.done, "✅")
+    drop_items = format_closed_items(closed_tasks.drop, "🧹")
+    progress_line = f"昨日の前進：Done {len(done_items)}件 / Drop {len(drop_items)}件"
+    html_body = build_email_html(
+        date_str=date_str,
+        run_id=run_id,
+        progress_line=progress_line,
+        done_items=done_items,
+        drop_items=drop_items,
+        task_items=task_items,
+        inbox_items=inbox_items,
+        activity_summary=activity_summary,
+    )
+    plain_text = build_email_text(
+        date_str=date_str,
+        run_id=run_id,
+        progress_line=progress_line,
+        done_items=done_items,
+        drop_items=drop_items,
+        task_items=task_items,
+        inbox_items=inbox_items,
+        activity_summary=activity_summary,
+    )
+    send_email(config, subject, plain_text, html_body)
 
 
 if __name__ == "__main__":
