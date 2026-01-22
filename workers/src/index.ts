@@ -14,8 +14,10 @@ interface Env {
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
   WORKERS_BEARER_TOKEN?: string;
+  TASK_STATUS_DO?: string;
   TASK_STATUS_DONE?: string;
   TASK_STATUS_DROP?: string;
+  REQUIRE_STATUS_EXTRA_OPTIONS?: string;
 }
 
 type NotionPropertyType =
@@ -63,13 +65,15 @@ const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
   { name: "Since Do", type: "date" },
   { name: "Priority", type: "select" },
-  { name: "Someday", type: "checkbox" },
   { name: TITLE_PROPERTIES.tasks, type: "title" },
+  { name: "Done date", type: "date" },
+  { name: "Drop date", type: "date" },
 ];
 
 const TASK_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
-  { name: "DoneAt", type: "date" },
+  { name: "Done date", type: "date" },
+  { name: "Drop date", type: "date" },
 ];
 
 const INBOX_PROPERTIES: ExpectedProperty[] = [
@@ -82,6 +86,10 @@ const TASKS_CLOSED_PROPERTIES: ExpectedProperty[] = [
   { name: "Drop date", type: "date" },
   { name: "Priority", type: "select" },
 ];
+
+const DEFAULT_STATUS_DO = "Do";
+const DEFAULT_STATUS_DONE = "Done";
+const DEFAULT_STATUS_DROP = "Drop";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -176,6 +184,56 @@ async function validateDatabaseSchema(
       .filter(Boolean)
       .join("; ");
     throw new Error(`Database schema validation failed for ${dbId}: ${details}`);
+  }
+
+  schemaCache[cacheKey] = true;
+}
+
+function getTaskStatusConfig(env: Env) {
+  return {
+    statusDo: env.TASK_STATUS_DO || DEFAULT_STATUS_DO,
+    statusDone: env.TASK_STATUS_DONE || DEFAULT_STATUS_DONE,
+    statusDrop: env.TASK_STATUS_DROP || DEFAULT_STATUS_DROP,
+    requireExtraOptions: env.REQUIRE_STATUS_EXTRA_OPTIONS?.toLowerCase() === "true",
+  };
+}
+
+async function validateTaskStatusOptions(env: Env): Promise<void> {
+  const { statusDo, statusDone, statusDrop, requireExtraOptions } = getTaskStatusConfig(env);
+  const cacheKey = `status-options:${env.TASK_DB_ID}:${statusDo}|${statusDone}|${statusDrop}|${requireExtraOptions}`;
+  if (schemaCache[cacheKey]) {
+    return;
+  }
+
+  const response = await notionFetch(env, `databases/${env.TASK_DB_ID}`);
+  if (!response.ok) {
+    throw new Error(await formatNotionError(response));
+  }
+  const data = await response.json();
+  const statusProperty = data.properties?.Status;
+  const options = statusProperty?.select?.options ?? [];
+  const optionNames = new Set(options.map((option: { name: string }) => option.name));
+
+  const requiredOptions = [statusDo, statusDone, statusDrop];
+  const missingRequired = requiredOptions.filter((name) => !optionNames.has(name));
+
+  const extraOptions = requireExtraOptions ? [statusDrop, "Someday"] : [];
+  const missingExtra = extraOptions.filter(
+    (name) => !optionNames.has(name) && !missingRequired.includes(name),
+  );
+
+  if (missingRequired.length || missingExtra.length) {
+    const details = [
+      missingRequired.length
+        ? `Missing Status options: ${missingRequired.join(", ")}`
+        : null,
+      missingExtra.length
+        ? `Missing Status extra options: ${missingExtra.join(", ")}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    throw new Error(`Database schema validation failed for ${env.TASK_DB_ID}: ${details}`);
   }
 
   schemaCache[cacheKey] = true;
@@ -292,16 +350,20 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   }
 
   await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_PROPERTIES);
+  await validateTaskStatusOptions(env);
 
+  const { statusDo, requireExtraOptions } = getTaskStatusConfig(env);
   const response = await notionFetch(env, `databases/${env.TASK_DB_ID}/query`, {
     method: "POST",
     body: JSON.stringify({
       page_size: 100,
       filter: {
-        or: [
-          { property: "Status", select: { equals: "Do" } },
-          { property: "Someday", checkbox: { equals: true } },
-        ],
+        or: requireExtraOptions
+          ? [
+              { property: "Status", select: { equals: statusDo } },
+              { property: "Status", select: { equals: "Someday" } },
+            ]
+          : [{ property: "Status", select: { equals: statusDo } }],
       },
     }),
   });
@@ -314,7 +376,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   const origin = new URL(request.url).origin;
   const results = (data.results ?? []).map((page: Record<string, any>) => {
     const status = page.properties?.Status?.select?.name ?? null;
-    const someday = page.properties?.Someday?.checkbox ?? false;
+    const someday = status === "Someday";
     return {
       id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
@@ -344,6 +406,7 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
   }
 
   await validateDatabaseSchema(env, env.TASK_DB_ID, TASKS_CLOSED_PROPERTIES);
+  await validateTaskStatusOptions(env);
 
   const url = new URL(request.url);
   const dateParam = url.searchParams.get("date");
@@ -490,6 +553,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   }
 
   await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_RELATION_PROPERTIES);
+  await validateTaskStatusOptions(env);
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_RELATION_PROPERTIES);
 
   await updateDailyLogTaskRelations(env, targetDate);
@@ -527,6 +591,7 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
   }
 
   await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_PROPERTIES);
+  await validateTaskStatusOptions(env);
 
   const formData = await request.formData();
   const pageId = formData.get("id");
@@ -535,8 +600,9 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
   }
 
   const jstDate = getJstDateString();
+  const { statusDo } = getTaskStatusConfig(env);
   const properties = {
-    Status: createSelectProperty("Do"),
+    Status: createSelectProperty(statusDo),
     "Since Do": createDateProperty(jstDate),
   };
 
