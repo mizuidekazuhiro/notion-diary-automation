@@ -20,14 +20,12 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ### Tasks DB (`TASK_DB_ID`)
 
-- `Status` (select) : 値 `Do` / `Done` / `Dropped` が存在すること（名称は環境変数で変更可）
+- `Status` (select) : 値 `Do` / `Done` / `Drop` が存在すること（名称は環境変数で変更可）
 - `Since Do` (date)
 - `Priority` (select)
-- `Someday` (checkbox)
 - `名前` (title)
 - `Done date` (date)
 - `Drop date` (date)
-- `DoneAt` (date) : 完了/取り下げが確定した日時（JST）
 
 > **プロパティ名は完全一致で固定です**。
 
@@ -95,8 +93,10 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASK_DB_ID`
 - `DAILY_LOG_DB_ID`
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
+- `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
-- `TASK_STATUS_DROP` (任意: `Dropped` がデフォルト)
+- `TASK_STATUS_DROP` (任意: `Drop` がデフォルト)
+- `TASK_STATUS_SOMEDAY` (任意: Someday判定に使うStatus値がある場合に設定)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
@@ -242,11 +242,11 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 ## Daily Log に Done/Drop タスクを Relation で記録する設定
 
 1. **Tasks DB の設定**
-   - `Status` に `Done` / `Dropped` を用意（名称を変える場合は Workers の `TASK_STATUS_DONE` / `TASK_STATUS_DROP` を変更）。
-   - `DoneAt` (date) を追加し、完了/取り下げ確定時刻（JST）を入れる。
+   - `Status` に `Do` / `Done` / `Drop` を用意（名称を変える場合は Workers の `TASK_STATUS_DO` / `TASK_STATUS_DONE` / `TASK_STATUS_DROP` を変更）。
+   - `Done date` / `Drop date` (date) を追加し、完了日/取り下げ日を入れる。
 2. **Daily_Log DB の設定**
    - `Date` (date) を作成し、日付を保存する。
    - `Done Tasks` / `Drop Tasks` を Tasks DB への Relation で作成。
    - `Done Count` / `Drop Count` を Rollup で作成（`名前` を Count all）。
 3. **実行**
-   - GitHub Actions の日次ジョブが、前日分の `DoneAt` を集計して当日の Daily Log に Relation をセットします。
+   - GitHub Actions の日次ジョブが、前日分の `Done date` / `Drop date` を集計して当日の Daily Log に Relation をセットします。
