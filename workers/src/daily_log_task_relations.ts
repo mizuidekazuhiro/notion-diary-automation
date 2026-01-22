@@ -69,6 +69,7 @@ async function fetchTaskIdsByStatus(
   const pages = await queryDatabaseAll(env, env.TASK_DB_ID, {
     and: [
       { property: "Status", select: { equals: status } },
+      { property: dateProperty, date: { is_not_empty: true } },
       {
         property: dateProperty,
         date: {

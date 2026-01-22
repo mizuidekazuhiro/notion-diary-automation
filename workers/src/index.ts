@@ -57,7 +57,6 @@ const DAILY_LOG_PROPERTIES: ExpectedProperty[] = [
   { name: "Meal summary", type: "rich_text" },
   { name: "Mail ID", type: "rich_text" },
   { name: "Mood", type: "select" },
-  { name: "Notes", type: "rich_text" },
   { name: "Source", type: "select" },
   { name: "Weight", type: "number" },
 ];
@@ -68,8 +67,6 @@ const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "Drop Tasks", type: "relation" },
 ];
 
-const NOTES_MAX_LENGTH = 2000;
-const NOTES_TRUNCATION_SUFFIX = "…(truncated)";
 const BODY_CHUNK_LENGTH = 1800;
 
 const TASK_PROPERTIES: ExpectedProperty[] = [
@@ -414,17 +411,6 @@ function createCheckboxProperty(value: boolean) {
   };
 }
 
-function truncateForNotes(content: string): { text: string; truncated: boolean } {
-  if (content.length <= NOTES_MAX_LENGTH) {
-    return { text: content, truncated: false };
-  }
-  const availableLength = Math.max(0, NOTES_MAX_LENGTH - NOTES_TRUNCATION_SUFFIX.length);
-  return {
-    text: `${content.slice(0, availableLength)}${NOTES_TRUNCATION_SUFFIX}`,
-    truncated: true,
-  };
-}
-
 function splitIntoChunks(content: string, maxLength: number): string[] {
   if (!content) {
     return [];
@@ -558,6 +544,7 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
   }
 
   await validateTasksDatabaseSchema(env);
+  const { doneStatus, droppedStatus } = getTaskStatusConfig(env);
 
   const url = new URL(request.url);
   const dateParam = url.searchParams.get("date");
@@ -573,19 +560,31 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
   const endJst = `${nextDate}T00:00:00+09:00`;
 
   const donePages = await queryDatabaseAll(env, env.TASK_DB_ID, {
-    property: "Done date",
-    date: {
-      on_or_after: startJst,
-      before: endJst,
-    },
+    and: [
+      { property: "Status", select: { equals: doneStatus } },
+      { property: "Done date", date: { is_not_empty: true } },
+      {
+        property: "Done date",
+        date: {
+          on_or_after: startJst,
+          before: endJst,
+        },
+      },
+    ],
   });
 
   const dropPages = await queryDatabaseAll(env, env.TASK_DB_ID, {
-    property: "Drop date",
-    date: {
-      on_or_after: startJst,
-      before: endJst,
-    },
+    and: [
+      { property: "Status", select: { equals: droppedStatus } },
+      { property: "Drop date", date: { is_not_empty: true } },
+      {
+        property: "Drop date",
+        date: {
+          on_or_after: startJst,
+          before: endJst,
+        },
+      },
+    ],
   });
 
   const done = donePages.map((page: Record<string, any>) => ({
@@ -676,11 +675,6 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     Source: createSelectProperty(source),
   };
 
-  if (dataJson) {
-    const notes = truncateForNotes(dataJson);
-    properties.Notes = createRichTextProperty(notes.text);
-  }
-
   let resultResponse: Response;
   if (existingPage) {
     resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
@@ -702,7 +696,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   }
 
   const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
-  if (dataJson && dataJson.length > NOTES_MAX_LENGTH) {
+  if (dataJson) {
     const children = createParagraphBlocksFromText(dataJson);
     if (children.length) {
       const childrenResponse = await notionFetch(
