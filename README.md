@@ -18,13 +18,14 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ### Tasks DB (`TASK_DB_ID`)
 
-- `Status` (select) : 値 `Do` が存在すること
+- `Status` (select) : 値 `Do` / `Done` / `Dropped` が存在すること（名称は環境変数で変更可）
 - `Since Do` (date)
 - `Priority` (select)
 - `Someday` (checkbox)
 - `名前` (title)
 - `Done date` (date)
 - `Drop date` (date)
+- `DoneAt` (date) : 完了/取り下げが確定した日時（JST）
 
 > **プロパティ名は完全一致で固定です**。
 
@@ -35,6 +36,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 ### Daily_Log DB (`DAILY_LOG_DB_ID`)
 
 - `Title` (title)
+- `Date` (date) : その日のページの日付
 - `Target Date` (date) ← **Upsert判定キー**
 - `Activity Summary` (rich_text)
 - `Diary` (rich_text)
@@ -46,6 +48,10 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Notes` (rich_text)
 - `Source` (select)
 - `Weight` (number)
+- `Done Tasks` (relation -> Tasks DB)
+- `Drop Tasks` (relation -> Tasks DB)
+- `Done Count` (rollup: Done Tasks の Title を Count all)
+- `Drop Count` (rollup: Drop Tasks の Title を Count all)
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
 
@@ -67,6 +73,8 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASK_DB_ID`
 - `DAILY_LOG_DB_ID`
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
+- `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
+- `TASK_STATUS_DROP` (任意: `Dropped` がデフォルト)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
@@ -96,6 +104,7 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 
 - **検索条件**: `Target Date` が `YYYY-MM-DD` で一致するページを検索
 - 存在すれば更新 / 無ければ作成
+- `Date` も `Target Date` と同じ日付で更新されます
 
 Workersへのリクエスト例（Pythonから送信）:
 
@@ -172,3 +181,15 @@ Workersへのリクエスト例（Pythonから送信）:
 2. GitHub Actionsの `workflow_dispatch` で手動実行
 3. メールに「昨日完了したこと」が出ることを確認
 4. `GET /api/tasks/closed?date=YYYY-MM-DD` を叩いてJSONが返ることを確認
+
+## Daily Log に Done/Drop タスクを Relation で記録する設定
+
+1. **Tasks DB の設定**
+   - `Status` に `Done` / `Dropped` を用意（名称を変える場合は Workers の `TASK_STATUS_DONE` / `TASK_STATUS_DROP` を変更）。
+   - `DoneAt` (date) を追加し、完了/取り下げ確定時刻（JST）を入れる。
+2. **Daily_Log DB の設定**
+   - `Date` (date) を作成し、日付を保存する。
+   - `Done Tasks` / `Drop Tasks` を Tasks DB への Relation で作成。
+   - `Done Count` / `Drop Count` を Rollup で作成（Title を Count all）。
+3. **実行**
+   - GitHub Actions の日次ジョブが、前日分の `DoneAt` を集計して当日の Daily Log に Relation をセットします。

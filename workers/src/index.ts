@@ -1,9 +1,20 @@
+import {
+  addDaysToJstDate,
+  getJstDateString,
+  getJstYesterdayString,
+  isValidDateString,
+} from "./date_utils";
+import { updateDailyLogTaskRelations } from "./daily_log_task_relations";
+import { formatNotionError, notionFetch, queryDatabaseAll } from "./notion_client";
+
 interface Env {
   NOTION_TOKEN: string;
   INBOX_DB_ID: string;
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
   WORKERS_BEARER_TOKEN?: string;
+  TASK_STATUS_DONE?: string;
+  TASK_STATUS_DROP?: string;
 }
 
 type NotionPropertyType =
@@ -12,7 +23,9 @@ type NotionPropertyType =
   | "number"
   | "select"
   | "date"
-  | "checkbox";
+  | "checkbox"
+  | "relation"
+  | "rollup";
 
 type ExpectedProperty = {
   name: string;
@@ -23,10 +36,9 @@ type SchemaCache = Record<string, boolean>;
 
 const schemaCache: SchemaCache = {};
 
-const NOTION_VERSION = "2022-06-28";
-
 const DAILY_LOG_PROPERTIES: ExpectedProperty[] = [
   { name: "Title", type: "title" },
+  { name: "Date", type: "date" },
   { name: "Target Date", type: "date" },
   { name: "Activity Summary", type: "rich_text" },
   { name: "Diary", type: "rich_text" },
@@ -40,12 +52,23 @@ const DAILY_LOG_PROPERTIES: ExpectedProperty[] = [
   { name: "Weight", type: "number" },
 ];
 
+const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
+  { name: "Date", type: "date" },
+  { name: "Done Tasks", type: "relation" },
+  { name: "Drop Tasks", type: "relation" },
+];
+
 const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Status", type: "select" },
   { name: "Since Do", type: "date" },
   { name: "Priority", type: "select" },
   { name: "Someday", type: "checkbox" },
   { name: "名前", type: "title" },
+];
+
+const TASK_RELATION_PROPERTIES: ExpectedProperty[] = [
+  { name: "Status", type: "select" },
+  { name: "DoneAt", type: "date" },
 ];
 
 const INBOX_PROPERTIES: ExpectedProperty[] = [{ name: "Title", type: "title" }];
@@ -98,23 +121,6 @@ function createHtmlPage(title: string, body: string): Response {
   );
 }
 
-async function notionFetch(
-  env: Env,
-  path: string,
-  options: RequestInit = {},
-): Promise<Response> {
-  const url = `https://api.notion.com/v1/${path}`;
-  return fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${env.NOTION_TOKEN}`,
-      "Notion-Version": NOTION_VERSION,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-}
-
 function getSchemaCacheKey(dbId: string, expectedProperties: ExpectedProperty[]): string {
   const propertiesKey = expectedProperties
     .map((property) => `${property.name}:${property.type}`)
@@ -134,7 +140,7 @@ async function validateDatabaseSchema(
 
   const response = await notionFetch(env, `databases/${dbId}`);
   if (!response.ok) {
-    throw new Error(`Failed to fetch database schema: ${response.status}`);
+    throw new Error(await formatNotionError(response));
   }
   const data = await response.json();
   const properties = data.properties ?? {};
@@ -179,64 +185,6 @@ function getPageTitleFromProperty(
 
 function getPageTitle(page: Record<string, any>): string {
   return getPageTitleFromProperty(page, "Title");
-}
-
-function getJstDateString(date = new Date()): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return formatter.format(date);
-}
-
-function getJstYesterdayString(): string {
-  const now = Date.now();
-  return getJstDateString(new Date(now - 24 * 60 * 60 * 1000));
-}
-
-function isValidDateString(dateString: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateString);
-}
-
-function addDaysToJstDate(dateString: string, days: number): string {
-  const date = new Date(`${dateString}T00:00:00+09:00`);
-  date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
-  return getJstDateString(date);
-}
-
-async function queryDatabaseAll(
-  env: Env,
-  dbId: string,
-  filter: Record<string, any>,
-): Promise<Record<string, any>[]> {
-  const results: Record<string, any>[] = [];
-  let hasMore = true;
-  let startCursor: string | undefined;
-
-  while (hasMore) {
-    const body: Record<string, any> = {
-      page_size: 100,
-      filter,
-    };
-    if (startCursor) {
-      body.start_cursor = startCursor;
-    }
-    const response = await notionFetch(env, `databases/${dbId}/query`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to query database: ${response.status}`);
-    }
-    const data = await response.json();
-    results.push(...(data.results ?? []));
-    hasMore = data.has_more ?? false;
-    startCursor = data.next_cursor ?? undefined;
-  }
-
-  return results;
 }
 
 function createTitleProperty(title: string) {
@@ -316,7 +264,7 @@ async function handleInbox(request: Request, env: Env): Promise<Response> {
     body: JSON.stringify({ page_size: 50 }),
   });
   if (!response.ok) {
-    return new Response(await response.text(), { status: response.status });
+    return new Response(await formatNotionError(response), { status: response.status });
   }
   const data = await response.json();
   const results = (data.results ?? []).map((page: Record<string, any>) => ({
@@ -354,7 +302,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   });
 
   if (!response.ok) {
-    return new Response(await response.text(), { status: response.status });
+    return new Response(await formatNotionError(response), { status: response.status });
   }
 
   const data = await response.json();
@@ -492,7 +440,9 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   );
 
   if (!queryResponse.ok) {
-    return new Response(await queryResponse.text(), { status: queryResponse.status });
+    return new Response(await formatNotionError(queryResponse), {
+      status: queryResponse.status,
+    });
   }
 
   const queryData = await queryResponse.json();
@@ -501,6 +451,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   const properties: Record<string, any> = {
     Title: createTitleProperty(title),
     "Target Date": createDateProperty(targetDate),
+    Date: createDateProperty(targetDate),
     "Activity Summary": createRichTextProperty(activitySummary),
     Diary: createRichTextProperty(""),
     "Mail ID": createRichTextProperty(mailId),
@@ -528,8 +479,15 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   }
 
   if (!resultResponse.ok) {
-    return new Response(await resultResponse.text(), { status: resultResponse.status });
+    return new Response(await formatNotionError(resultResponse), {
+      status: resultResponse.status,
+    });
   }
+
+  await validateDatabaseSchema(env, env.TASK_DB_ID, TASK_RELATION_PROPERTIES);
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_RELATION_PROPERTIES);
+
+  await updateDailyLogTaskRelations(env, targetDate);
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: jsonHeaders,
@@ -583,7 +541,7 @@ async function handleTaskPromoteExecute(request: Request, env: Env): Promise<Res
   });
 
   if (!response.ok) {
-    return new Response(await response.text(), { status: response.status });
+    return new Response(await formatNotionError(response), { status: response.status });
   }
 
   return createHtmlPage("Promoted", "<p>Task promoted to Do.</p>");
