@@ -115,6 +115,13 @@ Workers環境変数（Secrets）に以下を設定します。
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
 
+### GitHub Actions用URLの対応表
+
+- `INBOX_JSON_URL`: `/api/inbox`
+- `TASKS_JSON_URL`: `/api/tasks`
+- `TASKS_CLOSED_URL`: `/api/tasks/closed`
+- `DAILY_LOG_UPSERT_URL`: `/execute/api/daily_log/upsert`
+
 ### ルーティング簡易チェック
 
 `/health` または `/api/tasks` が返ることを確認すると、**NotFound回避の確認**ができます。
@@ -130,13 +137,25 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 
 > `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
 
-### 404/401/500 の切り分け（よくある原因）
+> `WORKERS_BEARER_TOKEN` を有効化する場合は、**GitHub ActionsのSecretsとWorkersの環境変数に同じ値**を設定してください。
+
+### 404/401/500/502 の切り分け（よくある原因）
 
 | ステータス | 主な原因 | 確認ポイント |
 | --- | --- | --- |
 | 404 Not Found | ルートのパス誤り / デプロイ先のURL誤り | `/health` のURLが正しいか |
 | 401 Unauthorized | `WORKERS_BEARER_TOKEN` が設定済みなのにヘッダ未指定 | `Authorization: Bearer ...` を付ける |
-| 500 Internal Server Error | Notion Secrets未設定 / DBスキーマ不一致 | WorkersのVariables/SecretsとNotion DBプロパティ |
+| 500 Internal Server Error | 予期せぬ内部エラー | Workersログのスタックトレース |
+| 502 Bad Gateway | Notion APIエラー | 返却されたJSONの `status` / `body` を確認 |
+
+### 401/405/502 が出たときの診断手順（会社PCで手動POSTできない前提）
+
+1. **GitHub Actionsログを確認**し、HTTPステータスとレスポンスJSONを把握する。
+2. **Cloudflare Workersログ（Tail）を確認**し、`Notion API error` や `WORKERS_BEARER_TOKEN is not set; auth is disabled` などの警告を確認する。
+3. ステータス別の切り分け:
+   - `401`: `WORKERS_BEARER_TOKEN` の値が Actions と Workers で一致しているか。
+   - `405`: URLが `/execute/api/daily_log/upsert` になっているか、POSTで送信しているか。
+   - `502`: Notion APIエラー。レスポンスJSONの `status` / `body` を確認する。
 
 #### Bearer認証の例
 

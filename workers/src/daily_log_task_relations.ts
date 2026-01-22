@@ -1,5 +1,10 @@
 import { addDaysToJstDate, getJstDateString } from "./date_utils";
-import { formatNotionError, notionFetch, queryDatabaseAll } from "./notion_client";
+import {
+  getNotionErrorDetails,
+  NotionApiError,
+  notionFetch,
+  queryDatabaseAll,
+} from "./notion_client";
 import { TITLE_PROPERTIES } from "./title_properties";
 
 export type DailyLogTaskRelationEnv = {
@@ -97,7 +102,8 @@ async function findOrCreateDailyLogPage(
   );
 
   if (!queryResponse.ok) {
-    throw new Error(await formatNotionError(queryResponse));
+    const details = await getNotionErrorDetails(queryResponse);
+    throw new NotionApiError(details);
   }
 
   const queryData = await queryResponse.json();
@@ -119,7 +125,8 @@ async function findOrCreateDailyLogPage(
   });
 
   if (!createResponse.ok) {
-    throw new Error(await formatNotionError(createResponse));
+    const details = await getNotionErrorDetails(createResponse);
+    throw new NotionApiError(details);
   }
 
   const createdPage = await createResponse.json();
@@ -160,7 +167,8 @@ export async function updateDailyLogTaskRelations(
   });
 
   if (!updateResponse.ok) {
-    throw new Error(await formatNotionError(updateResponse));
+    const details = await getNotionErrorDetails(updateResponse);
+    throw new NotionApiError(details);
   }
 
   console.log(
