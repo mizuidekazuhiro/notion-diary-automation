@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 import requests
 
 JST = ZoneInfo("Asia/Tokyo")
+TASK_STATUS_DO = os.getenv("TASK_STATUS_DO", "Do")
+TASK_STATUS_SOMEDAY = os.getenv("TASK_STATUS_SOMEDAY", "Someday")
 
 
 @dataclass
@@ -31,7 +33,6 @@ class TaskItem:
     status: Optional[str]
     priority: Optional[str]
     since_do: Optional[str]
-    someday: bool
     confirm_promote_url: Optional[str]
 
 
@@ -104,7 +105,6 @@ def parse_tasks(data: Dict[str, Any]) -> List[TaskItem]:
                 status=item.get("status"),
                 priority=item.get("priority"),
                 since_do=item.get("since_do"),
-                someday=bool(item.get("someday")),
                 confirm_promote_url=item.get("confirm_promote_url"),
             )
         )
@@ -158,7 +158,7 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
     lines: List[str] = []
 
     lines.append("【Tasks (Status: Do)】")
-    do_tasks = [task for task in tasks if task.status == "Do"]
+    do_tasks = [task for task in tasks if task.status == TASK_STATUS_DO]
     if do_tasks:
         for task in do_tasks:
             elapsed = days_since(task.since_do, now)
@@ -180,7 +180,7 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
     if monday:
         lines.append("")
         lines.append("【Someday (Monday only)】")
-        someday_tasks = [task for task in tasks if task.someday and task.status != "Do"]
+        someday_tasks = [task for task in tasks if task.status == TASK_STATUS_SOMEDAY]
         if someday_tasks:
             for task in someday_tasks:
                 link = task.confirm_promote_url or "Confirm URL unavailable"
@@ -243,7 +243,7 @@ def build_email_html(
     task_items = [
         f"{task.title} (Priority: {task.priority or '-'}, Since Do: {days_since(task.since_do, now) or '-'})"
         for task in tasks
-        if task.status == "Do"
+        if task.status == TASK_STATUS_DO
     ]
     inbox_items = [item.title for item in inbox]
     done_items = closed_tasks.done
