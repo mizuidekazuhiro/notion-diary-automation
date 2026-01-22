@@ -24,7 +24,7 @@ export type DailyLogTaskRelationResult = {
 };
 
 const DEFAULT_DONE_STATUS = "Done";
-const DEFAULT_DROP_STATUS = "Dropped";
+const DEFAULT_DROP_STATUS = "Drop";
 
 function createTitleProperty(title: string) {
   return {

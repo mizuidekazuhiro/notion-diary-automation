@@ -209,7 +209,7 @@ function getTaskStatusConfig(env: Env) {
   const doStatus = env.TASK_STATUS_DO || "Do";
   const doneStatus = env.TASK_STATUS_DONE || "Done";
   const droppedStatus =
-    env.TASK_STATUS_DROPPED || env.TASK_STATUS_DROP_VALUE || "Dropped";
+    env.TASK_STATUS_DROPPED || env.TASK_STATUS_DROP_VALUE || "Drop";
   const somedayStatus = env.TASK_STATUS_SOMEDAY || "Someday";
   const requireExtraOptions = parseBooleanEnv(env.REQUIRE_STATUS_EXTRA_OPTIONS);
   return { doStatus, doneStatus, droppedStatus, somedayStatus, requireExtraOptions };
