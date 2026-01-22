@@ -88,7 +88,7 @@ async function findOrCreateDailyLogPage(
 ): Promise<{ pageId: string; created: boolean }> {
   const queryResponse = await notionFetch(
     env,
-    `databases/${env.DAILY_LOG_DB_ID}/query`,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -113,7 +113,7 @@ async function findOrCreateDailyLogPage(
   }
 
   const title = `${targetDate} Daily Log`;
-  const createResponse = await notionFetch(env, "pages", {
+  const createResponse = await notionFetch(env, "/pages", {
     method: "POST",
     body: JSON.stringify({
       parent: { database_id: env.DAILY_LOG_DB_ID },
@@ -156,7 +156,7 @@ export async function updateDailyLogTaskRelations(
   );
 
   const { pageId, created } = await findOrCreateDailyLogPage(env, targetDate);
-  const updateResponse = await notionFetch(env, `pages/${pageId}`, {
+  const updateResponse = await notionFetch(env, `/pages/${pageId}`, {
     method: "PATCH",
     body: JSON.stringify({
       properties: {
