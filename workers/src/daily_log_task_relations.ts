@@ -5,6 +5,7 @@ import {
   notionFetch,
   queryDatabaseAll,
 } from "./notion_client";
+import { getTaskPropertyNames, TaskPropertyNameEnv } from "./task_property_names";
 import { TITLE_PROPERTIES } from "./title_properties";
 
 export type DailyLogTaskRelationEnv = {
@@ -14,6 +15,9 @@ export type DailyLogTaskRelationEnv = {
   TASK_STATUS_DONE?: string;
   TASK_STATUS_DROPPED?: string;
   TASK_STATUS_DROP_VALUE?: string;
+  TASK_STATUS_PROPERTY_NAME?: string;
+  TASK_DONE_DATE_PROPERTY_NAME?: string;
+  TASK_DROP_DATE_PROPERTY_NAME?: string;
 };
 
 export type DailyLogTaskRelationResult = {
@@ -30,9 +34,16 @@ export type DailyLogTaskRelationResult = {
 
 const DEFAULT_DONE_STATUS = "Done";
 const DEFAULT_DROP_STATUS = "Drop";
-const TASK_STATUS_PROPERTY = "Status";
-const TASK_DONE_DATE_PROPERTY = "Done date";
-const TASK_DROP_DATE_PROPERTY = "Drop date";
+
+function logNotionQueryPayload(context: string, filter: Record<string, any>) {
+  console.log(
+    `Notion query payload (${context}): ${JSON.stringify({
+      page_size: 100,
+      database_id: "***",
+      filter,
+    })}`,
+  );
+}
 
 function createTitleProperty(title: string) {
   return {
@@ -64,14 +75,15 @@ function buildYesterdayRange(targetDate: string) {
 }
 
 async function fetchTaskIdsByStatus(
-  env: DailyLogTaskRelationEnv,
+  env: DailyLogTaskRelationEnv & TaskPropertyNameEnv,
   status: string,
   dateProperty: string,
   range: { startJst: string; endJst: string },
 ): Promise<string[]> {
-  const pages = await queryDatabaseAll(env, env.TASK_DB_ID, {
+  const { statusPropertyName } = getTaskPropertyNames(env);
+  const filter = {
     and: [
-      { property: TASK_STATUS_PROPERTY, select: { equals: status } },
+      { property: statusPropertyName, select: { equals: status } },
       { property: dateProperty, date: { is_not_empty: true } },
       {
         property: dateProperty,
@@ -81,7 +93,9 @@ async function fetchTaskIdsByStatus(
         },
       },
     ],
-  });
+  };
+  logNotionQueryPayload(`tasks/${status}`, filter);
+  const pages = await queryDatabaseAll(env, env.TASK_DB_ID, filter);
 
   return pages.map((page: Record<string, any>) => page.id);
 }
@@ -142,17 +156,19 @@ export async function updateDailyLogTaskRelations(
   targetDate = getJstDateString(),
 ): Promise<DailyLogTaskRelationResult> {
   const range = buildYesterdayRange(targetDate);
+  const yesterday = addDaysToJstDate(targetDate, -1);
+  const { doneDatePropertyName, dropDatePropertyName } = getTaskPropertyNames(env);
   const doneStatus = env.TASK_STATUS_DONE || DEFAULT_DONE_STATUS;
   const dropStatus =
     env.TASK_STATUS_DROPPED || env.TASK_STATUS_DROP_VALUE || DEFAULT_DROP_STATUS;
 
   console.log(
-    `DailyLog relations: target=${targetDate} range=${range.startJst}..${range.endJst}`,
+    `DailyLog relations: today=${targetDate}(JST) yesterday=${yesterday}(JST) range=${range.startJst}..${range.endJst}`,
   );
 
   const [doneTaskIds, dropTaskIds] = await Promise.all([
-    fetchTaskIdsByStatus(env, doneStatus, TASK_DONE_DATE_PROPERTY, range),
-    fetchTaskIdsByStatus(env, dropStatus, TASK_DROP_DATE_PROPERTY, range),
+    fetchTaskIdsByStatus(env, doneStatus, doneDatePropertyName, range),
+    fetchTaskIdsByStatus(env, dropStatus, dropDatePropertyName, range),
   ]);
 
   console.log(

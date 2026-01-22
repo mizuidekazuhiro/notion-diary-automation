@@ -32,32 +32,32 @@ def main() -> None:
     )
 
     assert_contains(
-        r'property:\s*(?:"Status"|TASK_STATUS_PROPERTY)\s*,\s*select:\s*\{\s*equals:\s*doneStatus',
+        r'property:\s*(?:"Status"|statusPropertyName)\s*,\s*select:\s*\{\s*equals:\s*doneStatus',
         index_text,
         "Done filter should include Status == doneStatus.",
     )
     assert_contains(
-        r'property:\s*(?:"Status"|TASK_STATUS_PROPERTY)\s*,\s*select:\s*\{\s*equals:\s*droppedStatus',
+        r'property:\s*(?:"Status"|statusPropertyName)\s*,\s*select:\s*\{\s*equals:\s*droppedStatus',
         index_text,
         "Drop filter should include Status == droppedStatus.",
     )
     assert_contains(
-        r'property:\s*(?:"Done date"|TASK_DONE_DATE_PROPERTY)\s*,\s*date:\s*\{\s*is_not_empty:\s*true',
+        r'property:\s*(?:"Done date"|doneDatePropertyName)\s*,\s*date:\s*\{\s*is_not_empty:\s*true',
         index_text,
         "Done filter should require Done date is_not_empty.",
     )
     assert_contains(
-        r'property:\s*(?:"Drop date"|TASK_DROP_DATE_PROPERTY)\s*,\s*date:\s*\{\s*is_not_empty:\s*true',
+        r'property:\s*(?:"Drop date"|dropDatePropertyName)\s*,\s*date:\s*\{\s*is_not_empty:\s*true',
         index_text,
         "Drop filter should require Drop date is_not_empty.",
     )
     assert_contains(
-        r'property:\s*(?:"Done date"|TASK_DONE_DATE_PROPERTY)[\s\S]*on_or_after:[\s\S]*before:',
+        r'property:\s*(?:"Done date"|doneDatePropertyName)[\s\S]*on_or_after:[\s\S]*before:',
         index_text,
         "Done filter should include date range.",
     )
     assert_contains(
-        r'property:\s*(?:"Drop date"|TASK_DROP_DATE_PROPERTY)[\s\S]*on_or_after:[\s\S]*before:',
+        r'property:\s*(?:"Drop date"|dropDatePropertyName)[\s\S]*on_or_after:[\s\S]*before:',
         index_text,
         "Drop filter should include date range.",
     )

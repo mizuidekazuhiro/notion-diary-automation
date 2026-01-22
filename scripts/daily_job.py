@@ -162,6 +162,9 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
 
     lines.append("【Tasks (Status: Do)】")
     do_tasks = [task for task in tasks if task.status == TASK_STATUS_DO]
+    do_tasks_with_since = [task for task in do_tasks if task.since_do]
+    do_tasks_without_since = [task for task in do_tasks if not task.since_do]
+    do_tasks = do_tasks_with_since + do_tasks_without_since
     if do_tasks:
         for task in do_tasks:
             elapsed = days_since(task.since_do, now)

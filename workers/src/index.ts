@@ -11,6 +11,10 @@ import {
   notionFetch,
   queryDatabaseAll,
 } from "./notion_client";
+import {
+  getTaskPropertyNames,
+  TaskPropertyNameEnv,
+} from "./task_property_names";
 import { TITLE_PROPERTIES } from "./title_properties";
 
 interface Env {
@@ -25,6 +29,9 @@ interface Env {
   TASK_STATUS_DROP_VALUE?: string;
   TASK_STATUS_SOMEDAY?: string;
   REQUIRE_STATUS_EXTRA_OPTIONS?: string;
+  TASK_STATUS_PROPERTY_NAME?: string;
+  TASK_DONE_DATE_PROPERTY_NAME?: string;
+  TASK_DROP_DATE_PROPERTY_NAME?: string;
 }
 
 type NotionPropertyType =
@@ -69,14 +76,18 @@ const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
 
 const BODY_CHUNK_LENGTH = 1800;
 
-const TASK_PROPERTIES: ExpectedProperty[] = [
-  { name: "Status", type: "select" },
-  { name: "Since Do", type: "date" },
-  { name: "Priority", type: "select" },
-  { name: TITLE_PROPERTIES.tasks, type: "title" },
-  { name: "Done date", type: "date" },
-  { name: "Drop date", type: "date" },
-];
+function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
+  const { statusPropertyName, doneDatePropertyName, dropDatePropertyName } =
+    getTaskPropertyNames(env);
+  return [
+    { name: statusPropertyName, type: "select" },
+    { name: "Since Do", type: "date" },
+    { name: "Priority", type: "select" },
+    { name: TITLE_PROPERTIES.tasks, type: "title" },
+    { name: doneDatePropertyName, type: "date" },
+    { name: dropDatePropertyName, type: "date" },
+  ];
+}
 
 const INBOX_PROPERTIES: ExpectedProperty[] = [
   { name: TITLE_PROPERTIES.inbox, type: "title" },
@@ -85,10 +96,6 @@ const INBOX_PROPERTIES: ExpectedProperty[] = [
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
 };
-
-const TASK_STATUS_PROPERTY = "Status";
-const TASK_DONE_DATE_PROPERTY = "Done date";
-const TASK_DROP_DATE_PROPERTY = "Drop date";
 
 function unauthorized(message = "unauthorized"): Response {
   return new Response(JSON.stringify({ error: "unauthorized", message }), {
@@ -333,6 +340,12 @@ async function validateDatabaseSchema(
     }
   });
 
+  if (missing.length) {
+    console.warn(
+      `Database schema warning: 存在しないプロパティ名かも -> ${missing.join(", ")}`,
+    );
+  }
+
   if (missing.length || mismatched.length || missingOptions.length) {
     const details = [
       missing.length ? `Missing: ${missing.join(", ")}` : null,
@@ -367,9 +380,10 @@ function getTaskStatusConfig(env: Env) {
 function getTaskStatusOptionRequirements(env: Env): Record<string, string[]> {
   const { doStatus, doneStatus, droppedStatus, requireExtraOptions } =
     getTaskStatusConfig(env);
+  const { statusPropertyName } = getTaskPropertyNames(env);
   const extraOptions = requireExtraOptions ? ["Drop", "Someday"] : [];
   return {
-    Status: [doStatus, doneStatus, droppedStatus, ...extraOptions],
+    [statusPropertyName]: [doStatus, doneStatus, droppedStatus, ...extraOptions],
   };
 }
 
@@ -377,7 +391,7 @@ async function validateTasksDatabaseSchema(env: Env): Promise<void> {
   await validateDatabaseSchema(
     env,
     env.TASK_DB_ID,
-    TASK_PROPERTIES,
+    buildTaskProperties(env),
     getTaskStatusOptionRequirements(env),
   );
 }
@@ -520,6 +534,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
 
   const { doStatus, somedayStatus } = getTaskStatusConfig(env);
   await validateTasksDatabaseSchema(env);
+  const { statusPropertyName } = getTaskPropertyNames(env);
 
   const response = await notionFetch(env, `/databases/${env.TASK_DB_ID}/query`, {
     method: "POST",
@@ -527,8 +542,8 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
       page_size: 100,
       filter: {
         or: [
-          { property: "Status", select: { equals: doStatus } },
-          { property: "Status", select: { equals: somedayStatus } },
+          { property: statusPropertyName, select: { equals: doStatus } },
+          { property: statusPropertyName, select: { equals: somedayStatus } },
         ],
       },
     }),
@@ -541,7 +556,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   const data = await response.json();
   const origin = new URL(request.url).origin;
   const results = (data.results ?? []).map((page: Record<string, any>) => {
-    const status = page.properties?.Status?.select?.name ?? null;
+    const status = page.properties?.[statusPropertyName]?.select?.name ?? null;
     const someday = status === somedayStatus;
     return {
       id: page.id,
@@ -573,6 +588,8 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
 
   await validateTasksDatabaseSchema(env);
   const { doneStatus, droppedStatus } = getTaskStatusConfig(env);
+  const { statusPropertyName, doneDatePropertyName, dropDatePropertyName } =
+    getTaskPropertyNames(env);
 
   const url = new URL(request.url);
   const dateParam = url.searchParams.get("date");
@@ -587,40 +604,60 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
   const nextDate = addDaysToJstDate(targetDate, 1);
   const endJst = `${nextDate}T00:00:00+09:00`;
 
-  const donePages = await queryDatabaseAll(env, env.TASK_DB_ID, {
+  const doneFilter = {
     and: [
-      { property: TASK_STATUS_PROPERTY, select: { equals: doneStatus } },
-      { property: TASK_DONE_DATE_PROPERTY, date: { is_not_empty: true } },
+      { property: statusPropertyName, select: { equals: doneStatus } },
+      { property: doneDatePropertyName, date: { is_not_empty: true } },
       {
-        property: TASK_DONE_DATE_PROPERTY,
+        property: doneDatePropertyName,
         date: {
           on_or_after: startJst,
           before: endJst,
         },
       },
     ],
-  });
+  };
+  const dropFilter = {
+    and: [
+      { property: statusPropertyName, select: { equals: droppedStatus } },
+      { property: dropDatePropertyName, date: { is_not_empty: true } },
+      {
+        property: dropDatePropertyName,
+        date: {
+          on_or_after: startJst,
+          before: endJst,
+        },
+      },
+    ],
+  };
 
-  const dropPages = await queryDatabaseAll(env, env.TASK_DB_ID, {
-    and: [
-      { property: TASK_STATUS_PROPERTY, select: { equals: droppedStatus } },
-      { property: TASK_DROP_DATE_PROPERTY, date: { is_not_empty: true } },
-      {
-        property: TASK_DROP_DATE_PROPERTY,
-        date: {
-          on_or_after: startJst,
-          before: endJst,
-        },
-      },
-    ],
-  });
+  console.log(
+    `Tasks closed: today=${addDaysToJstDate(targetDate, 1)}(JST) yesterday=${targetDate}(JST) range=${startJst}..${endJst}`,
+  );
+  console.log(
+    `Notion query payload (tasks/closed/done): ${JSON.stringify({
+      page_size: 100,
+      database_id: "***",
+      filter: doneFilter,
+    })}`,
+  );
+  console.log(
+    `Notion query payload (tasks/closed/drop): ${JSON.stringify({
+      page_size: 100,
+      database_id: "***",
+      filter: dropFilter,
+    })}`,
+  );
+
+  const donePages = await queryDatabaseAll(env, env.TASK_DB_ID, doneFilter);
+  const dropPages = await queryDatabaseAll(env, env.TASK_DB_ID, dropFilter);
 
   const done = donePages
     .map((page: Record<string, any>) => ({
       page_id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
       priority: page.properties?.Priority?.select?.name ?? null,
-      done_date: page.properties?.[TASK_DONE_DATE_PROPERTY]?.date?.start ?? null,
+      done_date: page.properties?.[doneDatePropertyName]?.date?.start ?? null,
     }))
     .filter((item) => item.done_date);
 
@@ -629,9 +666,13 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
       page_id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
       priority: page.properties?.Priority?.select?.name ?? null,
-      drop_date: page.properties?.[TASK_DROP_DATE_PROPERTY]?.date?.start ?? null,
+      drop_date: page.properties?.[dropDatePropertyName]?.date?.start ?? null,
     }))
     .filter((item) => item.drop_date);
+
+  console.log(
+    `Tasks closed: done=${done.length} drop=${drop.length} date=${targetDate}`,
+  );
 
   return new Response(
     JSON.stringify({
