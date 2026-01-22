@@ -6,6 +6,7 @@ import {
 } from "./date_utils";
 import { updateDailyLogTaskRelations } from "./daily_log_task_relations";
 import { formatNotionError, notionFetch, queryDatabaseAll } from "./notion_client";
+import { TITLE_PROPERTIES } from "./title_properties";
 
 interface Env {
   NOTION_TOKEN: string;
@@ -37,7 +38,7 @@ type SchemaCache = Record<string, boolean>;
 const schemaCache: SchemaCache = {};
 
 const DAILY_LOG_PROPERTIES: ExpectedProperty[] = [
-  { name: "Title", type: "title" },
+  { name: TITLE_PROPERTIES.dailyLog, type: "title" },
   { name: "Date", type: "date" },
   { name: "Target Date", type: "date" },
   { name: "Activity Summary", type: "rich_text" },
@@ -63,7 +64,7 @@ const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Since Do", type: "date" },
   { name: "Priority", type: "select" },
   { name: "Someday", type: "checkbox" },
-  { name: "名前", type: "title" },
+  { name: TITLE_PROPERTIES.tasks, type: "title" },
 ];
 
 const TASK_RELATION_PROPERTIES: ExpectedProperty[] = [
@@ -71,10 +72,12 @@ const TASK_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "DoneAt", type: "date" },
 ];
 
-const INBOX_PROPERTIES: ExpectedProperty[] = [{ name: "Title", type: "title" }];
+const INBOX_PROPERTIES: ExpectedProperty[] = [
+  { name: TITLE_PROPERTIES.inbox, type: "title" },
+];
 
 const TASKS_CLOSED_PROPERTIES: ExpectedProperty[] = [
-  { name: "名前", type: "title" },
+  { name: TITLE_PROPERTIES.tasks, type: "title" },
   { name: "Done date", type: "date" },
   { name: "Drop date", type: "date" },
   { name: "Priority", type: "select" },
@@ -189,10 +192,6 @@ function getPageTitleFromProperty(
   return titleProp.map((item: { plain_text: string }) => item.plain_text).join("");
 }
 
-function getPageTitle(page: Record<string, any>): string {
-  return getPageTitleFromProperty(page, "Title");
-}
-
 function createTitleProperty(title: string) {
   return {
     title: [
@@ -275,7 +274,7 @@ async function handleInbox(request: Request, env: Env): Promise<Response> {
   const data = await response.json();
   const results = (data.results ?? []).map((page: Record<string, any>) => ({
     id: page.id,
-    title: getPageTitle(page),
+    title: getPageTitleFromProperty(page, TITLE_PROPERTIES.inbox),
   }));
 
   return new Response(JSON.stringify({ items: results }), {
@@ -318,7 +317,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
     const someday = page.properties?.Someday?.checkbox ?? false;
     return {
       id: page.id,
-      title: getPageTitleFromProperty(page, "名前"),
+      title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
       status,
       priority: page.properties?.Priority?.select?.name ?? null,
       since_do: page.properties?.["Since Do"]?.date?.start ?? null,
@@ -377,14 +376,14 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
 
   const done = donePages.map((page: Record<string, any>) => ({
     page_id: page.id,
-    title: getPageTitleFromProperty(page, "名前"),
+    title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
     priority: page.properties?.Priority?.select?.name ?? null,
     done_date: page.properties?.["Done date"]?.date?.start ?? null,
   }));
 
   const drop = dropPages.map((page: Record<string, any>) => ({
     page_id: page.id,
-    title: getPageTitleFromProperty(page, "名前"),
+    title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
     priority: page.properties?.Priority?.select?.name ?? null,
     drop_date: page.properties?.["Drop date"]?.date?.start ?? null,
   }));
@@ -455,7 +454,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   const existingPage = (queryData.results ?? [])[0];
 
   const properties: Record<string, any> = {
-    Title: createTitleProperty(title),
+    [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
     "Target Date": createDateProperty(targetDate),
     Date: createDateProperty(targetDate),
     "Activity Summary": createRichTextProperty(activitySummary),

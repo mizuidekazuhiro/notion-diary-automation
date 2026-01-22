@@ -16,6 +16,8 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ## Notion DBの必須プロパティ
 
+> **各DBのTitleプロパティ名が異なる**ため、プロパティ名は完全一致で管理します。
+
 ### Tasks DB (`TASK_DB_ID`)
 
 - `Status` (select) : 値 `Do` / `Done` / `Dropped` が存在すること（名称は環境変数で変更可）
@@ -31,11 +33,11 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ### Inbox DB (`INBOX_DB_ID`)
 
-- `Title` (title)
+- `Name` (title)
 
 ### Daily_Log DB (`DAILY_LOG_DB_ID`)
 
-- `Title` (title)
+- `名前` (title)
 - `Date` (date) : その日のページの日付
 - `Target Date` (date) ← **Upsert判定キー**
 - `Activity Summary` (rich_text)
@@ -50,8 +52,8 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Weight` (number)
 - `Done Tasks` (relation -> Tasks DB)
 - `Drop Tasks` (relation -> Tasks DB)
-- `Done Count` (rollup: Done Tasks の Title を Count all)
-- `Drop Count` (rollup: Drop Tasks の Title を Count all)
+- `Done Count` (rollup: Done Tasks の `名前` を Count all)
+- `Drop Count` (rollup: Drop Tasks の `名前` を Count all)
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
 
@@ -245,6 +247,6 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 2. **Daily_Log DB の設定**
    - `Date` (date) を作成し、日付を保存する。
    - `Done Tasks` / `Drop Tasks` を Tasks DB への Relation で作成。
-   - `Done Count` / `Drop Count` を Rollup で作成（Title を Count all）。
+   - `Done Count` / `Drop Count` を Rollup で作成（`名前` を Count all）。
 3. **実行**
    - GitHub Actions の日次ジョブが、前日分の `DoneAt` を集計して当日の Daily Log に Relation をセットします。

@@ -1,5 +1,6 @@
 import { addDaysToJstDate, getJstDateString } from "./date_utils";
 import { formatNotionError, notionFetch, queryDatabaseAll } from "./notion_client";
+import { TITLE_PROPERTIES } from "./title_properties";
 
 export type DailyLogTaskRelationEnv = {
   NOTION_TOKEN: string;
@@ -109,7 +110,7 @@ async function findOrCreateDailyLogPage(
     body: JSON.stringify({
       parent: { database_id: env.DAILY_LOG_DB_ID },
       properties: {
-        Title: createTitleProperty(title),
+        [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
         Date: createDateProperty(targetDate),
       },
     }),
