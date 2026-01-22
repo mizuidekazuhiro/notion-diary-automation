@@ -45,10 +45,17 @@ const TASK_PROPERTIES: ExpectedProperty[] = [
   { name: "Since Do", type: "date" },
   { name: "Priority", type: "select" },
   { name: "Someday", type: "checkbox" },
-  { name: "Title", type: "title" },
+  { name: "名前", type: "title" },
 ];
 
 const INBOX_PROPERTIES: ExpectedProperty[] = [{ name: "Title", type: "title" }];
+
+const TASKS_CLOSED_PROPERTIES: ExpectedProperty[] = [
+  { name: "名前", type: "title" },
+  { name: "Done date", type: "date" },
+  { name: "Drop date", type: "date" },
+  { name: "Priority", type: "select" },
+];
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -108,12 +115,20 @@ async function notionFetch(
   });
 }
 
+function getSchemaCacheKey(dbId: string, expectedProperties: ExpectedProperty[]): string {
+  const propertiesKey = expectedProperties
+    .map((property) => `${property.name}:${property.type}`)
+    .join("|");
+  return `${dbId}:${propertiesKey}`;
+}
+
 async function validateDatabaseSchema(
   env: Env,
   dbId: string,
   expectedProperties: ExpectedProperty[],
 ): Promise<void> {
-  if (schemaCache[dbId]) {
+  const cacheKey = getSchemaCacheKey(dbId, expectedProperties);
+  if (schemaCache[cacheKey]) {
     return;
   }
 
@@ -148,15 +163,22 @@ async function validateDatabaseSchema(
     throw new Error(`Database schema validation failed for ${dbId}: ${details}`);
   }
 
-  schemaCache[dbId] = true;
+  schemaCache[cacheKey] = true;
 }
 
-function getPageTitle(page: Record<string, any>): string {
-  const titleProp = page.properties?.Title?.title;
+function getPageTitleFromProperty(
+  page: Record<string, any>,
+  propertyName: string,
+): string {
+  const titleProp = page.properties?.[propertyName]?.title;
   if (!Array.isArray(titleProp)) {
     return "";
   }
   return titleProp.map((item: { plain_text: string }) => item.plain_text).join("");
+}
+
+function getPageTitle(page: Record<string, any>): string {
+  return getPageTitleFromProperty(page, "Title");
 }
 
 function getJstDateString(date = new Date()): string {
@@ -167,6 +189,54 @@ function getJstDateString(date = new Date()): string {
     day: "2-digit",
   });
   return formatter.format(date);
+}
+
+function getJstYesterdayString(): string {
+  const now = Date.now();
+  return getJstDateString(new Date(now - 24 * 60 * 60 * 1000));
+}
+
+function isValidDateString(dateString: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(dateString);
+}
+
+function addDaysToJstDate(dateString: string, days: number): string {
+  const date = new Date(`${dateString}T00:00:00+09:00`);
+  date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
+  return getJstDateString(date);
+}
+
+async function queryDatabaseAll(
+  env: Env,
+  dbId: string,
+  filter: Record<string, any>,
+): Promise<Record<string, any>[]> {
+  const results: Record<string, any>[] = [];
+  let hasMore = true;
+  let startCursor: string | undefined;
+
+  while (hasMore) {
+    const body: Record<string, any> = {
+      page_size: 100,
+      filter,
+    };
+    if (startCursor) {
+      body.start_cursor = startCursor;
+    }
+    const response = await notionFetch(env, `databases/${dbId}/query`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to query database: ${response.status}`);
+    }
+    const data = await response.json();
+    results.push(...(data.results ?? []));
+    hasMore = data.has_more ?? false;
+    startCursor = data.next_cursor ?? undefined;
+  }
+
+  return results;
 }
 
 function createTitleProperty(title: string) {
@@ -294,7 +364,7 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
     const someday = page.properties?.Someday?.checkbox ?? false;
     return {
       id: page.id,
-      title: getPageTitle(page),
+      title: getPageTitleFromProperty(page, "名前"),
       status,
       priority: page.properties?.Priority?.select?.name ?? null,
       since_do: page.properties?.["Since Do"]?.date?.start ?? null,
@@ -309,6 +379,76 @@ async function handleTasks(request: Request, env: Env): Promise<Response> {
   return new Response(JSON.stringify({ items: results }), {
     headers: jsonHeaders,
   });
+}
+
+async function handleTasksClosed(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return methodNotAllowed();
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  await validateDatabaseSchema(env, env.TASK_DB_ID, TASKS_CLOSED_PROPERTIES);
+
+  const url = new URL(request.url);
+  const dateParam = url.searchParams.get("date");
+  let targetDate = dateParam?.trim();
+  if (!targetDate) {
+    targetDate = getJstYesterdayString();
+  } else if (!isValidDateString(targetDate)) {
+    return badRequest("invalid date format");
+  }
+
+  const startJst = `${targetDate}T00:00:00+09:00`;
+  const nextDate = addDaysToJstDate(targetDate, 1);
+  const endJst = `${nextDate}T00:00:00+09:00`;
+
+  const donePages = await queryDatabaseAll(env, env.TASK_DB_ID, {
+    property: "Done date",
+    date: {
+      on_or_after: startJst,
+      before: endJst,
+    },
+  });
+
+  const dropPages = await queryDatabaseAll(env, env.TASK_DB_ID, {
+    property: "Drop date",
+    date: {
+      on_or_after: startJst,
+      before: endJst,
+    },
+  });
+
+  const done = donePages.map((page: Record<string, any>) => ({
+    page_id: page.id,
+    title: getPageTitleFromProperty(page, "名前"),
+    priority: page.properties?.Priority?.select?.name ?? null,
+    done_date: page.properties?.["Done date"]?.date?.start ?? null,
+  }));
+
+  const drop = dropPages.map((page: Record<string, any>) => ({
+    page_id: page.id,
+    title: getPageTitleFromProperty(page, "名前"),
+    priority: page.properties?.Priority?.select?.name ?? null,
+    drop_date: page.properties?.["Drop date"]?.date?.start ?? null,
+  }));
+
+  return new Response(
+    JSON.stringify({
+      date: targetDate,
+      range: {
+        start_jst: startJst,
+        end_jst: endJst,
+      },
+      done,
+      drop,
+      done_count: done.length,
+      drop_count: drop.length,
+    }),
+    { headers: jsonHeaders },
+  );
 }
 
 async function handleDailyLogUpsert(request: Request, env: Env): Promise<Response> {
@@ -518,6 +658,9 @@ export default {
       }
       if (path === "/api/tasks") {
         return await handleTasks(request, env);
+      }
+      if (path === "/api/tasks/closed") {
+        return await handleTasksClosed(request, env);
       }
       if (path === "/api/daily_log/upsert") {
         return new Response(
