@@ -228,9 +228,10 @@ def build_email_html(
         title: str, label: str, icon: str, items: List[ClosedTaskItem]
     ) -> str:
         formatted_items = format_closed_items(items, icon, label)
+        count_text = f"{len(items)}件"
         return f"""
         <details>
-          <summary>{title}（{label}: {len(items)}）</summary>
+          <summary>{title}（{label}: {count_text}）</summary>
           <ul>
             {list_items(formatted_items)}
           </ul>
