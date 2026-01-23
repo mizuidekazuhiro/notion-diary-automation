@@ -300,7 +300,7 @@ def main() -> None:
 
     post_json(config.daily_log_url, upsert_payload, bearer)
 
-    subject = f"[Daily Log] {target_date}"
+    subject = f"Daily Log｜{target_date}"
     now = datetime.now(JST)
     date_str = now.strftime("%Y-%m-%d")
     done_items = format_closed_items(
