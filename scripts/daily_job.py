@@ -209,7 +209,7 @@ def build_email_html(
 
     def list_items(items: List[str]) -> str:
         if not items:
-            return "<li>None</li>"
+            return "<li>0件</li>"
         return "".join(f"<li>{item}</li>" for item in items)
 
     def format_closed_items(
@@ -259,8 +259,8 @@ def build_email_html(
       <body>
         <h2>{date_str} Daily Summary</h2>
         <p>Run ID: {run_id}</p>
-        {render_closed_section("🎉 昨日完了したこと", "Done", "✅", done_items)}
-        {render_closed_section("🧹 昨日手放したこと", "Drop", "🧹", drop_items)}
+        {render_closed_section("昨日完了したこと", "Done", "✅", done_items)}
+        {render_closed_section("昨日手放したこと", "Drop", "🧹", drop_items)}
         <p><strong>{progress_line}</strong></p>
         <h3>Tasks (Status: Do)</h3>
         <ul>
