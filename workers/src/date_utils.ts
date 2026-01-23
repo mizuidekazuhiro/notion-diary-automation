@@ -8,6 +8,25 @@ export function getJstDateString(date = new Date()): string {
   return formatter.format(date);
 }
 
+export function formatJstDateTime(dateString: string, time = "00:00:00"): string {
+  const value = `${dateString}T${time}+09:00`;
+  if (!value.endsWith("+09:00")) {
+    throw new Error(`JST datetime must include +09:00 offset: ${value}`);
+  }
+  return value;
+}
+
+export function getJstDateStringFromDateTime(dateTime: string): string | null {
+  if (!dateTime) {
+    return null;
+  }
+  const date = new Date(dateTime);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return getJstDateString(date);
+}
+
 export function getJstYesterdayString(): string {
   const now = Date.now();
   return getJstDateString(new Date(now - 24 * 60 * 60 * 1000));

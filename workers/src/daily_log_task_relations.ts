@@ -1,4 +1,9 @@
-import { addDaysToJstDate, getJstDateString } from "./date_utils";
+import {
+  addDaysToJstDate,
+  formatJstDateTime,
+  getJstDateString,
+  getJstDateStringFromDateTime,
+} from "./date_utils";
 import {
   getNotionErrorDetails,
   NotionApiError,
@@ -69,8 +74,8 @@ function createRelationProperty(ids: string[]) {
 
 function buildYesterdayRange(targetDate: string) {
   const yesterday = addDaysToJstDate(targetDate, -1);
-  const startJst = `${yesterday}T00:00:00+09:00`;
-  const endJst = `${targetDate}T00:00:00+09:00`;
+  const startJst = formatJstDateTime(yesterday);
+  const endJst = formatJstDateTime(targetDate);
   return { startJst, endJst };
 }
 
@@ -79,25 +84,32 @@ async function fetchTaskIdsByStatus(
   status: string,
   dateProperty: string,
   range: { startJst: string; endJst: string },
+  targetDate: string,
 ): Promise<string[]> {
   const { statusPropertyName } = getTaskPropertyNames(env);
   const filter = {
     and: [
       { property: statusPropertyName, select: { equals: status } },
       { property: dateProperty, date: { is_not_empty: true } },
-      {
-        property: dateProperty,
-        date: {
-          on_or_after: range.startJst,
-          before: range.endJst,
-        },
-      },
+      { property: dateProperty, date: { on_or_after: range.startJst } },
+      { property: dateProperty, date: { before: range.endJst } },
     ],
   };
   logNotionQueryPayload(`tasks/${status}`, filter);
   const pages = await queryDatabaseAll(env, env.TASK_DB_ID, filter);
 
-  return pages.map((page: Record<string, any>) => page.id);
+  return pages
+    .map((page: Record<string, any>) => {
+      const dateRaw = page.properties?.[dateProperty]?.date?.start ?? null;
+      const dateJst = dateRaw ? getJstDateStringFromDateTime(dateRaw) : null;
+      return {
+        id: page.id,
+        dateRaw,
+        dateJst,
+      };
+    })
+    .filter((item) => item.dateRaw && item.dateJst === targetDate)
+    .map((item) => item.id);
 }
 
 async function findOrCreateDailyLogPage(
@@ -167,8 +179,8 @@ export async function updateDailyLogTaskRelations(
   );
 
   const [doneTaskIds, dropTaskIds] = await Promise.all([
-    fetchTaskIdsByStatus(env, doneStatus, doneDatePropertyName, range),
-    fetchTaskIdsByStatus(env, dropStatus, dropDatePropertyName, range),
+    fetchTaskIdsByStatus(env, doneStatus, doneDatePropertyName, range, yesterday),
+    fetchTaskIdsByStatus(env, dropStatus, dropDatePropertyName, range, yesterday),
   ]);
 
   console.log(

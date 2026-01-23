@@ -2,7 +2,9 @@ import {
   addDaysToJstDate,
   getJstDateString,
   getJstYesterdayString,
+  getJstDateStringFromDateTime,
   isValidDateString,
+  formatJstDateTime,
 } from "./date_utils";
 import { updateDailyLogTaskRelations } from "./daily_log_task_relations";
 import {
@@ -600,34 +602,24 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
     return badRequest("invalid date format");
   }
 
-  const startJst = `${targetDate}T00:00:00+09:00`;
+  const startJst = formatJstDateTime(targetDate);
   const nextDate = addDaysToJstDate(targetDate, 1);
-  const endJst = `${nextDate}T00:00:00+09:00`;
+  const endJst = formatJstDateTime(nextDate);
 
   const doneFilter = {
     and: [
       { property: statusPropertyName, select: { equals: doneStatus } },
       { property: doneDatePropertyName, date: { is_not_empty: true } },
-      {
-        property: doneDatePropertyName,
-        date: {
-          on_or_after: startJst,
-          before: endJst,
-        },
-      },
+      { property: doneDatePropertyName, date: { on_or_after: startJst } },
+      { property: doneDatePropertyName, date: { before: endJst } },
     ],
   };
   const dropFilter = {
     and: [
       { property: statusPropertyName, select: { equals: droppedStatus } },
       { property: dropDatePropertyName, date: { is_not_empty: true } },
-      {
-        property: dropDatePropertyName,
-        date: {
-          on_or_after: startJst,
-          before: endJst,
-        },
-      },
+      { property: dropDatePropertyName, date: { on_or_after: startJst } },
+      { property: dropDatePropertyName, date: { before: endJst } },
     ],
   };
 
@@ -653,26 +645,57 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
   const dropPages = await queryDatabaseAll(env, env.TASK_DB_ID, dropFilter);
 
   const done = donePages
-    .map((page: Record<string, any>) => ({
-      page_id: page.id,
-      title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
-      priority: page.properties?.Priority?.select?.name ?? null,
-      done_date: page.properties?.[doneDatePropertyName]?.date?.start ?? null,
-    }))
-    .filter((item) => item.done_date);
+    .map((page: Record<string, any>) => {
+      const doneDateRaw =
+        page.properties?.[doneDatePropertyName]?.date?.start ?? null;
+      const doneDateJst = doneDateRaw
+        ? getJstDateStringFromDateTime(doneDateRaw)
+        : null;
+      return {
+        page_id: page.id,
+        title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
+        priority: page.properties?.Priority?.select?.name ?? null,
+        done_date: doneDateRaw,
+        done_date_jst: doneDateJst,
+      };
+    })
+    .filter((item) => item.done_date && item.done_date_jst === targetDate)
+    .map(({ done_date_jst, ...item }) => item);
 
   const drop = dropPages
-    .map((page: Record<string, any>) => ({
-      page_id: page.id,
-      title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
-      priority: page.properties?.Priority?.select?.name ?? null,
-      drop_date: page.properties?.[dropDatePropertyName]?.date?.start ?? null,
-    }))
-    .filter((item) => item.drop_date);
+    .map((page: Record<string, any>) => {
+      const dropDateRaw =
+        page.properties?.[dropDatePropertyName]?.date?.start ?? null;
+      const dropDateJst = dropDateRaw
+        ? getJstDateStringFromDateTime(dropDateRaw)
+        : null;
+      return {
+        page_id: page.id,
+        title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
+        priority: page.properties?.Priority?.select?.name ?? null,
+        drop_date: dropDateRaw,
+        drop_date_jst: dropDateJst,
+      };
+    })
+    .filter((item) => item.drop_date && item.drop_date_jst === targetDate)
+    .map(({ drop_date_jst, ...item }) => item);
 
   console.log(
     `Tasks closed: done=${done.length} drop=${drop.length} date=${targetDate}`,
   );
+
+  const debugEnabled = url.searchParams.get("debug") === "1";
+  const debug = debugEnabled
+    ? {
+        target_date: targetDate,
+        start_jst: startJst,
+        end_jst: endJst,
+        done_preview: done.slice(0, 5).map((item) => ({
+          title: item.title,
+          done_date_raw: item.done_date,
+        })),
+      }
+    : undefined;
 
   return new Response(
     JSON.stringify({
@@ -685,6 +708,7 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
       drop,
       done_count: done.length,
       drop_count: drop.length,
+      ...(debug ? { debug } : {}),
     }),
     { headers: jsonHeaders },
   );
