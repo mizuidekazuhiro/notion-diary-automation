@@ -200,13 +200,28 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
     return "\n".join(lines)
 
 
-def format_closed_items(items: List[ClosedTaskItem], icon: str) -> List[str]:
+def dedupe_closed_items(items: List[ClosedTaskItem]) -> List[ClosedTaskItem]:
+    seen: set[str] = set()
+    deduped: List[ClosedTaskItem] = []
+    for item in items:
+        key = item.page_id or f"{item.title}-{item.closed_date or ''}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def format_closed_items(
+    items: List[ClosedTaskItem], icon: str, date_label: str
+) -> List[str]:
     formatted: List[str] = []
     for item in items:
-        if item.priority:
-            formatted.append(f"{icon} {item.title} (Priority: {item.priority})")
-        else:
-            formatted.append(f"{icon} {item.title}")
+        priority = item.priority or "-"
+        closed_date = item.closed_date or "-"
+        formatted.append(
+            f"{icon} {item.title} (Priority: {priority}, {date_label}: {closed_date})"
+        )
     return formatted
 
 
@@ -294,8 +309,12 @@ def main() -> None:
         if task.status == TASK_STATUS_DO
     ]
     inbox_items = [item.title for item in inbox]
-    done_items = format_closed_items(closed_tasks.done, "✅")
-    drop_items = format_closed_items(closed_tasks.drop, "🧹")
+    done_items = format_closed_items(
+        dedupe_closed_items(closed_tasks.done), "✅", "Done"
+    )
+    drop_items = format_closed_items(
+        dedupe_closed_items(closed_tasks.drop), "🧹", "Drop"
+    )
     progress_line = f"昨日の前進：Done {len(done_items)}件 / Drop {len(drop_items)}件"
     html_body = build_email_html(
         date_str=date_str,
