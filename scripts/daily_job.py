@@ -212,34 +212,25 @@ def build_email_html(
             return "<li>None</li>"
         return "".join(f"<li>{item}</li>" for item in items)
 
-    def format_closed_items(items: List[ClosedTaskItem], icon: str) -> List[str]:
+    def format_closed_items(
+        items: List[ClosedTaskItem], icon: str, label: str
+    ) -> List[str]:
         formatted: List[str] = []
         for item in items:
-            if item.priority:
-                formatted.append(f"{icon} {item.title} (Priority: {item.priority})")
-            else:
-                formatted.append(f"{icon} {item.title}")
+            closed_date = item.closed_date or "-"
+            priority = item.priority or "-"
+            formatted.append(
+                f"{icon} {item.title} (Priority: {priority}, {label}: {closed_date})"
+            )
         return formatted
 
     def render_closed_section(
         title: str, label: str, icon: str, items: List[ClosedTaskItem]
     ) -> str:
-        formatted_items = format_closed_items(items, icon)
-        preview_items = formatted_items[:3]
-        preview_html = ""
-        if preview_items:
-            preview_html = f"""
-            <div>
-              <p style="margin: 8px 0 4px 0;">Preview:</p>
-              <ul>
-                {list_items(preview_items)}
-              </ul>
-            </div>
-            """
+        formatted_items = format_closed_items(items, icon, label)
         return f"""
         <details>
           <summary>{title}（{label}: {len(items)}）</summary>
-          {preview_html}
           <ul>
             {list_items(formatted_items)}
           </ul>
@@ -253,7 +244,14 @@ def build_email_html(
     ]
     inbox_items = [item.title for item in inbox]
     done_items = closed_tasks.done
-    drop_items = closed_tasks.drop
+    drop_seen: set[str] = set()
+    drop_items: List[ClosedTaskItem] = []
+    for item in closed_tasks.drop:
+        key = item.page_id or f"{item.title}|{item.closed_date or ''}"
+        if not key or key in drop_seen:
+            continue
+        drop_seen.add(key)
+        drop_items.append(item)
     progress_line = f"昨日の前進：Done {len(done_items)}件 / Drop {len(drop_items)}件"
 
     return f"""
