@@ -200,11 +200,14 @@ def build_activity_summary(tasks: List[TaskItem], inbox: List[InboxItem]) -> str
     return "\n".join(lines)
 
 
-def dedupe_closed_items(items: List[ClosedTaskItem]) -> List[ClosedTaskItem]:
+def dedupe_closed_items(
+    items: List[ClosedTaskItem], status_label: str
+) -> List[ClosedTaskItem]:
     seen: set[str] = set()
     deduped: List[ClosedTaskItem] = []
     for item in items:
-        key = item.page_id or f"{item.title}-{item.closed_date or ''}"
+        priority = item.priority or "-"
+        key = item.page_id or f"{item.title}-{priority}-{status_label}"
         if key in seen:
             continue
         seen.add(key)
@@ -213,15 +216,12 @@ def dedupe_closed_items(items: List[ClosedTaskItem]) -> List[ClosedTaskItem]:
 
 
 def format_closed_items(
-    items: List[ClosedTaskItem], icon: str, date_label: str
+    items: List[ClosedTaskItem], icon: str
 ) -> List[str]:
     formatted: List[str] = []
     for item in items:
         priority = item.priority or "-"
-        closed_date = item.closed_date or "-"
-        formatted.append(
-            f"{icon} {item.title} (Priority: {priority}, {date_label}: {closed_date})"
-        )
+        formatted.append(f"{icon} {item.title} (Priority: {priority})")
     return formatted
 
 
@@ -303,17 +303,11 @@ def main() -> None:
     subject = f"[Daily Log] {target_date}"
     now = datetime.now(JST)
     date_str = now.strftime("%Y-%m-%d")
-    task_items = [
-        f"{task.title} (Priority: {task.priority or '-'}, Since Do: {days_since(task.since_do, now) or '-'})"
-        for task in tasks
-        if task.status == TASK_STATUS_DO
-    ]
-    inbox_items = [item.title for item in inbox]
     done_items = format_closed_items(
-        dedupe_closed_items(closed_tasks.done), "✅", "Done"
+        dedupe_closed_items(closed_tasks.done, "Done"), "✅"
     )
     drop_items = format_closed_items(
-        dedupe_closed_items(closed_tasks.drop), "🧹", "Drop"
+        dedupe_closed_items(closed_tasks.drop, "Drop"), "🧹"
     )
     progress_line = f"昨日の前進：Done {len(done_items)}件 / Drop {len(drop_items)}件"
     html_body = build_email_html(
@@ -322,9 +316,6 @@ def main() -> None:
         progress_line=progress_line,
         done_items=done_items,
         drop_items=drop_items,
-        task_items=task_items,
-        inbox_items=inbox_items,
-        activity_summary=activity_summary,
     )
     plain_text = build_email_text(
         date_str=date_str,
@@ -332,9 +323,6 @@ def main() -> None:
         progress_line=progress_line,
         done_items=done_items,
         drop_items=drop_items,
-        task_items=task_items,
-        inbox_items=inbox_items,
-        activity_summary=activity_summary,
     )
     send_email(config, subject, plain_text, html_body)
 

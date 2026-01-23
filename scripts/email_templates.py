@@ -24,15 +24,9 @@ def build_email_html(
     progress_line: str,
     done_items: Iterable[str],
     drop_items: Iterable[str],
-    task_items: Iterable[str],
-    inbox_items: Iterable[str],
-    activity_summary: str,
 ) -> str:
     done_list = list(done_items)
     drop_list = list(drop_items)
-    task_list = list(task_items)
-    inbox_list = list(inbox_items)
-    activity_text = html.escape(activity_summary)
     return f"""\
 <!DOCTYPE html>
 <html lang="ja">
@@ -62,21 +56,8 @@ def build_email_html(
         </ul>
       </div>
 
-      <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 0 0 16px 0;">
-        <p style="margin: 0 0 12px 0; font-weight: 600;">{html.escape(progress_line)}</p>
-        <h3 style="margin: 0 0 12px 0; font-size: 16px;">Tasks (Status: Do)</h3>
-        <ul style="padding-left: 20px; margin: 0 0 12px 0;">
-          {_render_list_html(task_list)}
-        </ul>
-        <h3 style="margin: 0 0 12px 0; font-size: 16px;">Inbox</h3>
-        <ul style="padding-left: 20px; margin: 0;">
-          {_render_list_html(inbox_list)}
-        </ul>
-      </div>
-
       <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 0;">
-        <h3 style="margin: 0 0 12px 0; font-size: 16px;">Activity Summary</h3>
-        <div style="white-space: pre-wrap; font-size: 14px; line-height: 1.6;">{activity_text}</div>
+        <p style="margin: 0; font-weight: 600;">{html.escape(progress_line)}</p>
       </div>
     </div>
   </body>
@@ -91,14 +72,9 @@ def build_email_text(
     progress_line: str,
     done_items: Iterable[str],
     drop_items: Iterable[str],
-    task_items: Iterable[str],
-    inbox_items: Iterable[str],
-    activity_summary: str,
 ) -> str:
     done_list = list(done_items)
     drop_list = list(drop_items)
-    task_list = list(task_items)
-    inbox_list = list(inbox_items)
 
     def render_list(items: Iterable[str]) -> str:
         items_list = list(items)
@@ -117,14 +93,5 @@ def build_email_text(
         render_list(drop_list),
         "",
         progress_line,
-        "",
-        "Tasks (Status: Do)",
-        render_list(task_list),
-        "",
-        "Inbox",
-        render_list(inbox_list),
-        "",
-        "Activity Summary",
-        activity_summary,
     ]
     return "\n".join(sections).strip() + "\n"
