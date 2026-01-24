@@ -41,3 +41,13 @@ export function addDaysToJstDate(dateString: string, days: number): string {
   date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
   return getJstDateString(date);
 }
+
+export function getJstRangeForTargetDate(targetDate: string): {
+  start_jst_iso: string;
+  end_jst_iso: string;
+} {
+  const start_jst_iso = `${targetDate}T00:00:00+09:00`;
+  const nextDate = addDaysToJstDate(targetDate, 1);
+  const end_jst_iso = `${nextDate}T00:00:00+09:00`;
+  return { start_jst_iso, end_jst_iso };
+}
