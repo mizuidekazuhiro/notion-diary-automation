@@ -8,6 +8,10 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - **Python**: Workers経由でInbox/Tasks/昨日のDone・Dropを取得 → メール送信 → Daily_Log Upsert。
 - **GitHub Actions**: JST 07:00 でジョブ実行（UTC 22:00）。
 
+## 将来の改善案
+
+- `journal` をPythonパッケージ化して、GitHub Actions の実行コマンドを `python -m journal.daily_job` に移行する。
+
 ## 新機能: 毎朝メールに「昨日の成果」を追加
 
 - 毎朝のメールに **昨日 Done / 昨日 Drop** を追加します。
