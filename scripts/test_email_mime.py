@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from daily_job import build_email_message
+from delivery.email_sender import build_email_message
 
 
 def main() -> None:

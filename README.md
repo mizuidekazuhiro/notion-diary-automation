@@ -4,17 +4,30 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ## 構成
 
-- **Cloudflare Workers (TypeScript)**: Notion APIの問い合わせ、DBスキーマ検証、Daily_LogのUpsert。
-- **Python**: Workers経由でInbox/Tasks/昨日のDone・Dropを取得 → メール送信 → Daily_Log Upsert。
-- **GitHub Actions**: JST 07:00 でジョブ実行（UTC 22:00）。
+- **Cloudflare Workers (TypeScript)**: Notion APIの問い合わせ、DBスキーマ検証、Daily_Logのensure/upsert/read。
+- **Python**: Phase A/B を分離して実行（Ingest → Publish）。
+- **GitHub Actions**: Phase A/B を別ワークフローで実行。
 
-## 将来の改善案
+## システム全体像（Phase A/B）
 
-- `journal` をPythonパッケージ化して、GitHub Actions の実行コマンドを `python -m journal.daily_job` に移行する。
+- **Phase A (Ingest)**: `target_date = JSTの昨日`
+  - **A-0** `ensure_daily_log_page(target_date)`  
+    Daily_Logのページを「存在保証」するだけ。Tasks取得などは一切しない。
+  - **A-1** `ingest_sources(target_date, daily_log_page_id)`  
+    コネクタ群（現時点はTasksのみ）を順に実行し、Daily_Logへ追記/更新する。
+- **Phase B (Publish)**: `target_date = JSTの昨日`
+  - Daily_Logを読み取り、メールを生成・送信する。
+  - Tasks/Inbox等は再取得しない（Daily_Logのみが情報源）。
 
-## 新機能: 毎朝メールに「昨日の成果」を追加
+## スケジュール（JST/UTC）
 
-- 毎朝のメールに **昨日 Done / 昨日 Drop** を追加します。
+- **Phase A (Ingest)**: 01:00 JST = 16:00 UTC（前日）
+- **Phase B (Publish)**: 07:00 JST = 22:00 UTC（前日）
+
+## メール仕様（昨日の成果に集中）
+
+- メールには **昨日 Done / 昨日 Drop** のみを含めます。
+- 表示は「タスク名 + Priority」のみ（日時など詳細は表示しない）。
 - Tasks DB の `Done date` / `Drop date` を使って集計します（プロパティ名は環境変数で変更可）。
 - JST基準で「昨日（00:00〜24:00）」の範囲で集計します（`start <= date < end`）。
 - 定義:
@@ -23,7 +36,6 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
 - `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
 - `Notes` は仕様として一切書き込みません。
-- 全件表示ですが、メールが長くならないよう `<details>` の折りたたみ表示を使います。
 
 ## Notion DBの必須プロパティ
 
@@ -46,6 +58,8 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 - `Name` (title)
 
+> 現在のPhase A/BではInbox DBは未使用（将来拡張用のため保持）。
+
 ### Daily_Log DB (`DAILY_LOG_DB_ID`)
 
 - `名前` (title)
@@ -67,6 +81,16 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
 `Notes` は仕様として **一切書き込まない** 方針です（DBに存在していても更新対象にしません）。
+
+### Daily_Logの保存内容（推奨）
+
+- **SummaryText**: `Activity Summary` に保存（メール本文テキスト）
+- **SummaryHtml**: `Diary` に保存（メールHTML本文）
+- **Sources**: `Source` に保存（現時点は `automation`）
+- **Raw**: `data_json` をDaily_Logページの子ブロックに分割保存
+
+> Notionの `rich_text` は1ブロック2000文字制限があるため、コード側で自動分割します。  
+> `Notes` プロパティに巨大テキストやJSONを入れるのは禁止です。
 
 ## セキュリティ設計（2段階更新）
 
@@ -127,7 +151,9 @@ Workers環境変数（Secrets）に以下を設定します。
 | GET | `/api/tasks` | Tasks DB の Status = "Do" と Status = "Someday" を取得 |
 |  |  | ※Status = "Someday" のタスクは `confirm_promote_url` 付きで返却 |
 | GET | `/api/tasks/closed?date=YYYY-MM-DD` | Tasks DB から「昨日Done/Drop」を取得（date未指定ならJSTの昨日） |
+| GET | `/api/daily_log?date=YYYY-MM-DD` | Daily_Log のSummary取得（メール生成に利用） |
 | GET | `/confirm/daily_log/upsert` | Daily_Log Upsert 確認ページ |
+| POST | `/execute/api/daily_log/ensure` | Daily_Log ページ作成（存在保証） |
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
@@ -138,6 +164,9 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASKS_JSON_URL`: `/api/tasks`
 - `TASKS_CLOSED_URL`: `/api/tasks/closed`
 - `DAILY_LOG_UPSERT_URL`: `/execute/api/daily_log/upsert`
+  - `DAILY_LOG_UPSERT_URL` の同一ホストを使って以下も派生します:
+    - `/execute/api/daily_log/ensure`
+    - `/api/daily_log`
 
 ### ルーティング簡易チェック
 
@@ -189,14 +218,16 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 - 存在すれば更新 / 無ければ作成
 - `Date` も `Target Date` と同じ日付で更新されます
 - `Notes` は更新しません（DBに存在していても無視）
+- 先に `POST /execute/api/daily_log/ensure` でページだけ作成する運用を推奨
 
 Workersへのリクエスト例（Pythonから送信）:
 
 ```json
 {
   "target_date": "YYYY-MM-DD",
-  "title": "YYYY-MM-DD Daily Log",
-  "activity_summary": "string",
+  "title": "Daily Log｜YYYY-MM-DD",
+  "summary_text": "string",
+  "summary_html": "string(任意)",
   "mail_id": "string",
   "source": "automation",
   "data_json": "string(任意)"
@@ -211,11 +242,13 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
   -H "Content-Type: application/json" \
   -d '{
     "target_date": "2024-01-01",
-    "title": "2024-01-01 Daily Log",
-    "activity_summary": "summary text",
+    "title": "Daily Log｜2024-01-01",
+    "summary_text": "summary text",
+    "summary_html": "<p>summary html</p>",
     "mail_id": "mail-id-123",
     "source": "automation",
-    "data_json": "{\"example\":true}"
+    "data_json": "{\"example\":true}",
+    "update_task_relations": true
   }'
 ```
 
@@ -223,18 +256,25 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 
 ## Python
 
-- Workersの `/api/tasks` / `/api/inbox` を取得
-- Workersの `/api/tasks/closed` を取得して「昨日の成果」をメールに追加
-- HTMLメール（multipart/alternative）を生成してSMTP送信
-- text/plain と text/html の両方を送信（HTML非対応の環境向けに保険）
-- 同じ実行内で `/execute/api/daily_log/upsert` にPOSTしてDaily_Logを作成/更新
-- **UTF-8 / MIME** 対応済み
+- Phase A (Ingest):
+  - `/execute/api/daily_log/ensure` で Daily_Log ページを先に用意（Tasks取得とは完全分離）
+  - `/api/tasks/closed` で昨日のDone/Dropを取得し、SummaryText/Htmlを生成
+  - `/execute/api/daily_log/upsert` にPOSTしてDaily_Logへ保存
+- Phase B (Publish):
+  - `/api/daily_log` でDaily_LogのSummaryを読み取り、メール送信
+  - Tasks/Inboxなどは再取得しない（Daily_Logのみが情報源）
+- HTMLメール（multipart/alternative）で text/plain と text/html を送信
 - `MAIL_TO` はカンマ区切りで複数対応
 - SMTP送信に失敗しても処理は継続（ログにエラーを出力）
 
 ## GitHub Actions
 
-- 実行タイミング: JST 07:00（UTC 22:00） + 手動実行
+- 実行タイミング:
+  - Phase A: JST 01:00（UTC 16:00）+ 手動実行
+  - Phase B: JST 07:00（UTC 22:00）+ 手動実行
+- ワークフロー:
+  - `Daily Notion Diary - Phase A (Ingest)` → `.github/workflows/ingest_daily_log.yml`
+  - `Daily Notion Diary - Phase B (Publish)` → `.github/workflows/publish_daily_mail.yml`
 - Secrets:
   - `MAIL_FROM`
   - `MAIL_TO`
@@ -256,7 +296,42 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 - `TASKS_JSON_URL = https://<worker>.workers.dev/api/tasks`
 - `TASKS_CLOSED_URL = https://<worker>.workers.dev/api/tasks/closed`
 - `DAILY_LOG_UPSERT_URL = https://<worker>.workers.dev/execute/api/daily_log/upsert`
+- `DAILY_LOG_UPSERT_URL` と同じホストで以下を使用します:
+  - `/execute/api/daily_log/ensure`
+  - `/api/daily_log`
 - `WORKERS_BEARER_TOKEN` は任意ですが、有効化する場合は **Cloudflare側のVariables/Secretsにも同じ値** を入れてください。
+
+## 手動実行
+
+```bash
+python scripts/daily_job.py --phase ingest
+python scripts/daily_job.py --phase publish
+python scripts/daily_job.py --phase all
+```
+
+## ファイル間の連関（どのファイルが何を呼ぶか）
+
+- `.github/workflows/ingest_daily_log.yml` → `scripts/daily_job.py --phase ingest`
+- `scripts/daily_job.py` → `ingest/ensure_daily_log_page.py`
+- `scripts/daily_job.py` → `ingest/ingest_sources.py` → `connectors/tasks.py`
+- `.github/workflows/publish_daily_mail.yml` → `scripts/daily_job.py --phase publish`
+- `scripts/daily_job.py` → `publish/read_daily_log.py` → `publish/render_mail.py` → `publish/send_mail.py`
+
+## コネクタ追加手順
+
+1. `connectors/` に新しいファイルを追加する（例: `connectors/weather.py`）。
+2. そのコネクタに以下のIFを実装する:
+   - `id: str`
+   - `fetch(target_date) -> result`
+   - `render(result) -> { summary_blocks, raw_payload }`
+3. `ingest/ingest_sources.py` の `connectors = [...]` に追加するだけでOK。
+
+## トラブルシュート
+
+- **Notion rich_text 2000文字制限**  
+  long textは自動で分割保存します。`Notes` には巨大JSONを入れないでください。
+- **PublishがDaily_Logを見つけられない**  
+  対象日のDaily_Logが無い場合は送信をスキップし、ログに理由を残して正常終了します。
 
 ## メール送信の設定（初心者向け）
 
@@ -306,7 +381,7 @@ python scripts/test_email_mime.py
    - Googleアカウントで **2段階認証を有効化** → アプリパスワードを生成。
    - 生成したパスワードを控える（後で `GMAIL_APP_PASSWORD` として使います）。
 5. **Cloudflare WorkersのURLを確認**
-   - Workersをデプロイ後、 `/api/inbox` などにアクセスできるURLを控える。
+   - Workersをデプロイ後、 `/api/tasks/closed` などにアクセスできるURLを控える。
    - 後で `INBOX_JSON_URL` / `TASKS_JSON_URL` / `TASKS_CLOSED_URL` / `DAILY_LOG_UPSERT_URL` に使います。
 
 ## セットアップ手順（概要）
@@ -319,15 +394,15 @@ python scripts/test_email_mime.py
 3. **GitHub Actions Secrets設定**
    - メール/WorkersのURLをSecretsに登録
 4. **テスト**
-   - `workflow_dispatch` で手動実行
+   - `workflow_dispatch` で手動実行（Phase A / Phase B をそれぞれ実行）
    - `/confirm/...` で確認 → `/execute/...` で更新が実行されることを確認
 
 ## 動作確認手順（昨日Done/Drop）
 
 1. Notionで「昨日」の日付を `Done date` に入れたタスクを1件作る
 2. GitHub Actionsの `workflow_dispatch` で手動実行
-3. メールに「昨日完了したこと」が出ることを確認
-4. `GET /api/tasks/closed?date=YYYY-MM-DD` を叩いてJSONが返ることを確認
+3. Phase A 実行後に `GET /api/daily_log?date=YYYY-MM-DD` が返ることを確認
+4. Phase B 実行でメールに「昨日完了したこと」が出ることを確認
 
 ## Daily Log に Done/Drop タスクを Relation で記録する設定
 
@@ -339,5 +414,5 @@ python scripts/test_email_mime.py
    - `Done Tasks` / `Drop Tasks` を Tasks DB への Relation で作成。
    - `Done Count` / `Drop Count` を Rollup で作成（`名前` を Count all）。
 3. **実行**
-   - GitHub Actions の日次ジョブが、前日分の `Done date` / `Drop date` を集計して当日の Daily Log に Relation をセットします。
+   - Phase A (Ingest) が、前日分の `Done date` / `Drop date` を集計して当日の Daily Log に Relation をセットします。
    - `Done date` / `Drop date` が空のタスクは除外されます。

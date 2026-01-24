@@ -221,9 +221,12 @@ function validateDailyLogPayload(payload: Record<string, any>): {
   data?: {
     targetDate: string;
     title: string;
-    activitySummary: string;
+    summaryText: string;
+    summaryHtml: string;
     mailId: string;
     source: string;
+    pageId?: string;
+    updateTaskRelations: boolean;
     dataJson?: string;
   };
   error?: Response;
@@ -242,13 +245,19 @@ function validateDailyLogPayload(payload: Record<string, any>): {
     return { error: badRequest("missing title") };
   }
 
-  const activitySummary =
-    typeof payload.activity_summary === "string"
-      ? payload.activity_summary.trim()
-      : "";
-  if (!activitySummary) {
-    return { error: badRequest("missing activity_summary") };
+  const summaryTextRaw =
+    typeof payload.summary_text === "string"
+      ? payload.summary_text
+      : typeof payload.activity_summary === "string"
+        ? payload.activity_summary
+        : "";
+  const summaryText = summaryTextRaw.trim();
+  if (!summaryText) {
+    return { error: badRequest("missing summary_text") };
   }
+
+  const summaryHtml =
+    typeof payload.summary_html === "string" ? payload.summary_html.trim() : "";
 
   const mailId =
     typeof payload.mail_id === "string" ? payload.mail_id.trim() : "";
@@ -262,6 +271,12 @@ function validateDailyLogPayload(payload: Record<string, any>): {
     return { error: badRequest("missing source") };
   }
 
+  const pageId = typeof payload.page_id === "string" ? payload.page_id.trim() : "";
+  const updateTaskRelations =
+    payload.update_task_relations === undefined
+      ? true
+      : Boolean(payload.update_task_relations);
+
   const dataJson =
     typeof payload.data_json === "string" ? payload.data_json : undefined;
   if (payload.data_json !== undefined && typeof payload.data_json !== "string") {
@@ -272,10 +287,58 @@ function validateDailyLogPayload(payload: Record<string, any>): {
     data: {
       targetDate,
       title,
-      activitySummary,
+      summaryText,
+      summaryHtml,
       mailId,
       source,
+      ...(pageId ? { pageId } : {}),
+      updateTaskRelations,
       dataJson,
+    },
+  };
+}
+
+function validateDailyLogEnsurePayload(payload: Record<string, any>): {
+  data?: {
+    targetDate: string;
+    title: string;
+    source: string;
+    mailId: string;
+  };
+  error?: Response;
+} {
+  const targetDate =
+    typeof payload.target_date === "string" ? payload.target_date.trim() : "";
+  if (!targetDate) {
+    return { error: badRequest("missing target_date") };
+  }
+  if (!isValidDateString(targetDate)) {
+    return { error: badRequest("invalid target_date format") };
+  }
+
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  if (!title) {
+    return { error: badRequest("missing title") };
+  }
+
+  const source =
+    typeof payload.source === "string" ? payload.source.trim() : "";
+  if (!source) {
+    return { error: badRequest("missing source") };
+  }
+
+  const mailId =
+    typeof payload.mail_id === "string" ? payload.mail_id.trim() : "";
+  if (!mailId) {
+    return { error: badRequest("missing mail_id") };
+  }
+
+  return {
+    data: {
+      targetDate,
+      title,
+      source,
+      mailId,
     },
   };
 }
@@ -420,14 +483,11 @@ function createTitleProperty(title: string) {
 }
 
 function createRichTextProperty(content: string) {
+  const chunks = splitIntoChunks(content, BODY_CHUNK_LENGTH);
   return {
-    rich_text: content
-      ? [
-          {
-            text: { content },
-          },
-        ]
-      : [],
+    rich_text: chunks.map((chunk) => ({
+      text: { content: chunk },
+    })),
   };
 }
 
@@ -478,6 +538,19 @@ function createParagraphBlocksFromText(content: string): Record<string, any>[] {
       ],
     },
   }));
+}
+
+function getPlainTextFromRichText(property: Record<string, any> | undefined): string {
+  if (!property) {
+    return "";
+  }
+  const richText = property.rich_text;
+  if (!Array.isArray(richText)) {
+    return "";
+  }
+  return richText
+    .map((item: { plain_text?: string }) => item.plain_text ?? "")
+    .join("");
 }
 
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
@@ -738,43 +811,57 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     return badRequest("invalid payload");
   }
 
-  const { targetDate, title, activitySummary, mailId, source, dataJson } = data;
+  const {
+    targetDate,
+    title,
+    summaryText,
+    summaryHtml,
+    mailId,
+    source,
+    pageId,
+    updateTaskRelations,
+    dataJson,
+  } = data;
 
-  const queryResponse = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Target Date",
-          date: { equals: targetDate },
-        },
-      }),
-    },
-  );
+  let existingPage: Record<string, any> | null = null;
+  if (!pageId) {
+    const queryResponse = await notionFetch(
+      env,
+      `/databases/${env.DAILY_LOG_DB_ID}/query`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          page_size: 1,
+          filter: {
+            property: "Target Date",
+            date: { equals: targetDate },
+          },
+        }),
+      },
+    );
 
-  if (!queryResponse.ok) {
-    return notionErrorResponse(queryResponse, "handleDailyLogUpsert.query");
+    if (!queryResponse.ok) {
+      return notionErrorResponse(queryResponse, "handleDailyLogUpsert.query");
+    }
+
+    const queryData = await queryResponse.json();
+    existingPage = (queryData.results ?? [])[0] ?? null;
   }
-
-  const queryData = await queryResponse.json();
-  const existingPage = (queryData.results ?? [])[0];
 
   const properties: Record<string, any> = {
     [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
     "Target Date": createDateProperty(targetDate),
     Date: createDateProperty(targetDate),
-    "Activity Summary": createRichTextProperty(activitySummary),
-    Diary: createRichTextProperty(""),
+    "Activity Summary": createRichTextProperty(summaryText),
+    Diary: createRichTextProperty(summaryHtml),
     "Mail ID": createRichTextProperty(mailId),
     Source: createSelectProperty(source),
   };
 
   let resultResponse: Response;
-  if (existingPage) {
-    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+  if (pageId || existingPage) {
+    const resolvedPageId = pageId ?? existingPage?.id;
+    resultResponse = await notionFetch(env, `/pages/${resolvedPageId}`, {
       method: "PATCH",
       body: JSON.stringify({ properties }),
     });
@@ -802,13 +889,14 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     return notionErrorResponseFromDetails(details);
   }
 
-  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  const resolvedPageId = pageId ?? (existingPage ? existingPage.id : undefined);
+  const finalPageId = resolvedPageId ?? (await resultResponse.json()).id;
   if (dataJson) {
     const children = createParagraphBlocksFromText(dataJson);
     if (children.length) {
       const childrenResponse = await notionFetch(
         env,
-        `/blocks/${pageId}/children`,
+        `/blocks/${finalPageId}/children`,
         {
           method: "PATCH",
           body: JSON.stringify({ children }),
@@ -820,14 +908,165 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     }
   }
 
-  await validateTasksDatabaseSchema(env);
-  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_RELATION_PROPERTIES);
+  if (updateTaskRelations) {
+    await validateTasksDatabaseSchema(env);
+    await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_RELATION_PROPERTIES);
 
-  await updateDailyLogTaskRelations(env, targetDate);
+    await updateDailyLogTaskRelations(env, targetDate);
+  }
 
-  return new Response(JSON.stringify({ ok: true }), {
+  return new Response(JSON.stringify({ ok: true, page_id: finalPageId }), {
     headers: jsonHeaders,
   });
+}
+
+async function handleDailyLogEnsure(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ensure");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+
+  const { data, error } = validateDailyLogEnsurePayload(payload);
+  if (error) {
+    return error;
+  }
+  if (!data) {
+    return badRequest("invalid payload");
+  }
+
+  const { targetDate, title, source, mailId } = data;
+
+  const queryResponse = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Target Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleDailyLogEnsure.query");
+  }
+
+  const queryData = await queryResponse.json();
+  const existingPage = (queryData.results ?? [])[0];
+  if (existingPage) {
+    return new Response(JSON.stringify({ ok: true, page_id: existingPage.id }), {
+      headers: jsonHeaders,
+    });
+  }
+
+  const properties: Record<string, any> = {
+    [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
+    "Target Date": createDateProperty(targetDate),
+    Date: createDateProperty(targetDate),
+    "Activity Summary": createRichTextProperty(""),
+    Diary: createRichTextProperty(""),
+    "Mail ID": createRichTextProperty(mailId),
+    Source: createSelectProperty(source),
+  };
+
+  const resultResponse = await notionFetch(env, "/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { database_id: env.DAILY_LOG_DB_ID },
+      properties,
+    }),
+  });
+
+  if (!resultResponse.ok) {
+    return notionErrorResponse(resultResponse, "handleDailyLogEnsure.create");
+  }
+
+  const pageId = (await resultResponse.json()).id;
+  return new Response(JSON.stringify({ ok: true, page_id: pageId }), {
+    headers: jsonHeaders,
+  });
+}
+
+async function handleDailyLogRead(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return methodNotAllowed();
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+
+  const url = new URL(request.url);
+  const targetDate = url.searchParams.get("date")?.trim() ?? "";
+  if (!targetDate) {
+    return badRequest("missing date");
+  }
+  if (!isValidDateString(targetDate)) {
+    return badRequest("invalid date format");
+  }
+
+  const queryResponse = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Target Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleDailyLogRead.query");
+  }
+
+  const queryData = await queryResponse.json();
+  const page = (queryData.results ?? [])[0];
+  if (!page) {
+    return new Response(JSON.stringify({ found: false, target_date: targetDate }), {
+      headers: jsonHeaders,
+    });
+  }
+
+  const properties = page.properties ?? {};
+  const summaryText = getPlainTextFromRichText(properties["Activity Summary"]);
+  const summaryHtml = getPlainTextFromRichText(properties.Diary);
+  const mailId = getPlainTextFromRichText(properties["Mail ID"]);
+  const source = properties.Source?.select?.name ?? null;
+
+  return new Response(
+    JSON.stringify({
+      found: true,
+      target_date: targetDate,
+      page_id: page.id,
+      title: getPageTitleFromProperty(page, TITLE_PROPERTIES.dailyLog),
+      summary_text: summaryText,
+      summary_html: summaryHtml,
+      mail_id: mailId,
+      source,
+    }),
+    { headers: jsonHeaders },
+  );
 }
 
 async function handleTaskPromoteConfirm(request: Request): Promise<Response> {
@@ -888,11 +1127,15 @@ async function handleDailyLogConfirm(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const targetDate = url.searchParams.get("target_date") ?? "";
   const title = url.searchParams.get("title") ?? "";
-  const activitySummary = url.searchParams.get("activity_summary") ?? "";
+  const summaryText =
+    url.searchParams.get("summary_text") ??
+    url.searchParams.get("activity_summary") ??
+    "";
+  const summaryHtml = url.searchParams.get("summary_html") ?? "";
   const mailId = url.searchParams.get("mail_id") ?? "";
   const source = url.searchParams.get("source") ?? "automation";
 
-  if (!targetDate || !title || !activitySummary || !mailId) {
+  if (!targetDate || !title || !summaryText || !mailId) {
     return badRequest("missing required fields");
   }
 
@@ -901,11 +1144,12 @@ async function handleDailyLogConfirm(request: Request): Promise<Response> {
     <p>Target Date: ${targetDate}</p>
     <p>Title: ${title}</p>
     <p>Source: ${source}</p>
-    <pre>${activitySummary}</pre>
+    <pre>${summaryText}</pre>
     <form method="post" action="/execute/api/daily_log/upsert">
       <input type="hidden" name="target_date" value="${targetDate}" />
       <input type="hidden" name="title" value="${title}" />
-      <input type="hidden" name="activity_summary" value="${activitySummary}" />
+      <input type="hidden" name="summary_text" value="${summaryText}" />
+      <input type="hidden" name="summary_html" value="${summaryHtml}" />
       <input type="hidden" name="mail_id" value="${mailId}" />
       <input type="hidden" name="source" value="${source}" />
       <button type="submit">Execute Upsert</button>
@@ -964,6 +1208,9 @@ export default {
       if (path === "/api/tasks/closed") {
         return await handleTasksClosed(request, env);
       }
+      if (path === "/api/daily_log") {
+        return await handleDailyLogRead(request, env);
+      }
       if (path === "/api/daily_log/upsert") {
         return new Response(
           JSON.stringify({
@@ -977,6 +1224,9 @@ export default {
       }
       if (path === "/execute/api/daily_log/upsert") {
         return await handleDailyLogExecute(request, env);
+      }
+      if (path === "/execute/api/daily_log/ensure") {
+        return await handleDailyLogEnsure(request, env);
       }
       if (path === "/confirm/tasks/promote" && request.method === "GET") {
         return await handleTaskPromoteConfirm(request);
