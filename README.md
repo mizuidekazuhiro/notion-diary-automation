@@ -268,6 +268,9 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 - HTMLメール（multipart/alternative）で text/plain と text/html を送信
 - `MAIL_TO` はカンマ区切りで複数対応
 - SMTP送信に失敗しても処理は継続（ログにエラーを出力）
+- HTML本文はインラインCSS中心でレンダリング（Gmail/iPhoneの崩れ対策）
+- Notionに `Diary` / `Expenses total` / `Location summary` / `Mood` / `Weight` を追加すると、
+  Daily Logの値がメールのSummaryセクションに自動反映されます（未入力は “—” 表示）
 
 ## GitHub Actions
 
@@ -358,6 +361,9 @@ python scripts/daily_job.py --phase all
    - `Content-Type: text/html; charset=utf-8` になっているか
 4. **CSSはインラインのみか**
    - Gmail/iPhoneメールで崩れないために `style=""` を使用
+5. **styleタグやflexに依存していないか**
+   - Gmailは `<style>` を削ることがあるためインライン推奨
+   - flexは最小限にしてtableレイアウト併用
 
 ## MIME出力の簡易テスト
 

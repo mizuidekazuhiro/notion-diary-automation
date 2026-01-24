@@ -1036,6 +1036,15 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const properties = page.properties ?? {};
   const summaryText = getPlainTextFromRichText(properties["Activity Summary"]);
   const summaryHtml = getPlainTextFromRichText(properties.Diary);
+  const diary = getPlainTextFromRichText(properties.Diary) || null;
+  const expensesTotal =
+    typeof properties["Expenses total"]?.number === "number"
+      ? properties["Expenses total"].number
+      : null;
+  const locationSummary = getPlainTextFromRichText(properties["Location summary"]) || null;
+  const mood = properties.Mood?.select?.name ?? null;
+  const weight =
+    typeof properties.Weight?.number === "number" ? properties.Weight.number : null;
   const mailId = getPlainTextFromRichText(properties["Mail ID"]);
   const source = properties.Source?.select?.name ?? null;
 
@@ -1049,6 +1058,11 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       summary_html: summaryHtml,
       mail_id: mailId,
       source,
+      diary,
+      expenses_total: expensesTotal,
+      location_summary: locationSummary,
+      mood,
+      weight,
     }),
     { headers: jsonHeaders },
   );
