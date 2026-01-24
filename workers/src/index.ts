@@ -526,20 +526,6 @@ function splitIntoChunks(content: string, maxLength: number): string[] {
   return chunks;
 }
 
-function createParagraphBlocksFromText(content: string): Record<string, any>[] {
-  return splitIntoChunks(content, BODY_CHUNK_LENGTH).map((chunk) => ({
-    object: "block",
-    type: "paragraph",
-    paragraph: {
-      rich_text: [
-        {
-          text: { content: chunk },
-        },
-      ],
-    },
-  }));
-}
-
 function getPlainTextFromRichText(property: Record<string, any> | undefined): string {
   if (!property) {
     return "";
@@ -905,22 +891,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
 
   const resolvedPageId = pageId ?? (existingPage ? existingPage.id : undefined);
   const finalPageId = resolvedPageId ?? (await resultResponse.json()).id;
-  if (dataJson) {
-    const children = createParagraphBlocksFromText(dataJson);
-    if (children.length) {
-      const childrenResponse = await notionFetch(
-        env,
-        `/blocks/${finalPageId}/children`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ children }),
-        },
-      );
-      if (!childrenResponse.ok) {
-        return notionErrorResponse(childrenResponse, "handleDailyLogUpsert.children");
-      }
-    }
-  }
+  void dataJson;
 
   if (updateTaskRelations) {
     await validateTasksDatabaseSchema(env);
