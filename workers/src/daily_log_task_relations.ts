@@ -1,9 +1,4 @@
-import {
-  addDaysToJstDate,
-  formatJstDateTime,
-  getJstDateString,
-  getJstDateStringFromDateTime,
-} from "./date_utils";
+import { getJstDateString, getJstRangeForTargetDate } from "./date_utils";
 import {
   getNotionErrorDetails,
   NotionApiError,
@@ -72,27 +67,49 @@ function createRelationProperty(ids: string[]) {
   };
 }
 
-function buildYesterdayRange(targetDate: string) {
-  const yesterday = addDaysToJstDate(targetDate, -1);
-  const startJst = formatJstDateTime(yesterday);
-  const endJst = formatJstDateTime(targetDate);
-  return { startJst, endJst };
+function getTaskTitle(page: Record<string, any>): string | null {
+  const title = page.properties?.[TITLE_PROPERTIES.tasks]?.title ?? [];
+  if (!Array.isArray(title) || title.length === 0) {
+    return null;
+  }
+  return title.map((item: Record<string, any>) => item.plain_text ?? "").join("");
+}
+
+type JstRange = {
+  start_jst_iso: string;
+  end_jst_iso: string;
+};
+
+type TaskRangeItem = {
+  id: string;
+  title: string | null;
+  dateRaw: string | null;
+  inRange: boolean;
+};
+
+function isDateTimeInRange(dateTime: string, range: JstRange): boolean {
+  const dateValue = Date.parse(dateTime);
+  const startValue = Date.parse(range.start_jst_iso);
+  const endValue = Date.parse(range.end_jst_iso);
+  if ([dateValue, startValue, endValue].some(Number.isNaN)) {
+    return false;
+  }
+  return dateValue >= startValue && dateValue < endValue;
 }
 
 async function fetchTaskIdsByStatus(
   env: DailyLogTaskRelationEnv & TaskPropertyNameEnv,
   status: string,
   dateProperty: string,
-  range: { startJst: string; endJst: string },
-  targetDate: string,
-): Promise<string[]> {
+  range: JstRange,
+): Promise<TaskRangeItem[]> {
   const { statusPropertyName } = getTaskPropertyNames(env);
   const filter = {
     and: [
       { property: statusPropertyName, select: { equals: status } },
       { property: dateProperty, date: { is_not_empty: true } },
-      { property: dateProperty, date: { on_or_after: range.startJst } },
-      { property: dateProperty, date: { before: range.endJst } },
+      { property: dateProperty, date: { on_or_after: range.start_jst_iso } },
+      { property: dateProperty, date: { before: range.end_jst_iso } },
     ],
   };
   logNotionQueryPayload(`tasks/${status}`, filter);
@@ -101,15 +118,14 @@ async function fetchTaskIdsByStatus(
   return pages
     .map((page: Record<string, any>) => {
       const dateRaw = page.properties?.[dateProperty]?.date?.start ?? null;
-      const dateJst = dateRaw ? getJstDateStringFromDateTime(dateRaw) : null;
       return {
         id: page.id,
+        title: getTaskTitle(page),
         dateRaw,
-        dateJst,
+        inRange: dateRaw ? isDateTimeInRange(dateRaw, range) : false,
       };
     })
-    .filter((item) => item.dateRaw && item.dateJst === targetDate)
-    .map((item) => item.id);
+    .filter((item) => item.dateRaw);
 }
 
 async function findOrCreateDailyLogPage(
@@ -167,25 +183,36 @@ export async function updateDailyLogTaskRelations(
   env: DailyLogTaskRelationEnv,
   targetDate = getJstDateString(),
 ): Promise<DailyLogTaskRelationResult> {
-  const range = buildYesterdayRange(targetDate);
-  const yesterday = addDaysToJstDate(targetDate, -1);
+  const range = getJstRangeForTargetDate(targetDate);
   const { doneDatePropertyName, dropDatePropertyName } = getTaskPropertyNames(env);
   const doneStatus = env.TASK_STATUS_DONE || DEFAULT_DONE_STATUS;
   const dropStatus =
     env.TASK_STATUS_DROPPED || env.TASK_STATUS_DROP_VALUE || DEFAULT_DROP_STATUS;
 
   console.log(
-    `DailyLog relations: today=${targetDate}(JST) yesterday=${yesterday}(JST) range=${range.startJst}..${range.endJst}`,
+    `DailyLog relations: target_date=${targetDate}(JST) start_jst_iso=${range.start_jst_iso} end_jst_iso=${range.end_jst_iso}`,
   );
 
-  const [doneTaskIds, dropTaskIds] = await Promise.all([
-    fetchTaskIdsByStatus(env, doneStatus, doneDatePropertyName, range, yesterday),
-    fetchTaskIdsByStatus(env, dropStatus, dropDatePropertyName, range, yesterday),
+  const [doneTasks, dropTasks] = await Promise.all([
+    fetchTaskIdsByStatus(env, doneStatus, doneDatePropertyName, range),
+    fetchTaskIdsByStatus(env, dropStatus, dropDatePropertyName, range),
   ]);
+  const doneTaskIds = doneTasks.map((item) => item.id);
+  const dropTaskIds = dropTasks.map((item) => item.id);
 
   console.log(
     `DailyLog relations: done=${doneTaskIds.length}, drop=${dropTaskIds.length}`,
   );
+  for (const item of doneTasks.slice(0, 3)) {
+    console.log(
+      `DailyLog relations: done_sample title="${item.title}" done_date=${item.dateRaw} in_range=${item.inRange}`,
+    );
+  }
+  for (const item of dropTasks.slice(0, 3)) {
+    console.log(
+      `DailyLog relations: drop_sample title="${item.title}" drop_date=${item.dateRaw} in_range=${item.inRange}`,
+    );
+  }
 
   const { pageId, created } = await findOrCreateDailyLogPage(env, targetDate);
   const updateResponse = await notionFetch(env, `/pages/${pageId}`, {
@@ -210,8 +237,8 @@ export async function updateDailyLogTaskRelations(
   return {
     target_date: targetDate,
     range: {
-      start_jst: range.startJst,
-      end_jst: range.endJst,
+      start_jst: range.start_jst_iso,
+      end_jst: range.end_jst_iso,
     },
     daily_log_page_id: pageId,
     created,

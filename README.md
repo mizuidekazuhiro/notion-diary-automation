@@ -29,10 +29,12 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - メールには **昨日 Done / 昨日 Drop** のみを含めます。
 - 表示は「タスク名 + Priority」のみ（日時など詳細は表示しない）。
 - Tasks DB の `Done date` / `Drop date` を使って集計します（プロパティ名は環境変数で変更可）。
-- JST基準で「昨日（00:00〜24:00）」の範囲で集計します（`start <= date < end`）。
-- 定義:
-  - `yesterday_start_jst = 昨日 00:00:00 +09:00`
-  - `yesterday_end_jst = 今日 00:00:00 +09:00`
+- JST基準で「昨日の0:00〜翌日0:00」の範囲で集計します（`start <= date < end`）。
+- `Done date` / `Drop date` は**時刻つき**で保存されるため、`target_date` のJSTレンジで判定します。
+  - `start = ${target_date}T00:00:00+09:00`
+  - `end = ${next_date}T00:00:00+09:00`（`end`は排他）
+- `before end` を使う理由は、`24:00` 表記を作らずに「翌日0:00」を排他境界として扱うためです。
+- `toISOString()` / `new Date("YYYY-MM-DD")` のUTC変換は**1日ズレる**ので使いません。
 - `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
 - `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
 - `Notes` は仕様として一切書き込みません。
