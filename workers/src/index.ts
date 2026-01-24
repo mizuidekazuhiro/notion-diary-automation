@@ -526,20 +526,6 @@ function splitIntoChunks(content: string, maxLength: number): string[] {
   return chunks;
 }
 
-function createParagraphBlocksFromText(content: string): Record<string, any>[] {
-  return splitIntoChunks(content, BODY_CHUNK_LENGTH).map((chunk) => ({
-    object: "block",
-    type: "paragraph",
-    paragraph: {
-      rich_text: [
-        {
-          text: { content: chunk },
-        },
-      ],
-    },
-  }));
-}
-
 function getPlainTextFromRichText(property: Record<string, any> | undefined): string {
   if (!property) {
     return "";
@@ -675,16 +661,15 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
     return badRequest("invalid date format");
   }
 
-  const startJst = formatJstDateTime(targetDate);
-  const nextDate = addDaysToJstDate(targetDate, 1);
-  const endJst = formatJstDateTime(nextDate);
+  const startJst = formatJstDateTime(targetDate, "00:00:00");
+  const endJst = formatJstDateTime(targetDate, "23:59:59");
 
   const doneFilter = {
     and: [
       { property: statusPropertyName, select: { equals: doneStatus } },
       { property: doneDatePropertyName, date: { is_not_empty: true } },
       { property: doneDatePropertyName, date: { on_or_after: startJst } },
-      { property: doneDatePropertyName, date: { before: endJst } },
+      { property: doneDatePropertyName, date: { on_or_before: endJst } },
     ],
   };
   const dropFilter = {
@@ -692,12 +677,12 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
       { property: statusPropertyName, select: { equals: droppedStatus } },
       { property: dropDatePropertyName, date: { is_not_empty: true } },
       { property: dropDatePropertyName, date: { on_or_after: startJst } },
-      { property: dropDatePropertyName, date: { before: endJst } },
+      { property: dropDatePropertyName, date: { on_or_before: endJst } },
     ],
   };
 
   console.log(
-    `Tasks closed: today=${addDaysToJstDate(targetDate, 1)}(JST) yesterday=${targetDate}(JST) range=${startJst}..${endJst}`,
+    `Tasks closed: target_date=${targetDate}(JST) range=${startJst}..${endJst}`,
   );
   console.log(
     `Notion query payload (tasks/closed/done): ${JSON.stringify({
@@ -754,8 +739,24 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
     .map(({ drop_date_jst, ...item }) => item);
 
   console.log(
-    `Tasks closed: done=${done.length} drop=${drop.length} date=${targetDate}`,
+    `Tasks closed: target_date=${targetDate} done=${done.length} drop=${drop.length}`,
   );
+  for (const item of done) {
+    const doneDateJst = item.done_date
+      ? getJstDateStringFromDateTime(item.done_date)
+      : null;
+    console.log(
+      `Tasks closed: item title="${item.title}" status=${doneStatus} done_date_jst=${doneDateJst}`,
+    );
+  }
+  for (const item of drop) {
+    const dropDateJst = item.drop_date
+      ? getJstDateStringFromDateTime(item.drop_date)
+      : null;
+    console.log(
+      `Tasks closed: item title="${item.title}" status=${droppedStatus} drop_date_jst=${dropDateJst}`,
+    );
+  }
 
   const debugEnabled = url.searchParams.get("debug") === "1";
   const debug = debugEnabled
@@ -853,7 +854,6 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     "Target Date": createDateProperty(targetDate),
     Date: createDateProperty(targetDate),
     "Activity Summary": createRichTextProperty(summaryText),
-    Diary: createRichTextProperty(summaryHtml),
     "Mail ID": createRichTextProperty(mailId),
     Source: createSelectProperty(source),
   };
@@ -891,22 +891,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
 
   const resolvedPageId = pageId ?? (existingPage ? existingPage.id : undefined);
   const finalPageId = resolvedPageId ?? (await resultResponse.json()).id;
-  if (dataJson) {
-    const children = createParagraphBlocksFromText(dataJson);
-    if (children.length) {
-      const childrenResponse = await notionFetch(
-        env,
-        `/blocks/${finalPageId}/children`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ children }),
-        },
-      );
-      if (!childrenResponse.ok) {
-        return notionErrorResponse(childrenResponse, "handleDailyLogUpsert.children");
-      }
-    }
-  }
+  void dataJson;
 
   if (updateTaskRelations) {
     await validateTasksDatabaseSchema(env);
