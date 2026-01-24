@@ -1,10 +1,12 @@
-name: Daily Notion Diary (Manual)
+name: Daily Notion Diary - Phase A (Ingest)
 
 on:
+  schedule:
+    - cron: "0 16 * * *"
   workflow_dispatch: {}
 
 jobs:
-  run-daily-job:
+  run-ingest:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,7 +22,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily job (all phases)
+      - name: Run ingest phase
         env:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
@@ -30,4 +32,4 @@ jobs:
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
-        run: python scripts/daily_job.py --phase all
+        run: python scripts/daily_job.py --phase ingest

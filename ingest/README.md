@@ -1,6 +1,6 @@
 # ingest
 
-収集データの書き込み（upsert/更新）を扱うモジュール群を配置します。
+収集データの書き込み（ensure/upsert/更新）を扱うモジュール群を配置します。
 
-- 例: Daily_Log の upsert など
-- 実運用の entry はまだ既存の scripts 側から呼ばれるため、このディレクトリは段階移行用の複製先です。
+- `ensure_daily_log_page.py`: Daily_Log の存在保証（Phase A-0）
+- `ingest_sources.py`: コネクタを順に実行してDaily_Logへ反映（Phase A-1）
