@@ -16,6 +16,11 @@ class DailyLogSummary:
     summary_html: str
     mail_id: str
     source: Optional[str]
+    diary: Optional[str]
+    expenses_total: Optional[float]
+    location_summary: Optional[str]
+    mood: Optional[str]
+    weight: Optional[float]
 
 
 def read_daily_log(
@@ -34,4 +39,9 @@ def read_daily_log(
         summary_html=payload.get("summary_html", ""),
         mail_id=payload.get("mail_id", ""),
         source=payload.get("source"),
+        diary=payload.get("diary"),
+        expenses_total=payload.get("expenses_total"),
+        location_summary=payload.get("location_summary"),
+        mood=payload.get("mood"),
+        weight=payload.get("weight"),
     )
