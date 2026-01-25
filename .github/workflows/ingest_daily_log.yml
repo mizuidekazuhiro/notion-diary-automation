@@ -1,5 +1,5 @@
 name: Daily Notion Diary - Phase A (Ingest)
-
+# touch: re-register schedule
 on:
   schedule:
     - cron: "0 16 * * *"
