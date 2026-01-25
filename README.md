@@ -275,9 +275,10 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 ## GitHub Actions
 
 - 実行タイミング:
-  - Phase A: JST 01:00（UTC 16:00）+ 手動実行
-  - Phase B: JST 07:00（UTC 22:00）+ 手動実行
+  - Scheduler: JST 01:00（UTC 16:00）に Phase A、JST 07:00（UTC 22:00）に Phase B を自動ディスパッチ
+  - 手動実行: Phase A / Phase B それぞれのワークフロー、または Scheduler を `workflow_dispatch` で実行
 - ワークフロー:
+  - `Daily Notion Diary - Scheduler` → `.github/workflows/daily_scheduler.yml`
   - `Daily Notion Diary - Phase A (Ingest)` → `.github/workflows/ingest_daily_log.yml`
   - `Daily Notion Diary - Phase B (Publish)` → `.github/workflows/publish_daily_mail.yml`
 - Secrets:
