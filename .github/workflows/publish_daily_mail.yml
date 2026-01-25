@@ -1,5 +1,5 @@
 name: Daily Notion Diary - Phase B (Publish)
-
+# touch: re-register schedule
 on:
   schedule:
     - cron: "0 22 * * *"
