@@ -103,7 +103,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     )
     if not summary:
         logging.info(
-            "Daily_Log not found; skipping send. phase=publish target_date(JST)=%s run_id=%s",
+            "Daily_Log summary not found; skipping publish phase. target_date(JST)=%s run_id=%s",
             target_date,
             run_id,
         )

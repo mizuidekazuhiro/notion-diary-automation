@@ -275,12 +275,14 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 ## GitHub Actions
 
 - 実行タイミング:
-  - Scheduler: JST 01:00（UTC 16:00）に Phase A、JST 07:00（UTC 22:00）に Phase B を自動ディスパッチ
-  - 手動実行: Phase A / Phase B それぞれのワークフロー、または Scheduler を `workflow_dispatch` で実行
+  - Phase A: JST 01:00（UTC 16:00）に `ingest_daily_log.yml` を直接スケジュール実行
+  - Phase B: JST 07:00（UTC 22:00）に `publish_daily_mail.yml` を直接スケジュール実行
+  - 手動実行: Phase A / Phase B それぞれのワークフローを `workflow_dispatch` で実行
 - ワークフロー:
-  - `Daily Notion Diary - Scheduler` → `.github/workflows/daily_scheduler.yml`
   - `Daily Notion Diary - Phase A (Ingest)` → `.github/workflows/ingest_daily_log.yml`
   - `Daily Notion Diary - Phase B (Publish)` → `.github/workflows/publish_daily_mail.yml`
+  - `Deploy Cloudflare Workers` → `.github/workflows/deploy_workers.yml`
+- Schedulerを廃止して **run増殖が発生しない** 構成にしています（毎日2回の定期実行のみ）。
 - Secrets:
   - `MAIL_FROM`
   - `MAIL_TO`
@@ -308,6 +310,14 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 - `WORKERS_BEARER_TOKEN` は任意ですが、有効化する場合は **Cloudflare側のVariables/Secretsにも同じ値** を入れてください。
 
 ## 手動実行
+
+### GitHub Actions から実行する場合
+
+1. GitHub → Actions を開く
+2. `Daily Notion Diary - Phase A (Ingest)` または `Daily Notion Diary - Phase B (Publish)` を選択
+3. **Run workflow** から `workflow_dispatch` を実行
+
+### ローカルで実行する場合
 
 ```bash
 python scripts/daily_job.py --phase ingest
