@@ -1,7 +1,7 @@
 name: Daily Notion Diary - Phase A (Ingest)
 on:
   schedule:
-    - cron: "0 16 * * *"
+    - cron: "08 16 * * *"
   workflow_dispatch:
 
 jobs:
