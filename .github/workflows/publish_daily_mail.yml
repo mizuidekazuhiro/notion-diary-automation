@@ -1,7 +1,7 @@
 name: Daily Notion Diary - Phase B (Publish)
 on:
   schedule:
-    - cron: "0 22 * * *"
+    - cron: "47 20 * * *"
   workflow_dispatch:
 
 jobs:
