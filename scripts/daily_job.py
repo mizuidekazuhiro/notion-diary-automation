@@ -33,6 +33,7 @@ class Config:
     daily_log_upsert_url: str
     daily_log_ensure_url: str
     health_ingest_url: str
+    expenses_ingest_url: str
     daily_log_read_url: str
     bearer_token: Optional[str]
 
@@ -66,6 +67,9 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
         health_ingest_url=build_worker_url(
             daily_log_upsert_url, "/execute/api/daily_log/ingest_health"
         ),
+        expenses_ingest_url=build_worker_url(
+            daily_log_upsert_url, "/execute/api/daily_log/ingest_expenses"
+        ),
         daily_log_read_url=build_worker_url(daily_log_upsert_url, "/api/daily_log"),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
     )
@@ -93,6 +97,7 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         page_id=ensure_result.page_id,
         tasks_closed_url=config.tasks_closed_url,
         health_ingest_url=config.health_ingest_url,
+        expenses_ingest_url=config.expenses_ingest_url,
         daily_log_upsert_url=config.daily_log_upsert_url,
         bearer_token=config.bearer_token,
         run_id=run_id,

@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from connectors.expenses import ExpensesConnector
 from connectors.health import HealthConnector
 from connectors.tasks import TasksConnector
 from delivery.email_templates import build_email_html, build_email_text
@@ -24,6 +25,7 @@ def ingest_sources(
     page_id: str,
     tasks_closed_url: str,
     health_ingest_url: str,
+    expenses_ingest_url: str,
     daily_log_upsert_url: str,
     bearer_token: Optional[str],
     run_id: str,
@@ -32,6 +34,7 @@ def ingest_sources(
     connectors = [
         TasksConnector(tasks_closed_url, bearer_token),
         HealthConnector(health_ingest_url, bearer_token),
+        ExpensesConnector(expenses_ingest_url, bearer_token),
     ]
 
     summary_blocks: Dict[str, Any] = {}

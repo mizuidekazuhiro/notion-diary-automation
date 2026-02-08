@@ -25,6 +25,7 @@ interface Env {
   INBOX_DB_ID: string;
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
+  EXPENSES_DB_ID?: string;
   HEALTH_DB_ID?: string;
   WORKERS_BEARER_TOKEN?: string;
   TASK_STATUS_DO?: string;
@@ -51,6 +52,12 @@ interface Env {
   DAILY_LOG_KCAL_PROPERTY_NAME?: string;
   DAILY_LOG_WEIGHT_PROPERTY_NAME?: string;
   DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME?: string;
+  DAILY_LOG_EXPENSES_TOTAL_PROPERTY_NAME?: string;
+  DAILY_LOG_EXPENSES_RELATION_PROPERTY_NAME?: string;
+  EXPENSES_DATE_PROPERTY_NAME?: string;
+  EXPENSES_AMOUNT_PROPERTY_NAME?: string;
+  EXPENSES_NAME_PROPERTY_NAME?: string;
+  EXPENSES_MERCHANT_PROPERTY_NAME?: string;
 }
 
 type NotionPropertyType =
@@ -74,20 +81,23 @@ type SchemaCache = Record<string, boolean>;
 const schemaCache: SchemaCache = {};
 const databasePropertiesCache: Record<string, Record<string, any>> = {};
 
-const DAILY_LOG_PROPERTIES: ExpectedProperty[] = [
-  { name: TITLE_PROPERTIES.dailyLog, type: "title" },
-  { name: "Date", type: "date" },
-  { name: "Target Date", type: "date" },
-  { name: "Activity Summary", type: "rich_text" },
-  { name: "Diary", type: "rich_text" },
-  { name: "Expenses total", type: "number" },
-  { name: "Location summary", type: "rich_text" },
-  { name: "Meal summary", type: "rich_text" },
-  { name: "Mail ID", type: "rich_text" },
-  { name: "Mood", type: "select" },
-  { name: "Source", type: "select" },
-  { name: "Weight", type: "number" },
-];
+function buildDailyLogProperties(env: Env): ExpectedProperty[] {
+  const dailyLogExpenses = getDailyLogExpensesPropertyNames(env);
+  return [
+    { name: TITLE_PROPERTIES.dailyLog, type: "title" },
+    { name: "Date", type: "date" },
+    { name: "Target Date", type: "date" },
+    { name: "Activity Summary", type: "rich_text" },
+    { name: "Diary", type: "rich_text" },
+    { name: dailyLogExpenses.total, type: "number" },
+    { name: "Location summary", type: "rich_text" },
+    { name: "Meal summary", type: "rich_text" },
+    { name: "Mail ID", type: "rich_text" },
+    { name: "Mood", type: "select" },
+    { name: "Source", type: "select" },
+    { name: "Weight", type: "number" },
+  ];
+}
 
 const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "Date", type: "date" },
@@ -518,6 +528,18 @@ type DailyLogHealthPropertyNames = {
   mealPhoto: string;
 };
 
+type ExpensesPropertyNames = {
+  date: string;
+  amount: string;
+  name: string;
+  merchant: string;
+};
+
+type DailyLogExpensesPropertyNames = {
+  total: string;
+  relation: string;
+};
+
 function getHealthPropertyNames(env: Env): HealthPropertyNames {
   return {
     date: env.HEALTH_DATE_PROPERTY_NAME || "Date",
@@ -539,6 +561,22 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     kcal: env.DAILY_LOG_KCAL_PROPERTY_NAME || "Kcal",
     weight: env.DAILY_LOG_WEIGHT_PROPERTY_NAME || "Weight",
     mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
+  };
+}
+
+function getExpensesPropertyNames(env: Env): ExpensesPropertyNames {
+  return {
+    date: env.EXPENSES_DATE_PROPERTY_NAME || "Date",
+    amount: env.EXPENSES_AMOUNT_PROPERTY_NAME || "Amount",
+    name: env.EXPENSES_NAME_PROPERTY_NAME || "Name",
+    merchant: env.EXPENSES_MERCHANT_PROPERTY_NAME || "Merchant",
+  };
+}
+
+function getDailyLogExpensesPropertyNames(env: Env): DailyLogExpensesPropertyNames {
+  return {
+    total: env.DAILY_LOG_EXPENSES_TOTAL_PROPERTY_NAME || "Expenses total",
+    relation: env.DAILY_LOG_EXPENSES_RELATION_PROPERTY_NAME || "Expenses",
   };
 }
 
@@ -605,6 +643,12 @@ function createFilesProperty(files: Array<Record<string, any>>) {
   };
 }
 
+function createRelationProperty(ids: string[]) {
+  return {
+    relation: ids.map((id) => ({ id })),
+  };
+}
+
 function createCheckboxProperty(value: boolean) {
   return {
     checkbox: value,
@@ -631,6 +675,19 @@ function getPlainTextFromRichText(property: Record<string, any> | undefined): st
     return "";
   }
   return richText
+    .map((item: { plain_text?: string }) => item.plain_text ?? "")
+    .join("");
+}
+
+function getPlainTextFromTitle(property: Record<string, any> | undefined): string {
+  if (!property) {
+    return "";
+  }
+  const title = property.title;
+  if (!Array.isArray(title)) {
+    return "";
+  }
+  return title
     .map((item: { plain_text?: string }) => item.plain_text ?? "")
     .join("");
 }
@@ -681,6 +738,21 @@ function getFileUrlsFromProperty(
       return null;
     })
     .filter((item): item is string => Boolean(item));
+}
+
+function getRelationIdsFromProperty(
+  property: Record<string, any> | undefined,
+): string[] {
+  if (!property || !Array.isArray(property.relation)) {
+    return [];
+  }
+  return property.relation
+    .map((item: { id?: string }) => item.id)
+    .filter((id): id is string => Boolean(id));
+}
+
+function buildNotionPageUrl(pageId: string): string {
+  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
 }
 
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
@@ -941,7 +1013,7 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
 
   const payload = await parseJsonBody(request);
   if (!payload) {
@@ -1167,7 +1239,7 @@ async function handleDailyLogHealthIngest(
   );
   const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
 
-  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   const updateProperties: Record<string, any> = {};
 
@@ -1311,6 +1383,209 @@ async function handleDailyLogHealthIngest(
   );
 }
 
+async function handleDailyLogExpensesIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ingest_expenses");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+  if (!env.EXPENSES_DB_ID) {
+    return new Response(JSON.stringify({ error: "missing EXPENSES_DB_ID" }), {
+      status: 500,
+      headers: jsonHeaders,
+    });
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+
+  let targetDate =
+    typeof payload.target_date === "string" ? payload.target_date.trim() : "";
+  if (!targetDate) {
+    targetDate = getJstYesterdayString();
+  }
+  if (!isValidDateString(targetDate)) {
+    return badRequest("invalid target_date format");
+  }
+
+  const expensesPropertyNames = getExpensesPropertyNames(env);
+  const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
+
+  const expensesDbProperties = await getDatabaseProperties(env, env.EXPENSES_DB_ID);
+  if (!hasPropertyType(expensesDbProperties, expensesPropertyNames.date, "date")) {
+    return new Response(
+      JSON.stringify({
+        error: "expenses db schema error",
+        message: `Missing date property: ${expensesPropertyNames.date}`,
+      }),
+      { status: 500, headers: jsonHeaders },
+    );
+  }
+
+  const startJst = formatJstDateTime(targetDate);
+  const endJst = formatJstDateTime(addDaysToJstDate(targetDate, 1));
+  const filter = {
+    and: [
+      {
+        property: expensesPropertyNames.date,
+        date: { on_or_after: startJst },
+      },
+      {
+        property: expensesPropertyNames.date,
+        date: { before: endJst },
+      },
+    ],
+  };
+
+  let expensePages: Record<string, any>[] = [];
+  try {
+    expensePages = await queryDatabaseAll(env, env.EXPENSES_DB_ID, filter);
+  } catch (error) {
+    if (error instanceof NotionApiError) {
+      return notionErrorResponseFromDetails(error);
+    }
+    throw error;
+  }
+
+  const pageIds = expensePages.map((page) => page.id).filter(Boolean);
+  const total = expensePages.reduce((acc, page) => {
+    const amount = getNumberFromProperty(
+      page.properties?.[expensesPropertyNames.amount],
+    );
+    return acc + (amount ?? 0);
+  }, 0);
+
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  const updateProperties: Record<string, any> = {};
+
+  if (
+    hasPropertyType(
+      dailyLogProperties,
+      dailyLogExpensesPropertyNames.total,
+      "number",
+    )
+  ) {
+    updateProperties[dailyLogExpensesPropertyNames.total] = createNumberProperty(total);
+  } else {
+    console.warn(
+      `Daily_Log missing number property "${dailyLogExpensesPropertyNames.total}", skipping.`,
+    );
+  }
+
+  if (
+    hasPropertyType(
+      dailyLogProperties,
+      dailyLogExpensesPropertyNames.relation,
+      "relation",
+    )
+  ) {
+    updateProperties[dailyLogExpensesPropertyNames.relation] =
+      createRelationProperty(pageIds);
+  } else {
+    console.warn(
+      `Daily_Log missing relation property "${dailyLogExpensesPropertyNames.relation}", skipping.`,
+    );
+  }
+
+  if (!Object.keys(updateProperties).length) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target_date: targetDate,
+        found: true,
+        updated: false,
+        reason: "no updatable properties",
+        expenses_count: pageIds.length,
+        expenses_total: total,
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const dailyLogQuery = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Target Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!dailyLogQuery.ok) {
+    return notionErrorResponse(dailyLogQuery, "handleDailyLogExpensesIngest.queryDaily");
+  }
+
+  const dailyLogData = await dailyLogQuery.json();
+  const existingPage = (dailyLogData.results ?? [])[0] ?? null;
+
+  let resultResponse: Response;
+  if (existingPage) {
+    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: updateProperties }),
+    });
+  } else {
+    const title = `Daily Log｜${targetDate}`;
+    const properties = {
+      [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
+      "Target Date": createDateProperty(targetDate),
+      Date: createDateProperty(targetDate),
+      ...updateProperties,
+    };
+    resultResponse = await notionFetch(env, "/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: env.DAILY_LOG_DB_ID },
+        properties,
+      }),
+    });
+  }
+
+  if (!resultResponse.ok) {
+    const details = await getNotionErrorDetails(resultResponse);
+    const requestIdLog = details.requestId ? ` request_id=${details.requestId}` : "";
+    const codeLog = details.code ? ` code=${details.code}` : "";
+    const messageLog = details.notionMessage ?? details.message;
+    console.error(
+      `Notion API error in handleDailyLogExpensesIngest.upsert: status=${details.status}${requestIdLog}${codeLog} message=${messageLog}`,
+    );
+    console.error(
+      `DailyLog expenses upsert properties: ${Object.keys(updateProperties).join(
+        ", ",
+      )}`,
+    );
+    return notionErrorResponseFromDetails(details);
+  }
+
+  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      target_date: targetDate,
+      found: true,
+      updated: true,
+      page_id: pageId,
+      expenses_count: pageIds.length,
+      expenses_total: total,
+      expenses_page_ids: pageIds,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleDailyLogEnsure(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return methodNotAllowed("use POST /execute/api/daily_log/ensure");
@@ -1320,7 +1595,7 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
 
   const payload = await parseJsonBody(request);
   if (!payload) {
@@ -1401,7 +1676,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
 
   const url = new URL(request.url);
   const targetDate = url.searchParams.get("date")?.trim() ?? "";
@@ -1445,9 +1720,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const diary = getPlainTextFromRichText(properties.Diary) || null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
-  const expensesTotal =
-    typeof properties["Expenses total"]?.number === "number"
-      ? properties["Expenses total"].number
+  const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
+  const expensesTotalRaw =
+    typeof properties[dailyLogExpensesPropertyNames.total]?.number === "number"
+      ? properties[dailyLogExpensesPropertyNames.total].number
       : null;
   const locationSummary = getPlainTextFromRichText(properties["Location summary"]) || null;
   const mood = properties.Mood?.select?.name ?? null;
@@ -1455,6 +1731,69 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     typeof properties.Weight?.number === "number" ? properties.Weight.number : null;
   const mailId = getPlainTextFromRichText(properties["Mail ID"]);
   const source = properties.Source?.select?.name ?? null;
+
+  const expensesRelationIds = getRelationIdsFromProperty(
+    properties[dailyLogExpensesPropertyNames.relation],
+  );
+  const expensesPropertyNames = getExpensesPropertyNames(env);
+  const expenseEntries = (
+    await Promise.all(
+      expensesRelationIds.map(async (pageId) => {
+        const response = await notionFetch(env, `/pages/${pageId}`);
+        if (!response.ok) {
+          const details = await getNotionErrorDetails(response);
+          console.warn(
+            `Notion API error in handleDailyLogRead.expenses: status=${details.status} page_id=${pageId} message=${details.message}`,
+          );
+          return null;
+        }
+        const expensePage = await response.json();
+        const expenseProperties = expensePage.properties ?? {};
+        const amount =
+          getNumberFromProperty(expenseProperties[expensesPropertyNames.amount]) ?? 0;
+        const merchant = getPlainTextFromRichText(
+          expenseProperties[expensesPropertyNames.merchant],
+        );
+        const name = getPageTitleFromProperty(expensePage, expensesPropertyNames.name);
+        const title = merchant || name || "Untitled";
+        const url =
+          typeof expensePage.url === "string"
+            ? expensePage.url
+            : buildNotionPageUrl(pageId);
+        return {
+          title,
+          amount,
+          url,
+          createdTime:
+            typeof expensePage.created_time === "string"
+              ? expensePage.created_time
+              : "",
+        };
+      }),
+    )
+  ).filter(
+    (entry): entry is { title: string; amount: number; url: string; createdTime: string } =>
+      Boolean(entry),
+  );
+
+  const expensesCount = expensesRelationIds.length;
+  const calculatedTotal = expenseEntries.reduce((acc, entry) => acc + entry.amount, 0);
+  const resolvedExpensesTotal =
+    typeof expensesTotalRaw === "number" ? expensesTotalRaw : calculatedTotal;
+  const sortedExpenses = expenseEntries.sort((a, b) => {
+    if (b.amount !== a.amount) {
+      return b.amount - a.amount;
+    }
+    const aTime = Date.parse(a.createdTime || "") || 0;
+    const bTime = Date.parse(b.createdTime || "") || 0;
+    return bTime - aTime;
+  });
+  const expensesTop = sortedExpenses.slice(0, 3).map((entry) => ({
+    title: entry.title,
+    amount: entry.amount,
+    url: entry.url,
+  }));
+  const expensesRemaining = Math.max(expensesCount - expensesTop.length, 0);
 
   return new Response(
     JSON.stringify({
@@ -1469,7 +1808,13 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       diary,
       meal_summary: mealSummary,
       meal_photos: mealPhotos,
-      expenses_total: expensesTotal,
+      expenses_total: resolvedExpensesTotal,
+      expenses: {
+        total: resolvedExpensesTotal,
+        count: expensesCount,
+        top: expensesTop,
+        remaining: expensesRemaining,
+      },
       location_summary: locationSummary,
       mood,
       weight,
@@ -1636,6 +1981,9 @@ export default {
       }
       if (path === "/execute/api/daily_log/ingest_health") {
         return await handleDailyLogHealthIngest(request, env);
+      }
+      if (path === "/execute/api/daily_log/ingest_expenses") {
+        return await handleDailyLogExpensesIngest(request, env);
       }
       if (path === "/execute/api/daily_log/ensure") {
         return await handleDailyLogEnsure(request, env);
