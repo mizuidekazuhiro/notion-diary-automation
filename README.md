@@ -14,7 +14,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
   - **A-0** `ensure_daily_log_page(target_date)`  
     Daily_Logのページを「存在保証」するだけ。Tasks取得などは一切しない。
   - **A-1** `ingest_sources(target_date, daily_log_page_id)`  
-    コネクタ群（現時点はTasksのみ）を順に実行し、Daily_Logへ追記/更新する。
+    コネクタ群（Tasks / Health）を順に実行し、Daily_Logへ追記/更新する。
 - **Phase B (Publish)**: `target_date = JSTの昨日`
   - Daily_Logを読み取り、メールを生成・送信する。
   - Tasks/Inbox等は再取得しない（Daily_Logのみが情報源）。
@@ -76,6 +76,11 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Mood` (select)
 - `Source` (select)
 - `Weight` (number)
+- `Protein` (number)
+- `Fat` (number)
+- `Carb` (number)
+- `Kcal` (number)
+- `Meal Photo` (files)
 - `Done Tasks` (relation -> Tasks DB)
 - `Drop Tasks` (relation -> Tasks DB)
 - `Done Count` (rollup: Done Tasks の `名前` を Count all)
@@ -83,6 +88,22 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
 `Notes` は仕様として **一切書き込まない** 方針です（DBに存在していても更新対象にしません）。
+
+> **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photo` は任意**です。  
+> 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
+
+### Health condition DB (`HEALTH_DB_ID`)
+
+- `Date` (date) : 対象日付（JSTで YYYY-MM-DD と一致させる）
+- `Protein` (number)
+- `Fat` (number)
+- `Carb` (number)
+- `Kcal` (number)
+- `Weight` (number)
+- `Meal Photo` (files)
+- `Source` (select) : `healthkit` を想定
+
+> プロパティ名が違う場合は `HEALTH_*_PROPERTY_NAME` 環境変数で変更できます。
 
 ### Daily_Logの保存内容（推奨）
 
@@ -131,6 +152,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `INBOX_DB_ID`
 - `TASK_DB_ID`
 - `DAILY_LOG_DB_ID`
+- `HEALTH_DB_ID` (Health condition DB)
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
 - `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
@@ -141,6 +163,21 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASK_STATUS_PROPERTY_NAME` (任意: `Status` がデフォルト)
 - `TASK_DONE_DATE_PROPERTY_NAME` (任意: `Done date` がデフォルト)
 - `TASK_DROP_DATE_PROPERTY_NAME` (任意: `Drop date` がデフォルト)
+- `HEALTH_DATE_PROPERTY_NAME` (任意: `Date` がデフォルト)
+- `HEALTH_PROTEIN_PROPERTY_NAME` (任意: `Protein` がデフォルト)
+- `HEALTH_FAT_PROPERTY_NAME` (任意: `Fat` がデフォルト)
+- `HEALTH_CARB_PROPERTY_NAME` (任意: `Carb` がデフォルト)
+- `HEALTH_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
+- `HEALTH_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
+- `HEALTH_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photo` がデフォルト)
+- `HEALTH_SOURCE_PROPERTY_NAME` (任意: `Source` がデフォルト)
+- `HEALTH_SOURCE_VALUE` (任意: `healthkit` がデフォルト)
+- `DAILY_LOG_PROTEIN_PROPERTY_NAME` (任意: `Protein` がデフォルト)
+- `DAILY_LOG_FAT_PROPERTY_NAME` (任意: `Fat` がデフォルト)
+- `DAILY_LOG_CARB_PROPERTY_NAME` (任意: `Carb` がデフォルト)
+- `DAILY_LOG_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
+- `DAILY_LOG_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
+- `DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photo` がデフォルト)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
@@ -157,6 +194,7 @@ Workers環境変数（Secrets）に以下を設定します。
 | GET | `/confirm/daily_log/upsert` | Daily_Log Upsert 確認ページ |
 | POST | `/execute/api/daily_log/ensure` | Daily_Log ページ作成（存在保証） |
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
+| POST | `/execute/api/daily_log/ingest_health` | Health condition → Daily_Log 転記 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
 
@@ -168,6 +206,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `DAILY_LOG_UPSERT_URL`: `/execute/api/daily_log/upsert`
   - `DAILY_LOG_UPSERT_URL` の同一ホストを使って以下も派生します:
     - `/execute/api/daily_log/ensure`
+    - `/execute/api/daily_log/ingest_health`
     - `/api/daily_log`
 
 ### ルーティング簡易チェック
@@ -256,12 +295,26 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 
 > `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
 
+### Health condition → Daily_Log 転記
+
+- **検索条件**: Health condition の `Date` が `target_date (YYYY-MM-DD, JST)` と一致するページ
+  - `Source` が `healthkit` の場合のみ対象（`HEALTH_SOURCE_VALUE` で変更可）
+- **0件ならスキップ**（`ok: true` を返し、Phase A 全体は継続）
+- **2件以上なら `created_time` が最新の1件を採用**
+- **Daily_Logへの更新は栄養/体重/食事写真のみ**
+  - `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photo`
+  - **`Source` は既存値を維持**（`automation` 判定を壊さないため上書きしない）
+  - `Notes` は更新しない
+
+> Daily_Log側に対象プロパティが無い場合は **警告ログを出してスキップ** します。
+
 ## Python
 
 - Phase A (Ingest):
   - `/execute/api/daily_log/ensure` で Daily_Log ページを先に用意（Tasks取得とは完全分離）
   - `/api/tasks/closed` で昨日のDone/Dropを取得し、SummaryText/Htmlを生成
   - `/execute/api/daily_log/upsert` にPOSTしてDaily_Logへ保存
+  - `/execute/api/daily_log/ingest_health` でHealth conditionをDaily_Logに転記
 - Phase B (Publish):
   - `/api/daily_log` でDaily_LogのSummaryを読み取り、メール送信
   - Tasks/Inboxなどは再取得しない（Daily_Logのみが情報源）
@@ -306,6 +359,7 @@ Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecr
 - `DAILY_LOG_UPSERT_URL = https://<worker>.workers.dev/execute/api/daily_log/upsert`
 - `DAILY_LOG_UPSERT_URL` と同じホストで以下を使用します:
   - `/execute/api/daily_log/ensure`
+  - `/execute/api/daily_log/ingest_health`
   - `/api/daily_log`
 - `WORKERS_BEARER_TOKEN` は任意ですが、有効化する場合は **Cloudflare側のVariables/Secretsにも同じ値** を入れてください。
 
@@ -330,6 +384,7 @@ python scripts/daily_job.py --phase all
 - `.github/workflows/ingest_daily_log.yml` → `scripts/daily_job.py --phase ingest`
 - `scripts/daily_job.py` → `ingest/ensure_daily_log_page.py`
 - `scripts/daily_job.py` → `ingest/ingest_sources.py` → `connectors/tasks.py`
+- `scripts/daily_job.py` → `ingest/ingest_sources.py` → `connectors/health.py`
 - `.github/workflows/publish_daily_mail.yml` → `scripts/daily_job.py --phase publish`
 - `scripts/daily_job.py` → `publish/read_daily_log.py` → `publish/render_mail.py` → `publish/send_mail.py`
 
@@ -422,6 +477,13 @@ python scripts/test_email_mime.py
 2. GitHub Actionsの `workflow_dispatch` で手動実行
 3. Phase A 実行後に `GET /api/daily_log?date=YYYY-MM-DD` が返ることを確認
 4. Phase B 実行でメールに「昨日完了したこと」が出ることを確認
+
+## 動作確認手順（Health condition → Daily_Log）
+
+1. Health condition DB に `Date = 昨日` のレコードを1件作成（`Source = healthkit`）
+2. GitHub Actions の `workflow_dispatch` で Phase A (Ingest) を実行
+3. Workersログで `Health ingest: ...` が出ることを確認
+4. Daily_Log の同日ページに `Protein/Fat/Carb/Kcal/Weight/Meal Photo` が転記されることを確認
 
 ## Daily Log に Done/Drop タスクを Relation で記録する設定
 

@@ -24,6 +24,7 @@ interface Env {
   INBOX_DB_ID: string;
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
+  HEALTH_DB_ID?: string;
   WORKERS_BEARER_TOKEN?: string;
   TASK_STATUS_DO?: string;
   TASK_STATUS_DONE?: string;
@@ -34,6 +35,21 @@ interface Env {
   TASK_STATUS_PROPERTY_NAME?: string;
   TASK_DONE_DATE_PROPERTY_NAME?: string;
   TASK_DROP_DATE_PROPERTY_NAME?: string;
+  HEALTH_DATE_PROPERTY_NAME?: string;
+  HEALTH_PROTEIN_PROPERTY_NAME?: string;
+  HEALTH_FAT_PROPERTY_NAME?: string;
+  HEALTH_CARB_PROPERTY_NAME?: string;
+  HEALTH_KCAL_PROPERTY_NAME?: string;
+  HEALTH_WEIGHT_PROPERTY_NAME?: string;
+  HEALTH_MEAL_PHOTO_PROPERTY_NAME?: string;
+  HEALTH_SOURCE_PROPERTY_NAME?: string;
+  HEALTH_SOURCE_VALUE?: string;
+  DAILY_LOG_PROTEIN_PROPERTY_NAME?: string;
+  DAILY_LOG_FAT_PROPERTY_NAME?: string;
+  DAILY_LOG_CARB_PROPERTY_NAME?: string;
+  DAILY_LOG_KCAL_PROPERTY_NAME?: string;
+  DAILY_LOG_WEIGHT_PROPERTY_NAME?: string;
+  DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME?: string;
 }
 
 type NotionPropertyType =
@@ -44,7 +60,8 @@ type NotionPropertyType =
   | "date"
   | "checkbox"
   | "relation"
-  | "rollup";
+  | "rollup"
+  | "files";
 
 type ExpectedProperty = {
   name: string;
@@ -54,6 +71,7 @@ type ExpectedProperty = {
 type SchemaCache = Record<string, boolean>;
 
 const schemaCache: SchemaCache = {};
+const databasePropertiesCache: Record<string, Record<string, any>> = {};
 
 const DAILY_LOG_PROPERTIES: ExpectedProperty[] = [
   { name: TITLE_PROPERTIES.dailyLog, type: "title" },
@@ -425,6 +443,33 @@ async function validateDatabaseSchema(
   schemaCache[cacheKey] = true;
 }
 
+async function getDatabaseProperties(
+  env: Env,
+  dbId: string,
+): Promise<Record<string, any>> {
+  if (databasePropertiesCache[dbId]) {
+    return databasePropertiesCache[dbId];
+  }
+  const response = await notionFetch(env, `/databases/${dbId}`);
+  if (!response.ok) {
+    const details = await getNotionErrorDetails(response);
+    throw new NotionApiError(details);
+  }
+  const data = await response.json();
+  const properties = data.properties ?? {};
+  databasePropertiesCache[dbId] = properties;
+  return properties;
+}
+
+function hasPropertyType(
+  properties: Record<string, any>,
+  name: string,
+  type: NotionPropertyType,
+): boolean {
+  const schema = properties[name];
+  return Boolean(schema && schema.type === type);
+}
+
 function parseBooleanEnv(value?: string): boolean {
   if (!value) {
     return false;
@@ -449,6 +494,50 @@ function getTaskStatusOptionRequirements(env: Env): Record<string, string[]> {
   const extraOptions = requireExtraOptions ? ["Drop", "Someday"] : [];
   return {
     [statusPropertyName]: [doStatus, doneStatus, droppedStatus, ...extraOptions],
+  };
+}
+
+type HealthPropertyNames = {
+  date: string;
+  protein: string;
+  fat: string;
+  carb: string;
+  kcal: string;
+  weight: string;
+  mealPhoto: string;
+  source: string;
+};
+
+type DailyLogHealthPropertyNames = {
+  protein: string;
+  fat: string;
+  carb: string;
+  kcal: string;
+  weight: string;
+  mealPhoto: string;
+};
+
+function getHealthPropertyNames(env: Env): HealthPropertyNames {
+  return {
+    date: env.HEALTH_DATE_PROPERTY_NAME || "Date",
+    protein: env.HEALTH_PROTEIN_PROPERTY_NAME || "Protein",
+    fat: env.HEALTH_FAT_PROPERTY_NAME || "Fat",
+    carb: env.HEALTH_CARB_PROPERTY_NAME || "Carb",
+    kcal: env.HEALTH_KCAL_PROPERTY_NAME || "Kcal",
+    weight: env.HEALTH_WEIGHT_PROPERTY_NAME || "Weight",
+    mealPhoto: env.HEALTH_MEAL_PHOTO_PROPERTY_NAME || "Meal Photo",
+    source: env.HEALTH_SOURCE_PROPERTY_NAME || "Source",
+  };
+}
+
+function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
+  return {
+    protein: env.DAILY_LOG_PROTEIN_PROPERTY_NAME || "Protein",
+    fat: env.DAILY_LOG_FAT_PROPERTY_NAME || "Fat",
+    carb: env.DAILY_LOG_CARB_PROPERTY_NAME || "Carb",
+    kcal: env.DAILY_LOG_KCAL_PROPERTY_NAME || "Kcal",
+    weight: env.DAILY_LOG_WEIGHT_PROPERTY_NAME || "Weight",
+    mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photo",
   };
 }
 
@@ -509,6 +598,12 @@ function createNumberProperty(value?: number | null) {
   };
 }
 
+function createFilesProperty(files: Array<Record<string, any>>) {
+  return {
+    files,
+  };
+}
+
 function createCheckboxProperty(value: boolean) {
   return {
     checkbox: value,
@@ -537,6 +632,35 @@ function getPlainTextFromRichText(property: Record<string, any> | undefined): st
   return richText
     .map((item: { plain_text?: string }) => item.plain_text ?? "")
     .join("");
+}
+
+function getNumberFromProperty(
+  property: Record<string, any> | undefined,
+): number | null {
+  if (!property || typeof property.number !== "number") {
+    return null;
+  }
+  return property.number;
+}
+
+function normalizeFilesFromProperty(
+  property: Record<string, any> | undefined,
+): Array<Record<string, any>> {
+  if (!property || !Array.isArray(property.files)) {
+    return [];
+  }
+  return property.files
+    .map((file: Record<string, any>) => {
+      const name = typeof file.name === "string" ? file.name : "file";
+      if (file.type === "external" && file.external?.url) {
+        return { name, type: "external", external: { url: file.external.url } };
+      }
+      if (file.type === "file" && file.file?.url) {
+        return { name, type: "file", file: { url: file.file.url } };
+      }
+      return null;
+    })
+    .filter((item): item is Record<string, any> => Boolean(item));
 }
 
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
@@ -905,6 +1029,262 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   });
 }
 
+async function handleDailyLogHealthIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ingest_health");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+  if (!env.HEALTH_DB_ID) {
+    return new Response(JSON.stringify({ error: "missing HEALTH_DB_ID" }), {
+      status: 500,
+      headers: jsonHeaders,
+    });
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+
+  let targetDate =
+    typeof payload.target_date === "string" ? payload.target_date.trim() : "";
+  if (!targetDate) {
+    targetDate = getJstYesterdayString();
+  }
+  if (!isValidDateString(targetDate)) {
+    return badRequest("invalid target_date format");
+  }
+
+  const healthPropertyNames = getHealthPropertyNames(env);
+  const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
+  const healthSourceValue = env.HEALTH_SOURCE_VALUE || "healthkit";
+
+  const healthDbProperties = await getDatabaseProperties(env, env.HEALTH_DB_ID);
+  if (!hasPropertyType(healthDbProperties, healthPropertyNames.date, "date")) {
+    return new Response(
+      JSON.stringify({
+        error: "health db schema error",
+        message: `Missing date property: ${healthPropertyNames.date}`,
+      }),
+      { status: 500, headers: jsonHeaders },
+    );
+  }
+
+  const filterParts: Record<string, any>[] = [
+    { property: healthPropertyNames.date, date: { equals: targetDate } },
+  ];
+  const hasSourceProperty = hasPropertyType(
+    healthDbProperties,
+    healthPropertyNames.source,
+    "select",
+  );
+  if (hasSourceProperty) {
+    filterParts.push({
+      property: healthPropertyNames.source,
+      select: { equals: healthSourceValue },
+    });
+  } else {
+    console.warn(
+      `Health DB missing Source select property "${healthPropertyNames.source}", skipping source filter.`,
+    );
+  }
+
+  const filter = filterParts.length === 1 ? filterParts[0] : { and: filterParts };
+  const queryResponse = await notionFetch(
+    env,
+    `/databases/${env.HEALTH_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 5,
+        filter,
+        sorts: [{ timestamp: "created_time", direction: "descending" }],
+      }),
+    },
+  );
+
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleDailyLogHealthIngest.queryHealth");
+  }
+
+  const queryData = await queryResponse.json();
+  const healthPages = queryData.results ?? [];
+  if (!healthPages.length) {
+    console.log(`Health ingest: no health record for ${targetDate}`);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target_date: targetDate,
+        found: false,
+        updated: false,
+        reason: "no health record",
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  if (healthPages.length > 1) {
+    console.warn(
+      `Health ingest: multiple records for ${targetDate}, using latest created_time.`,
+    );
+  }
+
+  const healthPage = healthPages[0];
+  const healthProps = healthPage.properties ?? {};
+  const protein = getNumberFromProperty(healthProps[healthPropertyNames.protein]);
+  const fat = getNumberFromProperty(healthProps[healthPropertyNames.fat]);
+  const carb = getNumberFromProperty(healthProps[healthPropertyNames.carb]);
+  const kcal = getNumberFromProperty(healthProps[healthPropertyNames.kcal]);
+  const weight = getNumberFromProperty(healthProps[healthPropertyNames.weight]);
+  const mealPhotos = normalizeFilesFromProperty(
+    healthProps[healthPropertyNames.mealPhoto],
+  );
+
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  const updateProperties: Record<string, any> = {};
+
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.protein, "number")) {
+    updateProperties[dailyLogHealthPropertyNames.protein] =
+      createNumberProperty(protein);
+  } else {
+    console.warn(
+      `Daily_Log missing number property "${dailyLogHealthPropertyNames.protein}", skipping.`,
+    );
+  }
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.fat, "number")) {
+    updateProperties[dailyLogHealthPropertyNames.fat] = createNumberProperty(fat);
+  } else {
+    console.warn(
+      `Daily_Log missing number property "${dailyLogHealthPropertyNames.fat}", skipping.`,
+    );
+  }
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.carb, "number")) {
+    updateProperties[dailyLogHealthPropertyNames.carb] =
+      createNumberProperty(carb);
+  } else {
+    console.warn(
+      `Daily_Log missing number property "${dailyLogHealthPropertyNames.carb}", skipping.`,
+    );
+  }
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.kcal, "number")) {
+    updateProperties[dailyLogHealthPropertyNames.kcal] =
+      createNumberProperty(kcal);
+  } else {
+    console.warn(
+      `Daily_Log missing number property "${dailyLogHealthPropertyNames.kcal}", skipping.`,
+    );
+  }
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.weight, "number")) {
+    updateProperties[dailyLogHealthPropertyNames.weight] =
+      createNumberProperty(weight);
+  } else {
+    console.warn(
+      `Daily_Log missing number property "${dailyLogHealthPropertyNames.weight}", skipping.`,
+    );
+  }
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.mealPhoto, "files")) {
+    updateProperties[dailyLogHealthPropertyNames.mealPhoto] =
+      createFilesProperty(mealPhotos);
+  } else {
+    console.warn(
+      `Daily_Log missing files property "${dailyLogHealthPropertyNames.mealPhoto}", skipping.`,
+    );
+  }
+
+  if (!Object.keys(updateProperties).length) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target_date: targetDate,
+        found: true,
+        updated: false,
+        reason: "no updatable properties",
+        health_page_id: healthPage.id,
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const dailyLogQuery = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Target Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!dailyLogQuery.ok) {
+    return notionErrorResponse(dailyLogQuery, "handleDailyLogHealthIngest.queryDaily");
+  }
+
+  const dailyLogData = await dailyLogQuery.json();
+  const existingPage = (dailyLogData.results ?? [])[0] ?? null;
+
+  let resultResponse: Response;
+  if (existingPage) {
+    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: updateProperties }),
+    });
+  } else {
+    const title = `Daily Log｜${targetDate}`;
+    const properties = {
+      [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
+      "Target Date": createDateProperty(targetDate),
+      Date: createDateProperty(targetDate),
+      ...updateProperties,
+    };
+    resultResponse = await notionFetch(env, "/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: env.DAILY_LOG_DB_ID },
+        properties,
+      }),
+    });
+  }
+
+  if (!resultResponse.ok) {
+    const details = await getNotionErrorDetails(resultResponse);
+    const requestIdLog = details.requestId ? ` request_id=${details.requestId}` : "";
+    const codeLog = details.code ? ` code=${details.code}` : "";
+    const messageLog = details.notionMessage ?? details.message;
+    console.error(
+      `Notion API error in handleDailyLogHealthIngest.upsert: status=${details.status}${requestIdLog}${codeLog} message=${messageLog}`,
+    );
+    console.error(
+      `DailyLog health upsert properties: ${Object.keys(updateProperties).join(", ")}`,
+    );
+    return notionErrorResponseFromDetails(details);
+  }
+
+  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      target_date: targetDate,
+      found: true,
+      updated: true,
+      page_id: pageId,
+      health_page_id: healthPage.id,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleDailyLogEnsure(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return methodNotAllowed("use POST /execute/api/daily_log/ensure");
@@ -1223,6 +1603,9 @@ export default {
       }
       if (path === "/execute/api/daily_log/upsert") {
         return await handleDailyLogExecute(request, env);
+      }
+      if (path === "/execute/api/daily_log/ingest_health") {
+        return await handleDailyLogHealthIngest(request, env);
       }
       if (path === "/execute/api/daily_log/ensure") {
         return await handleDailyLogEnsure(request, env);
