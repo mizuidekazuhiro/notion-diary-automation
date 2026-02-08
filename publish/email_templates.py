@@ -300,8 +300,13 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     <meta charset=\"UTF-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
     <title>Daily Log | {html.escape(target_date)}</title>
+    <style>
+      body, table, td, p, li {{
+        font-family: \"Meiryo UI\", \"Meiryo\", \"Hiragino Kaku Gothic ProN\", \"Hiragino Sans\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;
+      }}
+    </style>
   </head>
-  <body style=\"margin: 0; padding: 0; background-color: #f6f7f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; color: #111827;\">
+  <body style=\"margin: 0; padding: 0; background-color: #f6f7f9; font-family: 'Meiryo UI', 'Meiryo', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827;\">
     <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f6f7f9; padding: 24px 0;\">
       <tr>
         <td align=\"center\" style=\"padding: 0 12px;\">
@@ -313,15 +318,44 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
               </td>
             </tr>
 
+            <!-- Reorder sections for daily log readability; font stack set for consistent mail rendering. -->
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
                   <tr>
                     <td>
-                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🍽️ Meal summary</h2>
-                      <p style=\"margin: 0; font-size: 14px; color: #111827;\">{meal_summary_html}</p>
-                      <p style=\"margin: 12px 0 0 0; font-size: 13px; color: #6b7280;\">Meal Photos</p>
-                      {meal_photo_html}
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">Diary</h2>
+                      <p style=\"margin: 0; font-size: 14px; color: #111827;\">{diary_html}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style=\"padding: 0 24px 16px 24px;\">
+                <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
+                  <tr>
+                    <td>
+                      <h2 style=\"margin: 0 0 12px 0; font-size: 16px;\">Summary</h2>
+                      <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">
+                        <tr>
+                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Expenses total</td>
+                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(expenses_total)}</td>
+                        </tr>
+                        <tr>
+                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Location summary</td>
+                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{location_html}</td>
+                        </tr>
+                        <tr>
+                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Mood</td>
+                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(mood)}</td>
+                        </tr>
+                        <tr>
+                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Weight</td>
+                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(weight)}</td>
+                        </tr>
+                      </table>
                     </td>
                   </tr>
                 </table>
@@ -373,29 +407,10 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
                   <tr>
                     <td>
-                      <h2 style=\"margin: 0 0 12px 0; font-size: 16px;\">Summary</h2>
-                      <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">
-                        <tr>
-                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280; width: 160px;\">Diary</td>
-                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{diary_html}</td>
-                        </tr>
-                        <tr>
-                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Expenses total</td>
-                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(expenses_total)}</td>
-                        </tr>
-                        <tr>
-                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Location summary</td>
-                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{location_html}</td>
-                        </tr>
-                        <tr>
-                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Mood</td>
-                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(mood)}</td>
-                        </tr>
-                        <tr>
-                          <td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">Weight</td>
-                          <td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(weight)}</td>
-                        </tr>
-                      </table>
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🍽️ Meal summary</h2>
+                      <p style=\"margin: 0; font-size: 14px; color: #111827;\">{meal_summary_html}</p>
+                      <p style=\"margin: 12px 0 0 0; font-size: 13px; color: #6b7280;\">Meal Photos</p>
+                      {meal_photo_html}
                     </td>
                   </tr>
                 </table>
@@ -468,10 +483,14 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"Daily Log | {target_date}",
         f"Run ID: {run_id}",
         "",
-        "Meal summary",
-        f"- {meal_summary}",
-        "Meal Photos",
-        *([f"- {url}" for url in meal_photos] if meal_photos else ["- —"]),
+        "Diary",
+        diary or "—",
+        "",
+        "Summary",
+        f"- Expenses total: {expenses_total}",
+        f"- Location summary: {location_summary}",
+        f"- Mood: {mood}",
+        f"- Weight: {weight}",
         "",
         "Expenses (昨日の支出)",
         f"Total: {_format_yen(expenses_total_value)}",
@@ -483,12 +502,10 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"🧹 昨日手放したこと（Drop: {len(drop_items)}）",
         *render_items(drop_visible, drop_more),
         "",
-        "Summary",
-        f"- Diary: {diary}",
-        f"- Expenses total: {expenses_total}",
-        f"- Location summary: {location_summary}",
-        f"- Mood: {mood}",
-        f"- Weight: {weight}",
+        "Meal summary",
+        f"- {meal_summary}",
+        "Meal Photos",
+        *([f"- {url}" for url in meal_photos] if meal_photos else ["- —"]),
     ]
     if mood_notes_url:
         lines += [
