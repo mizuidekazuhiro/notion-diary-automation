@@ -38,6 +38,11 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
 - `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
 - `Notes` は仕様として一切書き込みません。
+- 追加で「Expenses (昨日の支出)」セクションを表示します（合計 + 上位3件 + 残り件数）。
+  - 合計は `Total: ¥{expenses_total}` を表示します。
+  - 明細は `• {title_or_merchant} — ¥{amount} (link)` を最大3件表示します。
+  - 4件以上ある場合は `…and {remaining} more` を追加します。
+  - 0件の場合は `—` を表示します。
 
 ## Notion DBの必須プロパティ
 
@@ -70,6 +75,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Activity Summary` (rich_text)
 - `Diary` (rich_text)
 - `Expenses total` (number)
+- `Expenses` (relation -> Expenses DB)
 - `Location summary` (rich_text)
 - `Meal summary` (rich_text)
 - `Mail ID` (rich_text)
@@ -92,6 +98,9 @@ MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を
 > **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos` は任意**です。  
 > 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
 
+> **Expenses転記用の `Expenses total` / `Expenses` relation は追加してください。**  
+> 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
+
 ### Health condition DB (`HEALTH_DB_ID`)
 
 - `Date` (date) : 対象日付（JSTで YYYY-MM-DD と一致させる）
@@ -104,6 +113,15 @@ MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を
 - `Source` (select) : `healthkit` を想定
 
 > プロパティ名が違う場合は `HEALTH_*_PROPERTY_NAME` 環境変数で変更できます。
+
+### Expenses DB (`EXPENSES_DB_ID`)
+
+- `Date` (date) : JSTで前日分を抽出する対象日付
+- `Amount` (number)
+- `Name` (title)
+- `Merchant` (rich_text) ※任意。無ければ Name を表示に使う
+
+> プロパティ名が違う場合は `EXPENSES_*_PROPERTY_NAME` 環境変数で変更できます。
 
 ### Daily_Logの保存内容（推奨）
 
@@ -153,6 +171,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `TASK_DB_ID`
 - `DAILY_LOG_DB_ID`
 - `HEALTH_DB_ID` (Health condition DB)
+- `EXPENSES_DB_ID` (Expenses DB)
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
 - `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
@@ -178,6 +197,12 @@ Workers環境変数（Secrets）に以下を設定します。
 - `DAILY_LOG_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
 - `DAILY_LOG_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
 - `DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photos` がデフォルト)
+- `DAILY_LOG_EXPENSES_TOTAL_PROPERTY_NAME` (任意: `Expenses total` がデフォルト)
+- `DAILY_LOG_EXPENSES_RELATION_PROPERTY_NAME` (任意: `Expenses` がデフォルト)
+- `EXPENSES_DATE_PROPERTY_NAME` (任意: `Date` がデフォルト)
+- `EXPENSES_AMOUNT_PROPERTY_NAME` (任意: `Amount` がデフォルト)
+- `EXPENSES_NAME_PROPERTY_NAME` (任意: `Name` がデフォルト)
+- `EXPENSES_MERCHANT_PROPERTY_NAME` (任意: `Merchant` がデフォルト)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
@@ -195,6 +220,7 @@ Workers環境変数（Secrets）に以下を設定します。
 | POST | `/execute/api/daily_log/ensure` | Daily_Log ページ作成（存在保証） |
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
 | POST | `/execute/api/daily_log/ingest_health` | Health condition → Daily_Log 転記 |
+| POST | `/execute/api/daily_log/ingest_expenses` | Expenses → Daily_Log 転記 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
 
@@ -207,6 +233,7 @@ Workers環境変数（Secrets）に以下を設定します。
   - `DAILY_LOG_UPSERT_URL` の同一ホストを使って以下も派生します:
     - `/execute/api/daily_log/ensure`
     - `/execute/api/daily_log/ingest_health`
+    - `/execute/api/daily_log/ingest_expenses`
     - `/api/daily_log`
 
 ### ルーティング簡易チェック

@@ -8,6 +8,21 @@ from ingest.http_client import fetch_json
 
 
 @dataclass(frozen=True)
+class ExpenseItem:
+    title: str
+    amount: float
+    url: str
+
+
+@dataclass(frozen=True)
+class ExpenseSummary:
+    total: float
+    count: int
+    top: List[ExpenseItem]
+    remaining: int
+
+
+@dataclass(frozen=True)
 class DailyLogSummary:
     target_date: str
     page_id: str
@@ -20,6 +35,7 @@ class DailyLogSummary:
     meal_summary: Optional[str]
     meal_photos: List[str]
     expenses_total: Optional[float]
+    expenses: ExpenseSummary
     location_summary: Optional[str]
     mood: Optional[str]
     weight: Optional[float]
@@ -33,6 +49,26 @@ def read_daily_log(
     if not payload.get("found"):
         return None
 
+    expenses_payload = payload.get("expenses", {}) if isinstance(payload, dict) else {}
+    top_entries: List[ExpenseItem] = []
+    if isinstance(expenses_payload, dict):
+        top_payload = expenses_payload.get("top", [])
+        if isinstance(top_payload, list):
+            for item in top_payload:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "")
+                amount = float(item.get("amount") or 0)
+                url = str(item.get("url") or "")
+                top_entries.append(ExpenseItem(title=title, amount=amount, url=url))
+
+    expenses_summary = ExpenseSummary(
+        total=float(expenses_payload.get("total") or 0),
+        count=int(expenses_payload.get("count") or 0),
+        top=top_entries,
+        remaining=int(expenses_payload.get("remaining") or 0),
+    )
+
     return DailyLogSummary(
         target_date=payload.get("target_date", target_date),
         page_id=payload.get("page_id", ""),
@@ -45,6 +81,7 @@ def read_daily_log(
         meal_summary=payload.get("meal_summary"),
         meal_photos=payload.get("meal_photos", []) or [],
         expenses_total=payload.get("expenses_total"),
+        expenses=expenses_summary,
         location_summary=payload.get("location_summary"),
         mood=payload.get("mood"),
         weight=payload.get("weight"),

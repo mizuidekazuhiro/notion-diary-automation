@@ -23,6 +23,15 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "meal_summary": summary.meal_summary,
         "meal_photos": summary.meal_photos,
         "expenses_total": summary.expenses_total,
+        "expenses": {
+            "total": summary.expenses.total,
+            "count": summary.expenses.count,
+            "top": [
+                {"title": item.title, "amount": item.amount, "url": item.url}
+                for item in summary.expenses.top
+            ],
+            "remaining": summary.expenses.remaining,
+        },
         "location_summary": summary.location_summary,
         "mood": summary.mood,
         "weight": summary.weight,

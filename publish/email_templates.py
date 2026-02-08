@@ -29,6 +29,14 @@ def _normalize_number(value: Optional[float]) -> str:
     return f"{value:g}"
 
 
+def _format_yen(value: Optional[float]) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "—"
+    return f"¥{value:g}"
+
+
 def _normalize_photo_urls(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -40,6 +48,32 @@ def _normalize_photo_urls(value: object) -> List[str]:
         if url:
             urls.append(url)
     return urls
+
+
+def _normalize_expenses(payload: Mapping[str, object]) -> Tuple[float, int, List[dict], int]:
+    expenses_payload = payload.get("expenses")
+    total = 0.0
+    count = 0
+    remaining = 0
+    top: List[dict] = []
+
+    if isinstance(expenses_payload, Mapping):
+        total = float(expenses_payload.get("total") or 0)
+        count = int(expenses_payload.get("count") or 0)
+        remaining = int(expenses_payload.get("remaining") or 0)
+        top_payload = expenses_payload.get("top", [])
+        if isinstance(top_payload, list):
+            for item in top_payload:
+                if not isinstance(item, Mapping):
+                    continue
+                title = str(item.get("title") or "Untitled")
+                amount = float(item.get("amount") or 0)
+                url = str(item.get("url") or "")
+                top.append({"title": title, "amount": amount, "url": url})
+    else:
+        total = float(payload.get("expenses_total") or 0)
+
+    return total, count, top, remaining
 
 
 def _parse_task_items(summary_text: str) -> Tuple[List[TaskEntry], List[TaskEntry]]:
@@ -164,6 +198,9 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     expenses_total = _normalize_number(
         payload.get("expenses_total") if isinstance(payload, Mapping) else None
     )
+    expenses_total_value, expenses_count, expenses_top, expenses_remaining = (
+        _normalize_expenses(payload if isinstance(payload, Mapping) else {})
+    )
     location_summary = _normalize_text(
         payload.get("location_summary") if isinstance(payload, Mapping) else None
     )
@@ -173,6 +210,39 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     diary_html = html.escape(diary).replace("\n", "<br />")
     meal_summary_html = html.escape(meal_summary).replace("\n", "<br />")
     location_html = html.escape(location_summary).replace("\n", "<br />")
+
+    expenses_list_html = ""
+    if expenses_top:
+        rows = []
+        for item in expenses_top:
+            title = html.escape(str(item.get("title") or "Untitled"))
+            amount = _format_yen(item.get("amount"))
+            url = str(item.get("url") or "")
+            if url:
+                safe_url = html.escape(url, quote=True)
+                link_html = f'<a href="{safe_url}">Open</a>'
+            else:
+                link_html = "Open"
+            rows.append(
+                "<li style=\"margin: 6px 0; font-size: 14px; color: #111827;\">"
+                f"{title} — {amount} ({link_html})"
+                "</li>"
+            )
+        if expenses_remaining > 0:
+            rows.append(
+                "<li style=\"margin: 6px 0; font-size: 13px; color: #6b7280;\">"
+                f"…and {expenses_remaining} more"
+                "</li>"
+            )
+        expenses_list_html = (
+            "<ul style=\"margin: 8px 0 0 16px; padding: 0;\">"
+            f"{''.join(rows)}"
+            "</ul>"
+        )
+    else:
+        expenses_list_html = (
+            "<p style=\"margin: 8px 0 0 0; font-size: 14px; color: #9ca3af;\">—</p>"
+        )
 
     done_rows = _render_task_rows(done_visible) + _render_more_row(done_more)
     drop_rows = _render_task_rows(drop_visible) + _render_more_row(drop_more)
@@ -227,6 +297,20 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                       <p style=\"margin: 0; font-size: 14px; color: #111827;\">{meal_summary_html}</p>
                       <p style=\"margin: 12px 0 0 0; font-size: 13px; color: #6b7280;\">Meal Photos</p>
                       {meal_photo_html}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style=\"padding: 0 24px 16px 24px;\">
+                <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
+                  <tr>
+                    <td>
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">Expenses (昨日の支出)</h2>
+                      <p style=\"margin: 0; font-size: 14px; color: #111827;\"><strong>Total: {_format_yen(expenses_total_value)}</strong></p>
+                      {expenses_list_html}
                     </td>
                   </tr>
                 </table>
@@ -331,11 +415,27 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     expenses_total = _normalize_number(
         payload.get("expenses_total") if isinstance(payload, Mapping) else None
     )
+    expenses_total_value, expenses_count, expenses_top, expenses_remaining = (
+        _normalize_expenses(payload if isinstance(payload, Mapping) else {})
+    )
     location_summary = _normalize_text(
         payload.get("location_summary") if isinstance(payload, Mapping) else None
     )
     mood = _normalize_text(payload.get("mood") if isinstance(payload, Mapping) else None)
     weight = _normalize_number(payload.get("weight") if isinstance(payload, Mapping) else None)
+
+    expenses_lines: List[str] = []
+    if expenses_top:
+        for item in expenses_top:
+            title = item.get("title") or "Untitled"
+            amount = _format_yen(item.get("amount"))
+            url = item.get("url") or ""
+            suffix = f" {url}" if url else ""
+            expenses_lines.append(f"• {title} — {amount}{suffix}")
+        if expenses_remaining > 0:
+            expenses_lines.append(f"...and {expenses_remaining} more")
+    else:
+        expenses_lines.append("—")
 
     lines = [
         f"Daily Log | {target_date}",
@@ -345,6 +445,10 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"- {meal_summary}",
         "Meal Photos",
         *([f"- {url}" for url in meal_photos] if meal_photos else ["- —"]),
+        "",
+        "Expenses (昨日の支出)",
+        f"Total: {_format_yen(expenses_total_value)}",
+        *expenses_lines,
         "",
         f"🎉 昨日完了したこと（Done: {len(done_items)}）",
         *render_items(done_visible, done_more),
