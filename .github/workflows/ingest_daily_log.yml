@@ -36,7 +36,7 @@ jobs:
       
       - name: Debug health ingest endpoint
         env:
-          URL: ${{ secrets.DAILY_LOG_INGEST_HEALTH_URL }} # いま直書きしてるならそれでもOK
+          URL: https://notion-diary-automation.kazuhiro-mizuide.workers.dev/execute/api/daily_log/ingest_health
           TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
         run: |
           set -euxo pipefail
