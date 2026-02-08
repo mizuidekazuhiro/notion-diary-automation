@@ -172,6 +172,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `DAILY_LOG_DB_ID`
 - `HEALTH_DB_ID` (Health condition DB)
 - `EXPENSES_DB_ID` (Expenses DB)
+- `MAIL_LINK_SECRET` (メールのMood/Notesリンク署名用)
 - `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
 - `TASK_STATUS_DO` (任意: `Do` がデフォルト)
 - `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
@@ -217,10 +218,12 @@ Workers環境変数（Secrets）に以下を設定します。
 | GET | `/api/tasks/closed?date=YYYY-MM-DD` | Tasks DB から「昨日Done/Drop」を取得（date未指定ならJSTの昨日） |
 | GET | `/api/daily_log?date=YYYY-MM-DD` | Daily_Log のSummary取得（メール生成に利用） |
 | GET | `/confirm/daily_log/upsert` | Daily_Log Upsert 確認ページ |
+| GET | `/confirm/mood-notes` | Mood / Notes 入力の確認ページ（更新はしない） |
 | POST | `/execute/api/daily_log/ensure` | Daily_Log ページ作成（存在保証） |
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
 | POST | `/execute/api/daily_log/ingest_health` | Health condition → Daily_Log 転記 |
 | POST | `/execute/api/daily_log/ingest_expenses` | Expenses → Daily_Log 転記 |
+| POST | `/execute/mood-notes` | Mood / Notes 更新（署名トークン必須） |
 | POST | `/ingest/mood-notes` | メール本文/リンク経由で Mood / メモをページ本文へ追記 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
@@ -359,6 +362,20 @@ curl -X POST "https://<worker>.workers.dev/ingest/mood-notes" \
   }'
 ```
 
+### Mood / Notes メールリンク（confirm → execute）
+
+- **confirm**: `GET /confirm/mood-notes?date=YYYY-MM-DD&token=...`
+  - 確認ページのみ表示（更新はしない）
+- **execute**: `POST /execute/mood-notes`
+  - `date` / `token` / `mood(1..5)` / `notes` / `mode` を受け取り、Notion更新
+  - 署名トークンの `exp` が切れていれば拒否
+
+#### 動作確認手順
+
+1. `confirm_url` をブラウザで開き、更新されないことを確認する。
+2. Moodボタン or Notes送信を実行し、Notionが更新されることを確認する。
+3. `exp` を過ぎたトークンでアクセスし、拒否されることを確認する。
+
 > ターミナルを使わない場合は Postman / Hoppscotch で `POST` を選び、`Authorization` ヘッダと上記JSONを設定して送信してください。
 
 ### Health condition → Daily_Log 転記
@@ -413,10 +430,14 @@ curl -X POST "https://<worker>.workers.dev/ingest/mood-notes" \
   - `TASKS_CLOSED_URL`
   - `DAILY_LOG_UPSERT_URL`
   - `WORKERS_BEARER_TOKEN` (任意)
+  - `PUBLIC_BASE_URL` (メール用confirmリンク)
+  - `MAIL_LINK_SECRET` (メールリンク署名用)
   - `CF_API_TOKEN` (Workersデプロイ用)
   - `CF_ACCOUNT_ID` (Workersデプロイ用)
 
 `INBOX_JSON_URL`/`TASKS_JSON_URL`/`TASKS_CLOSED_URL`/`DAILY_LOG_UPSERT_URL` はWorkersのURLをセットしてください。
+`PUBLIC_BASE_URL` は `https://<worker>.workers.dev` のように公開URLのベースを指定します。
+`MAIL_LINK_SECRET` はWorkers側の `MAIL_LINK_SECRET` と同じ値を使います。
 Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecretsのみを使用します。
 
 ### GitHub Actionsで使うWorkers URLの例
@@ -484,6 +505,8 @@ python scripts/daily_job.py --phase all
 - `TASKS_CLOSED_URL`
 - `DAILY_LOG_UPSERT_URL`
 - `WORKERS_BEARER_TOKEN`（任意）
+- `PUBLIC_BASE_URL`（メール用のconfirmリンク生成に使用）
+- `MAIL_LINK_SECRET`（メールリンク署名用）
 
 ## HTMLメールの崩れを防ぐチェックリスト
 

@@ -25,6 +25,7 @@ interface Env {
   INBOX_DB_ID: string;
   TASK_DB_ID: string;
   DAILY_LOG_DB_ID: string;
+  MAIL_LINK_SECRET?: string;
   EXPENSES_DB_ID?: string;
   HEALTH_DB_ID?: string;
   WORKERS_BEARER_TOKEN?: string;
@@ -139,6 +140,10 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
 };
 
+const textHeaders = {
+  "content-type": "text/plain; charset=utf-8",
+};
+
 function unauthorized(message = "unauthorized"): Response {
   return new Response(JSON.stringify({ error: "unauthorized", message }), {
     status: 401,
@@ -182,11 +187,131 @@ function createHtmlPage(title: string, body: string): Response {
   );
 }
 
+function createTextResponse(message: string, status = 200): Response {
+  return new Response(message, { status, headers: textHeaders });
+}
+
 function normalizePath(path: string): string {
   if (path.length <= 1) {
     return path;
   }
   return path.replace(/\/+$/, "");
+}
+
+const textEncoder = new TextEncoder();
+let mailLinkKeyPromise: Promise<CryptoKey> | null = null;
+
+function base64UrlEncode(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlDecode(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
+  const binary = atob(`${padded}${padding}`);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function getMailLinkKey(secret: string): Promise<CryptoKey> {
+  if (!mailLinkKeyPromise) {
+    mailLinkKeyPromise = crypto.subtle.importKey(
+      "raw",
+      textEncoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+  }
+  return mailLinkKeyPromise;
+}
+
+async function signMailPayload(payload: string, secret: string): Promise<string> {
+  const key = await getMailLinkKey(secret);
+  const signature = await crypto.subtle.sign("HMAC", key, textEncoder.encode(payload));
+  return `${base64UrlEncode(textEncoder.encode(payload))}.${base64UrlEncode(signature)}`;
+}
+
+type MailLinkPayload = {
+  date: string;
+  exp: number;
+};
+
+class MailLinkTokenError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function parseMailLinkPayload(payload: string): MailLinkPayload {
+  const params = new URLSearchParams(payload);
+  const date = params.get("date")?.trim() ?? "";
+  const expRaw = params.get("exp")?.trim() ?? "";
+  if (!date || !expRaw) {
+    throw new MailLinkTokenError("invalid token payload", 401);
+  }
+  if (!isValidDateString(date)) {
+    throw new MailLinkTokenError("invalid date", 400);
+  }
+  const exp = Number(expRaw);
+  if (!Number.isFinite(exp) || exp <= 0) {
+    throw new MailLinkTokenError("invalid exp", 401);
+  }
+  return { date, exp };
+}
+
+async function verifyMailLinkToken(token: string, env: Env): Promise<MailLinkPayload> {
+  if (!env.MAIL_LINK_SECRET) {
+    throw new MailLinkTokenError("MAIL_LINK_SECRET is not set", 500);
+  }
+  const [payloadB64, signatureB64, extra] = token.split(".");
+  if (!payloadB64 || !signatureB64 || extra) {
+    throw new MailLinkTokenError("invalid token", 401);
+  }
+  let payloadBytes: Uint8Array;
+  try {
+    payloadBytes = base64UrlDecode(payloadB64);
+  } catch {
+    throw new MailLinkTokenError("invalid token payload", 401);
+  }
+  const payload = new TextDecoder().decode(payloadBytes);
+  const key = await getMailLinkKey(env.MAIL_LINK_SECRET);
+  const signature = await crypto.subtle.sign("HMAC", key, textEncoder.encode(payload));
+  const expected = base64UrlEncode(signature);
+  if (expected !== signatureB64) {
+    throw new MailLinkTokenError("invalid token", 401);
+  }
+  const parsed = parseMailLinkPayload(payload);
+  const now = Math.floor(Date.now() / 1000);
+  if (now > parsed.exp) {
+    throw new MailLinkTokenError("token expired", 403);
+  }
+  return parsed;
+}
+
+function normalizeMoodInput(rawMood: string): (typeof MOOD_OPTIONS)[number] | undefined {
+  const trimmed = rawMood.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (MOOD_OPTIONS.includes(trimmed as (typeof MOOD_OPTIONS)[number])) {
+    return trimmed as (typeof MOOD_OPTIONS)[number];
+  }
+  const number = Number(trimmed);
+  if (Number.isInteger(number) && number >= 1 && number <= MOOD_OPTIONS.length) {
+    return MOOD_OPTIONS[number - 1];
+  }
+  return undefined;
 }
 
 async function notionErrorResponse(
@@ -404,8 +529,8 @@ function validateMoodNotesPayload(payload: Record<string, any>): {
   }
 
   const rawMood = typeof payload.mood === "string" ? payload.mood.trim() : "";
-  const mood = rawMood ? (rawMood as (typeof MOOD_OPTIONS)[number]) : undefined;
-  if (rawMood && !MOOD_OPTIONS.includes(rawMood as (typeof MOOD_OPTIONS)[number])) {
+  const mood = rawMood ? normalizeMoodInput(rawMood) : undefined;
+  if (rawMood && !mood) {
     return { error: badRequest("invalid mood") };
   }
 
@@ -450,6 +575,242 @@ function validateMoodNotesPayload(payload: Record<string, any>): {
       ...(sourceUrl ? { sourceUrl } : {}),
     },
   };
+}
+
+async function parseRequestBody(request: Request): Promise<Record<string, string>> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const payload = await parseJsonBody(request);
+    return payload && typeof payload === "object" ? (payload as Record<string, string>) : {};
+  }
+  const formData = await request.formData();
+  const entries: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (typeof value === "string") {
+      entries[key] = value;
+    }
+  }
+  return entries;
+}
+
+function buildMoodNotesConfirmHtml(
+  targetDate: string,
+  token: string,
+): Response {
+  const moodButtons = MOOD_OPTIONS.map((option, index) => {
+    const label = `${index + 1}`;
+    return (
+      `<button type="submit" name="mood" value="${label}" ` +
+      "style=\"margin:4px;padding:10px 14px;border-radius:8px;border:1px solid #e5e7eb;" +
+      "background:#f9fafb;cursor:pointer;font-size:14px;\">" +
+      `${label}</button>`
+    );
+  }).join("");
+
+  const body = `
+    <h1>Mood / Notes (${targetDate})</h1>
+    <p>※ 更新はPOSTでのみ実行されます。</p>
+    <form method="POST" action="/execute/mood-notes" style="margin-bottom:16px;">
+      <input type="hidden" name="date" value="${targetDate}" />
+      <input type="hidden" name="token" value="${token}" />
+      <input type="hidden" name="mode" value="append" />
+      <div style="margin-bottom:8px;">Mood (1-5):</div>
+      ${moodButtons}
+    </form>
+    <form method="POST" action="/execute/mood-notes">
+      <input type="hidden" name="date" value="${targetDate}" />
+      <input type="hidden" name="token" value="${token}" />
+      <input type="hidden" name="mode" value="append" />
+      <div style="margin-bottom:8px;">Notes:</div>
+      <textarea name="notes" rows="6" style="width:100%;max-width:560px;"></textarea>
+      <div style="margin-top:8px;">
+        <button type="submit" style="padding:10px 16px;border-radius:8px;border:1px solid #111827;background:#111827;color:#fff;cursor:pointer;">送信</button>
+      </div>
+    </form>
+  `;
+  return createHtmlPage("Mood / Notes", body);
+}
+
+async function updateMoodNotes(env: Env, data: {
+  targetDate: string;
+  mood?: (typeof MOOD_OPTIONS)[number];
+  notes?: string;
+  mode: MoodNotesMode;
+  sourceUrl?: string;
+}): Promise<Response> {
+  const { targetDate, mood, notes, mode, sourceUrl } = data;
+
+  const queryResponse = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "updateMoodNotes.query");
+  }
+
+  const queryData = await queryResponse.json();
+  const existingPage = (queryData.results ?? [])[0] ?? null;
+  const updateProperties: Record<string, any> = {};
+
+  if (mood) {
+    updateProperties.Mood = createSelectProperty(mood);
+  }
+
+  const shouldUpdateNotes = notes !== undefined || sourceUrl !== undefined;
+  const notesValue = notes ?? "";
+  const entry = shouldUpdateNotes ? buildMoodNotesEntry(notesValue, sourceUrl) : "";
+  let notesUpdated = false;
+  let existingMoodEntries: Array<{ id: string; text: string }> = [];
+
+  if (shouldUpdateNotes && existingPage) {
+    let blocks: Record<string, any>[] = [];
+    try {
+      blocks = await fetchBlockChildren(env, existingPage.id);
+    } catch (error) {
+      if (error instanceof NotionApiError) {
+        return notionErrorResponseFromDetails({
+          status: error.status,
+          code: error.code,
+          notionMessage: error.notionMessage,
+          requestId: error.requestId,
+          body: error.body,
+        });
+      }
+      throw error;
+    }
+    existingMoodEntries = getMoodLogEntries(blocks);
+    const existingText = existingMoodEntries.map((item) => item.text).join("\n");
+    if (mode === "replace") {
+      if (entry && entry !== existingText) {
+        notesUpdated = true;
+      }
+    } else if (entry && !shouldSkipMoodNotesAppend(existingText, notesValue, sourceUrl)) {
+      notesUpdated = true;
+    }
+  } else if (shouldUpdateNotes && entry) {
+    notesUpdated = true;
+  }
+
+  if (!Object.keys(updateProperties).length && !notesUpdated) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        updated: false,
+        reason: "no changes",
+        target_date: targetDate,
+        found: Boolean(existingPage),
+        page_id: existingPage?.id ?? null,
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  let pageId = existingPage?.id ?? null;
+
+  if (Object.keys(updateProperties).length) {
+    let resultResponse: Response;
+    if (existingPage) {
+      resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ properties: updateProperties }),
+      });
+    } else {
+      const properties: Record<string, any> = {
+        [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
+        Date: createDateProperty(targetDate),
+        ...updateProperties,
+      };
+
+      const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+      if (hasPropertyType(dailyLogProperties, "Target Date", "date")) {
+        properties["Target Date"] = createDateProperty(targetDate);
+      }
+
+      resultResponse = await notionFetch(env, "/pages", {
+        method: "POST",
+        body: JSON.stringify({
+          parent: { database_id: env.DAILY_LOG_DB_ID },
+          properties,
+        }),
+      });
+    }
+
+    if (!resultResponse.ok) {
+      return notionErrorResponse(resultResponse, "updateMoodNotes.upsert");
+    }
+
+    pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  } else if (!pageId) {
+    const properties: Record<string, any> = {
+      [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
+      Date: createDateProperty(targetDate),
+    };
+
+    const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+    if (hasPropertyType(dailyLogProperties, "Target Date", "date")) {
+      properties["Target Date"] = createDateProperty(targetDate);
+    }
+
+    const createResponse = await notionFetch(env, "/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: env.DAILY_LOG_DB_ID },
+        properties,
+      }),
+    });
+
+    if (!createResponse.ok) {
+      return notionErrorResponse(createResponse, "updateMoodNotes.upsert");
+    }
+
+    pageId = (await createResponse.json()).id;
+  }
+
+  if (notesUpdated && pageId) {
+    if (mode === "replace" && existingMoodEntries.length) {
+      for (const entryItem of existingMoodEntries) {
+        const archiveResponse = await notionFetch(env, `/blocks/${entryItem.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ archived: true }),
+        });
+        if (!archiveResponse.ok) {
+          return notionErrorResponse(archiveResponse, "updateMoodNotes.archive");
+        }
+      }
+    }
+
+    const blocks = buildMoodNotesBlocks(entry);
+    if (blocks.length) {
+      const appendResponse = await notionFetch(env, `/blocks/${pageId}/children`, {
+        method: "PATCH",
+        body: JSON.stringify({ children: blocks }),
+      });
+      if (!appendResponse.ok) {
+        return notionErrorResponse(appendResponse, "updateMoodNotes.append");
+      }
+    }
+  }
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      updated: true,
+      target_date: targetDate,
+      page_id: pageId,
+    }),
+    { headers: jsonHeaders },
+  );
 }
 
 function getSchemaCacheKey(
@@ -1824,179 +2185,112 @@ async function handleMoodNotesIngest(
     return badRequest("invalid payload");
   }
 
-  const { targetDate, mood, notes, mode, sourceUrl } = data;
+  return updateMoodNotes(env, data);
+}
 
-  const queryResponse = await notionFetch(
+async function handleMoodNotesConfirm(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return methodNotAllowed();
+  }
+  const url = new URL(request.url);
+  const targetDate = url.searchParams.get("date")?.trim() ?? "";
+  const token = url.searchParams.get("token")?.trim() ?? "";
+  if (!targetDate || !token) {
+    return badRequest("missing date or token");
+  }
+  if (!isValidDateString(targetDate)) {
+    return badRequest("invalid date format");
+  }
+  try {
+    const payload = await verifyMailLinkToken(token, env);
+    if (payload.date !== targetDate) {
+      return createTextResponse("date mismatch", 403);
+    }
+  } catch (error) {
+    if (error instanceof MailLinkTokenError) {
+      return createTextResponse(error.message, error.status);
+    }
+    throw error;
+  }
+
+  return buildMoodNotesConfirmHtml(targetDate, token);
+}
+
+async function handleMoodNotesExecute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed();
+  }
+
+  await validateDatabaseSchema(
     env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Date",
-          date: { equals: targetDate },
-        },
-      }),
-    },
+    env.DAILY_LOG_DB_ID,
+    buildDailyLogMoodNotesProperties(),
+    { Mood: [...MOOD_OPTIONS] },
   );
 
-  if (!queryResponse.ok) {
-    return notionErrorResponse(queryResponse, "handleMoodNotesIngest.query");
+  const payload = await parseRequestBody(request);
+  const targetDate = payload.date?.trim() ?? "";
+  const token = payload.token?.trim() ?? "";
+  if (!targetDate || !token) {
+    return badRequest("missing date or token");
+  }
+  if (!isValidDateString(targetDate)) {
+    return badRequest("invalid date format");
   }
 
-  const queryData = await queryResponse.json();
-  const existingPage = (queryData.results ?? [])[0] ?? null;
-  const updateProperties: Record<string, any> = {};
-
-  if (mood) {
-    updateProperties.Mood = createSelectProperty(mood);
-  }
-
-  const shouldUpdateNotes = notes !== undefined || sourceUrl !== undefined;
-  const notesValue = notes ?? "";
-  const entry = shouldUpdateNotes ? buildMoodNotesEntry(notesValue, sourceUrl) : "";
-  let notesUpdated = false;
-  let existingMoodEntries: Array<{ id: string; text: string }> = [];
-
-  if (shouldUpdateNotes && existingPage) {
-    let blocks: Record<string, any>[] = [];
-    try {
-      blocks = await fetchBlockChildren(env, existingPage.id);
-    } catch (error) {
-      if (error instanceof NotionApiError) {
-        return notionErrorResponseFromDetails({
-          status: error.status,
-          code: error.code,
-          notionMessage: error.notionMessage,
-          requestId: error.requestId,
-          body: error.body,
-        });
-      }
-      throw error;
+  let tokenPayload: MailLinkPayload;
+  try {
+    tokenPayload = await verifyMailLinkToken(token, env);
+  } catch (error) {
+    if (error instanceof MailLinkTokenError) {
+      return createTextResponse(error.message, error.status);
     }
-    existingMoodEntries = getMoodLogEntries(blocks);
-    const existingText = existingMoodEntries.map((item) => item.text).join("\n");
-    if (mode === "replace") {
-      if (entry && entry !== existingText) {
-        notesUpdated = true;
-      }
-    } else if (entry && !shouldSkipMoodNotesAppend(existingText, notesValue, sourceUrl)) {
-      notesUpdated = true;
-    }
-  } else if (shouldUpdateNotes && entry) {
-    notesUpdated = true;
+    throw error;
   }
 
-  if (!Object.keys(updateProperties).length && !notesUpdated) {
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        updated: false,
-        reason: "no changes",
-        target_date: targetDate,
-        found: Boolean(existingPage),
-        page_id: existingPage?.id ?? null,
-      }),
-      { headers: jsonHeaders },
+  if (tokenPayload.date !== targetDate) {
+    return createTextResponse("date mismatch", 403);
+  }
+
+  const rawMood = payload.mood?.trim() ?? "";
+  const mood = rawMood ? normalizeMoodInput(rawMood) : undefined;
+  if (rawMood && !mood) {
+    return badRequest("invalid mood");
+  }
+  const notes = payload.notes !== undefined ? String(payload.notes) : undefined;
+  const modeRaw = payload.mode?.trim().toLowerCase() ?? "append";
+  const mode = modeRaw === "replace" ? "replace" : "append";
+
+  const notesValue = notes?.trim() ?? "";
+  if (!mood && !notesValue) {
+    return badRequest("missing mood or notes");
+  }
+
+  console.log("Mood/Notes execute", {
+    targetDate,
+    mood: mood ?? null,
+    notes: notesValue ? "yes" : "no",
+  });
+
+  const result = await updateMoodNotes(env, {
+    targetDate,
+    mood,
+    notes,
+    mode,
+  });
+
+  if (request.headers.get("content-type")?.includes("application/json")) {
+    return result;
+  }
+
+  if (result.ok) {
+    return createHtmlPage(
+      "Mood / Notes Updated",
+      `<p>OK (${targetDate})</p><p><a href="/confirm/mood-notes?date=${targetDate}&token=${token}">戻る</a></p>`,
     );
   }
 
-  let pageId = existingPage?.id ?? null;
-
-  if (Object.keys(updateProperties).length) {
-    let resultResponse: Response;
-    if (existingPage) {
-      resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ properties: updateProperties }),
-      });
-    } else {
-      const properties: Record<string, any> = {
-        [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
-        Date: createDateProperty(targetDate),
-        ...updateProperties,
-      };
-
-      const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
-      if (hasPropertyType(dailyLogProperties, "Target Date", "date")) {
-        properties["Target Date"] = createDateProperty(targetDate);
-      }
-
-      resultResponse = await notionFetch(env, "/pages", {
-        method: "POST",
-        body: JSON.stringify({
-          parent: { database_id: env.DAILY_LOG_DB_ID },
-          properties,
-        }),
-      });
-    }
-
-    if (!resultResponse.ok) {
-      return notionErrorResponse(resultResponse, "handleMoodNotesIngest.upsert");
-    }
-
-    pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
-  } else if (!pageId) {
-    const properties: Record<string, any> = {
-      [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
-      Date: createDateProperty(targetDate),
-    };
-
-    const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
-    if (hasPropertyType(dailyLogProperties, "Target Date", "date")) {
-      properties["Target Date"] = createDateProperty(targetDate);
-    }
-
-    const createResponse = await notionFetch(env, "/pages", {
-      method: "POST",
-      body: JSON.stringify({
-        parent: { database_id: env.DAILY_LOG_DB_ID },
-        properties,
-      }),
-    });
-
-    if (!createResponse.ok) {
-      return notionErrorResponse(createResponse, "handleMoodNotesIngest.upsert");
-    }
-
-    pageId = (await createResponse.json()).id;
-  }
-
-  if (notesUpdated && pageId) {
-    if (mode === "replace" && existingMoodEntries.length) {
-      for (const entryItem of existingMoodEntries) {
-        const archiveResponse = await notionFetch(env, `/blocks/${entryItem.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ archived: true }),
-        });
-        if (!archiveResponse.ok) {
-          return notionErrorResponse(archiveResponse, "handleMoodNotesIngest.archive");
-        }
-      }
-    }
-
-    const blocks = buildMoodNotesBlocks(entry);
-    if (blocks.length) {
-      const appendResponse = await notionFetch(env, `/blocks/${pageId}/children`, {
-        method: "PATCH",
-        body: JSON.stringify({ children: blocks }),
-      });
-      if (!appendResponse.ok) {
-        return notionErrorResponse(appendResponse, "handleMoodNotesIngest.append");
-      }
-    }
-  }
-
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      updated: true,
-      target_date: targetDate,
-      page_id: pageId,
-    }),
-    { headers: jsonHeaders },
-  );
+  return result;
 }
 
 async function handleDailyLogEnsure(request: Request, env: Env): Promise<Response> {
@@ -2397,6 +2691,12 @@ export default {
       }
       if (path === "/execute/api/daily_log/ingest_expenses") {
         return await handleDailyLogExpensesIngest(request, env);
+      }
+      if (path === "/confirm/mood-notes") {
+        return await handleMoodNotesConfirm(request, env);
+      }
+      if (path === "/execute/mood-notes") {
+        return await handleMoodNotesExecute(request, env);
       }
       if (path === "/ingest/mood-notes") {
         return await handleMoodNotesIngest(request, env);
