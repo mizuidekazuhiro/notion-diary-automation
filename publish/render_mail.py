@@ -20,6 +20,8 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "run_id": summary.mail_id,
         "summary_text": summary.summary_text,
         "diary": summary.diary,
+        "meal_summary": summary.meal_summary,
+        "meal_photos": summary.meal_photos,
         "expenses_total": summary.expenses_total,
         "location_summary": summary.location_summary,
         "mood": summary.mood,

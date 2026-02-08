@@ -29,6 +29,19 @@ def _normalize_number(value: Optional[float]) -> str:
     return f"{value:g}"
 
 
+def _normalize_photo_urls(value: object) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    urls: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        url = item.strip()
+        if url:
+            urls.append(url)
+    return urls
+
+
 def _parse_task_items(summary_text: str) -> Tuple[List[TaskEntry], List[TaskEntry]]:
     done_items: List[TaskEntry] = []
     drop_items: List[TaskEntry] = []
@@ -142,6 +155,12 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     drop_visible, drop_more = _limit_items(drop_items)
 
     diary = _normalize_text(payload.get("diary") if isinstance(payload, Mapping) else None)
+    meal_summary = _normalize_text(
+        payload.get("meal_summary") if isinstance(payload, Mapping) else None
+    )
+    meal_photos = _normalize_photo_urls(
+        payload.get("meal_photos") if isinstance(payload, Mapping) else None
+    )
     expenses_total = _normalize_number(
         payload.get("expenses_total") if isinstance(payload, Mapping) else None
     )
@@ -152,10 +171,32 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     weight = _normalize_number(payload.get("weight") if isinstance(payload, Mapping) else None)
 
     diary_html = html.escape(diary).replace("\n", "<br />")
+    meal_summary_html = html.escape(meal_summary).replace("\n", "<br />")
     location_html = html.escape(location_summary).replace("\n", "<br />")
 
     done_rows = _render_task_rows(done_visible) + _render_more_row(done_more)
     drop_rows = _render_task_rows(drop_visible) + _render_more_row(drop_more)
+    meal_photo_html = ""
+    if meal_photos:
+        images = []
+        for url in meal_photos:
+            safe_url = html.escape(url, quote=True)
+            images.append(
+                "<div style=\"margin: 0 8px 8px 0;\">"
+                f"<img src=\"{safe_url}\" alt=\"Meal photo\" "
+                "style=\"width: 160px; height: auto; border-radius: 8px; "
+                "border: 1px solid #e5e7eb; display: block;\" />"
+                "</div>"
+            )
+        meal_photo_html = (
+            "<div style=\"display: flex; flex-wrap: wrap; margin-top: 8px;\">"
+            f"{''.join(images)}"
+            "</div>"
+        )
+    else:
+        meal_photo_html = (
+            "<p style=\"margin: 8px 0 0 0; font-size: 14px; color: #9ca3af;\">—</p>"
+        )
 
     return f"""\
 <!DOCTYPE html>
@@ -174,6 +215,21 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
               <td style=\"padding: 24px 24px 16px 24px;\">
                 <h1 style=\"margin: 0 0 8px 0; font-size: 22px; line-height: 1.3;\">Daily Log | {html.escape(target_date)}</h1>
                 <p style=\"margin: 0; font-size: 13px; color: #6b7280;\">Run ID: {html.escape(run_id)}</p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style=\"padding: 0 24px 16px 24px;\">
+                <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
+                  <tr>
+                    <td>
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🍽️ Meal summary</h2>
+                      <p style=\"margin: 0; font-size: 14px; color: #111827;\">{meal_summary_html}</p>
+                      <p style=\"margin: 12px 0 0 0; font-size: 13px; color: #6b7280;\">Meal Photos</p>
+                      {meal_photo_html}
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
 
@@ -266,6 +322,12 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         return lines
 
     diary = _normalize_text(payload.get("diary") if isinstance(payload, Mapping) else None)
+    meal_summary = _normalize_text(
+        payload.get("meal_summary") if isinstance(payload, Mapping) else None
+    )
+    meal_photos = _normalize_photo_urls(
+        payload.get("meal_photos") if isinstance(payload, Mapping) else None
+    )
     expenses_total = _normalize_number(
         payload.get("expenses_total") if isinstance(payload, Mapping) else None
     )
@@ -278,6 +340,11 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     lines = [
         f"Daily Log | {target_date}",
         f"Run ID: {run_id}",
+        "",
+        "Meal summary",
+        f"- {meal_summary}",
+        "Meal Photos",
+        *([f"- {url}" for url in meal_photos] if meal_photos else ["- —"]),
         "",
         f"🎉 昨日完了したこと（Done: {len(done_items)}）",
         *render_items(done_visible, done_more),

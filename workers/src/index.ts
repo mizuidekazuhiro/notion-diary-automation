@@ -13,6 +13,7 @@ import {
   notionFetch,
   queryDatabaseAll,
 } from "./notion_client";
+import { formatMealSummary } from "./meal_summary";
 import {
   getTaskPropertyNames,
   TaskPropertyNameEnv,
@@ -525,7 +526,7 @@ function getHealthPropertyNames(env: Env): HealthPropertyNames {
     carb: env.HEALTH_CARB_PROPERTY_NAME || "Carb",
     kcal: env.HEALTH_KCAL_PROPERTY_NAME || "Kcal",
     weight: env.HEALTH_WEIGHT_PROPERTY_NAME || "Weight",
-    mealPhoto: env.HEALTH_MEAL_PHOTO_PROPERTY_NAME || "Meal Photo",
+    mealPhoto: env.HEALTH_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
     source: env.HEALTH_SOURCE_PROPERTY_NAME || "Source",
   };
 }
@@ -537,7 +538,7 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     carb: env.DAILY_LOG_CARB_PROPERTY_NAME || "Carb",
     kcal: env.DAILY_LOG_KCAL_PROPERTY_NAME || "Kcal",
     weight: env.DAILY_LOG_WEIGHT_PROPERTY_NAME || "Weight",
-    mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photo",
+    mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
   };
 }
 
@@ -661,6 +662,25 @@ function normalizeFilesFromProperty(
       return null;
     })
     .filter((item): item is Record<string, any> => Boolean(item));
+}
+
+function getFileUrlsFromProperty(
+  property: Record<string, any> | undefined,
+): string[] {
+  if (!property || !Array.isArray(property.files)) {
+    return [];
+  }
+  return property.files
+    .map((file: Record<string, any>) => {
+      if (file.type === "external" && file.external?.url) {
+        return String(file.external.url);
+      }
+      if (file.type === "file" && file.file?.url) {
+        return String(file.file.url);
+      }
+      return null;
+    })
+    .filter((item): item is string => Boolean(item));
 }
 
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
@@ -1145,6 +1165,7 @@ async function handleDailyLogHealthIngest(
   const mealPhotos = normalizeFilesFromProperty(
     healthProps[healthPropertyNames.mealPhoto],
   );
+  const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
 
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, DAILY_LOG_PROPERTIES);
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
@@ -1196,6 +1217,11 @@ async function handleDailyLogHealthIngest(
     console.warn(
       `Daily_Log missing files property "${dailyLogHealthPropertyNames.mealPhoto}", skipping.`,
     );
+  }
+  if (hasPropertyType(dailyLogProperties, "Meal summary", "rich_text")) {
+    updateProperties["Meal summary"] = createRichTextProperty(mealSummary);
+  } else {
+    console.warn('Daily_Log missing rich_text property "Meal summary", skipping.');
   }
 
   if (!Object.keys(updateProperties).length) {
@@ -1417,6 +1443,8 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const summaryText = getPlainTextFromRichText(properties["Activity Summary"]);
   const summaryHtml = getPlainTextFromRichText(properties.Diary);
   const diary = getPlainTextFromRichText(properties.Diary) || null;
+  const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
+  const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const expensesTotal =
     typeof properties["Expenses total"]?.number === "number"
       ? properties["Expenses total"].number
@@ -1439,6 +1467,8 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       mail_id: mailId,
       source,
       diary,
+      meal_summary: mealSummary,
+      meal_photos: mealPhotos,
       expenses_total: expensesTotal,
       location_summary: locationSummary,
       mood,

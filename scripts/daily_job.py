@@ -114,6 +114,12 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         )
         return
 
+    logging.info(
+        "Meal section: summary=%s photos=%d",
+        "yes" if summary.meal_summary else "no",
+        len(summary.meal_photos),
+    )
+
     mail = render_mail(summary)
     mail_config = MailConfig(
         mail_from=config.mail_from,
