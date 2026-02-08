@@ -206,6 +206,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     )
     mood = _normalize_text(payload.get("mood") if isinstance(payload, Mapping) else None)
     weight = _normalize_number(payload.get("weight") if isinstance(payload, Mapping) else None)
+    mood_notes_url = str(payload.get("mood_notes_url") or "")
 
     diary_html = html.escape(diary).replace("\n", "<br />")
     meal_summary_html = html.escape(meal_summary).replace("\n", "<br />")
@@ -266,6 +267,30 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     else:
         meal_photo_html = (
             "<p style=\"margin: 8px 0 0 0; font-size: 14px; color: #9ca3af;\">—</p>"
+        )
+
+    mood_notes_html = ""
+    if mood_notes_url:
+        safe_url = html.escape(mood_notes_url, quote=True)
+        mood_notes_html = (
+            "<tr>"
+            "<td style=\"padding: 0 24px 24px 24px;\">"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" "
+            "style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">"
+            "<tr><td>"
+            "<h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">Mood / Notes</h2>"
+            "<p style=\"margin: 0 0 12px 0; font-size: 14px; color: #6b7280;\">"
+            "メールのリンクは確認ページのみ表示され、更新はPOSTで実行されます。"
+            "</p>"
+            "<a href=\"{safe_url}\" "
+            "style=\"display:inline-block;padding:10px 16px;border-radius:8px;"
+            "background:#111827;color:#ffffff;text-decoration:none;font-size:14px;\">"
+            "Mood / Notes を入力</a>"
+            "<p style=\"margin: 8px 0 0 0; font-size: 12px; color: #9ca3af;\">"
+            "{safe_url}</p>"
+            "</td></tr></table>"
+            "</td>"
+            "</tr>"
         )
 
     return f"""\
@@ -376,6 +401,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 </table>
               </td>
             </tr>
+            {mood_notes_html}
           </table>
         </td>
       </tr>
@@ -423,6 +449,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     )
     mood = _normalize_text(payload.get("mood") if isinstance(payload, Mapping) else None)
     weight = _normalize_number(payload.get("weight") if isinstance(payload, Mapping) else None)
+    mood_notes_url = str(payload.get("mood_notes_url") or "")
 
     expenses_lines: List[str] = []
     if expenses_top:
@@ -463,4 +490,10 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"- Mood: {mood}",
         f"- Weight: {weight}",
     ]
+    if mood_notes_url:
+        lines += [
+            "",
+            "Mood / Notes",
+            mood_notes_url,
+        ]
     return "\n".join(lines).strip() + "\n"
