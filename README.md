@@ -21,7 +21,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 
 ## スケジュール（JST/UTC）
 
-- **Phase A (Ingest)**: 01:00 JST = 16:00 UTC（前日）
+- **Phase A (Ingest)**: 05:00 JST = 20:00 UTC（前日）
 - **Phase B (Publish)**: 07:00 JST = 22:00 UTC（前日）
 
 ## メール仕様（昨日の成果に集中）
