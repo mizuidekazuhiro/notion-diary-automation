@@ -597,36 +597,119 @@ function buildMoodNotesConfirmHtml(
   targetDate: string,
   token: string,
 ): Response {
-  const moodButtons = MOOD_OPTIONS.map((option, index) => {
-    const label = `${index + 1}`;
-    return (
-      `<button type="submit" name="mood" value="${label}" ` +
-      "style=\"margin:4px;padding:10px 14px;border-radius:8px;border:1px solid #e5e7eb;" +
-      "background:#f9fafb;cursor:pointer;font-size:14px;\">" +
-      `${label}</button>`
-    );
-  }).join("");
+  const moodButtons = [
+    { value: "1", label: "最悪", emoji: "😣" },
+    { value: "2", label: "悪い", emoji: "🙁" },
+    { value: "3", label: "普通", emoji: "😐" },
+    { value: "4", label: "良い", emoji: "🙂" },
+    { value: "5", label: "最高", emoji: "😄" },
+  ]
+    .map(
+      (option) => `
+        <button
+          type="button"
+          data-mood="${option.value}"
+          aria-pressed="false"
+          style="
+            min-width:56px;
+            min-height:56px;
+            padding:8px 10px;
+            border-radius:12px;
+            border:2px solid #e5e7eb;
+            background:#f9fafb;
+            color:#111827;
+            cursor:pointer;
+            font-size:14px;
+            font-weight:600;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:4px;
+            flex:1 1 56px;
+          "
+        >
+          <span style="font-size:20px;line-height:1;">${option.emoji}</span>
+          <span>${option.value}</span>
+          <span style="font-size:12px;font-weight:500;color:#374151;">${option.label}</span>
+        </button>
+      `,
+    )
+    .join("");
 
   const body = `
-    <h1>Mood / Notes (${targetDate})</h1>
-    <p>※ 更新はPOSTでのみ実行されます。</p>
-    <form method="POST" action="/execute/mood-notes" style="margin-bottom:16px;">
-      <input type="hidden" name="date" value="${targetDate}" />
-      <input type="hidden" name="token" value="${token}" />
-      <input type="hidden" name="mode" value="append" />
-      <div style="margin-bottom:8px;">Mood (1-5):</div>
-      ${moodButtons}
-    </form>
-    <form method="POST" action="/execute/mood-notes">
-      <input type="hidden" name="date" value="${targetDate}" />
-      <input type="hidden" name="token" value="${token}" />
-      <input type="hidden" name="mode" value="append" />
-      <div style="margin-bottom:8px;">Notes:</div>
-      <textarea name="notes" rows="6" style="width:100%;max-width:560px;"></textarea>
-      <div style="margin-top:8px;">
-        <button type="submit" style="padding:10px 16px;border-radius:8px;border:1px solid #111827;background:#111827;color:#fff;cursor:pointer;">送信</button>
-      </div>
-    </form>
+    <div style="max-width:640px;margin:0 auto;padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <h1 style="font-size:20px;margin:0 0 8px;">Mood / Notes (${targetDate})</h1>
+      <p style="margin:0 0 16px;color:#6b7280;">更新はPOSTのみで実行されます。</p>
+      <form method="POST" action="/execute/mood-notes">
+        <input type="hidden" name="date" value="${targetDate}" />
+        <input type="hidden" name="token" value="${token}" />
+        <input type="hidden" name="mode" value="append" />
+        <input type="hidden" name="mood" id="mood-input" value="" />
+        <div style="margin-bottom:8px;font-weight:600;">Mood</div>
+        <div
+          id="mood-buttons"
+          style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;"
+        >
+          ${moodButtons}
+        </div>
+        <label for="notes" style="display:block;margin-bottom:8px;font-weight:600;">Notes</label>
+        <textarea
+          id="notes"
+          name="notes"
+          rows="6"
+          placeholder="昨日の振り返りを日本語で…"
+          style="width:100%;min-height:140px;resize:vertical;padding:12px;border-radius:12px;border:1px solid #d1d5db;font-size:15px;line-height:1.5;box-sizing:border-box;"
+        ></textarea>
+        <div style="margin-top:16px;">
+          <button
+            type="submit"
+            style="width:100%;min-height:48px;border-radius:12px;border:1px solid #111827;background:#111827;color:#fff;font-size:16px;font-weight:600;cursor:pointer;"
+          >
+            保存
+          </button>
+        </div>
+      </form>
+    </div>
+    <script>
+      (function() {
+        const moodInput = document.getElementById("mood-input");
+        const buttons = Array.from(document.querySelectorAll("#mood-buttons [data-mood]"));
+        const selectedStyle = {
+          background: "#111827",
+          color: "#f9fafb",
+          borderColor: "#111827",
+          boxShadow: "0 6px 12px rgba(17, 24, 39, 0.25)"
+        };
+        const resetStyle = {
+          background: "#f9fafb",
+          color: "#111827",
+          borderColor: "#e5e7eb",
+          boxShadow: "none"
+        };
+
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const value = button.getAttribute("data-mood") || "";
+            moodInput.value = value;
+            buttons.forEach((btn) => {
+              btn.setAttribute("aria-pressed", "false");
+              Object.assign(btn.style, resetStyle);
+              const label = btn.querySelector("span:last-child");
+              if (label) {
+                label.style.color = "#374151";
+              }
+            });
+            button.setAttribute("aria-pressed", "true");
+            Object.assign(button.style, selectedStyle);
+            const selectedLabel = button.querySelector("span:last-child");
+            if (selectedLabel) {
+              selectedLabel.style.color = "#f9fafb";
+            }
+          });
+        });
+      })();
+    </script>
   `;
   return createHtmlPage("Mood / Notes", body);
 }
@@ -2263,7 +2346,14 @@ async function handleMoodNotesExecute(request: Request, env: Env): Promise<Respo
 
   const notesValue = notes?.trim() ?? "";
   if (!mood && !notesValue) {
-    return badRequest("missing mood or notes");
+    const message = "どちらか入力してください";
+    if (request.headers.get("content-type")?.includes("application/json")) {
+      return badRequest(message);
+    }
+    return new Response(
+      `<!doctype html><html><head><meta charset="utf-8" /><title>入力が必要です</title></head><body><p>${message}</p><p><a href="/confirm/mood-notes?date=${targetDate}&token=${token}">戻る</a></p></body></html>`,
+      { status: 400, headers: { "content-type": "text/html; charset=utf-8" } },
+    );
   }
 
   console.log("Mood/Notes execute", {
