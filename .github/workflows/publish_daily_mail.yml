@@ -34,5 +34,3 @@ jobs:
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
           PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}   # ← これを追加
         run: python scripts/daily_job.py --phase publish
-
-        run: python scripts/daily_job.py --phase publish
