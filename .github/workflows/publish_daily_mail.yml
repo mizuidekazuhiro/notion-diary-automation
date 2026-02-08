@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements.txt
           python scripts/verify_requirements.py
 
-      - name: Run publish phase
+      - name: Run publish
         env:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
@@ -32,4 +32,7 @@ jobs:
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}   # ← これを追加
+        run: python scripts/daily_job.py --phase publish
+
         run: python scripts/daily_job.py --phase publish
