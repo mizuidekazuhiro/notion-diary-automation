@@ -37,7 +37,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `toISOString()` / `new Date("YYYY-MM-DD")` のUTC変換は**1日ズレる**ので使いません。
 - `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
 - `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
-- `Notes` は仕様として一切書き込みません。
+- `Notes` は通常のDaily_Log Upsertでは書き込まず、`/ingest/mood-notes` でのみ更新します。
 - 追加で「Expenses (昨日の支出)」セクションを表示します（合計 + 上位3件 + 残り件数）。
   - 合計は `Total: ¥{expenses_total}` を表示します。
   - 明細は `• {title_or_merchant} — ¥{amount} (link)` を最大3件表示します。
@@ -93,7 +93,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Drop Count` (rollup: Drop Tasks の `名前` を Count all)
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
-`Notes` は仕様として **一切書き込まない** 方針です（DBに存在していても更新対象にしません）。
+`Notes` は通常のDaily_Log Upsertでは書き込まず、`/ingest/mood-notes` でのみ更新します。
 
 > **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos` は任意**です。  
 > 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
@@ -221,6 +221,7 @@ Workers環境変数（Secrets）に以下を設定します。
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
 | POST | `/execute/api/daily_log/ingest_health` | Health condition → Daily_Log 転記 |
 | POST | `/execute/api/daily_log/ingest_expenses` | Expenses → Daily_Log 転記 |
+| POST | `/ingest/mood-notes` | メール本文/リンク経由で Mood / Notes を更新 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
 
@@ -285,7 +286,7 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 - **検索条件**: `Target Date` が `YYYY-MM-DD` で一致するページを検索
 - 存在すれば更新 / 無ければ作成
 - `Date` も `Target Date` と同じ日付で更新されます
-- `Notes` は更新しません（DBに存在していても無視）
+- `Notes` は `/ingest/mood-notes` 専用の更新対象とし、Daily_Log Upsertでは更新しません
 - 先に `POST /execute/api/daily_log/ensure` でページだけ作成する運用を推奨
 
 Workersへのリクエスト例（Pythonから送信）:
@@ -322,6 +323,43 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 
 > `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
 
+### Mood / Notes 更新（メールリンク対応）
+
+- **エンドポイント**: `POST /ingest/mood-notes`
+- **用途**: メール受信側（Pythonなど）から本文/リンク情報を渡して、当日ページの `Mood` / `Notes` を更新します。
+- **認証**: `Authorization: Bearer <WORKERS_BEARER_TOKEN>`
+- **date** 未指定時はJSTの今日が使われます。
+- **mode** は `append` (デフォルト) / `replace`。
+- `source_url` がある場合は `Notes` 末尾に `参照: <url>` 形式で追記します。
+
+リクエスト例（Pythonメール受信側がHTTP POSTする想定）:
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "mood": "★★★",
+  "notes": "メール本文の抜粋",
+  "mode": "append",
+  "source_url": "https://example.com/mail-link"
+}
+```
+
+#### curlでの再現例
+
+```bash
+curl -X POST "https://<worker>.workers.dev/ingest/mood-notes" \
+  -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mood": "★★★",
+    "notes": "test",
+    "mode": "append",
+    "source_url": "https://example.com/mail-link"
+  }'
+```
+
+> ターミナルを使わない場合は Postman / Hoppscotch で `POST` を選び、`Authorization` ヘッダと上記JSONを設定して送信してください。
+
 ### Health condition → Daily_Log 転記
 
 - **検索条件**: Health condition の `Date` が `target_date (YYYY-MM-DD, JST)` と一致するページ
@@ -331,7 +369,7 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 - **Daily_Logへの更新は栄養/体重/食事写真のみ**
   - `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos`
   - **`Source` は既存値を維持**（`automation` 判定を壊さないため上書きしない）
-  - `Notes` は更新しない
+  - `Notes` は更新しない（`/ingest/mood-notes` のみが更新対象）
 
 > Daily_Log側に対象プロパティが無い場合は **警告ログを出してスキップ** します。
 
@@ -345,6 +383,8 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 - Phase B (Publish):
   - `/api/daily_log` でDaily_LogのSummaryを読み取り、メール送信
   - Tasks/Inboxなどは再取得しない（Daily_Logのみが情報源）
+- メール受信（任意）:
+  - 受信側プロセスから `/ingest/mood-notes` にPOSTして Mood / Notes を更新
 - HTMLメール（multipart/alternative）で text/plain と text/html を送信
 - `MAIL_TO` はカンマ区切りで複数対応
 - SMTP送信に失敗しても処理は継続（ログにエラーを出力）
