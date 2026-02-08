@@ -65,9 +65,39 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "location_summary": summary.location_summary,
         "mood": summary.mood,
         "weight": summary.weight,
-        "mood_notes_url": mood_notes_url,
+        "mood_notes_url": "",
     }
     plain_text = render_daily_log_text(payload)
+    if mood_notes_url:
+        mood_notes_text = f"""
+Mood / Notes を入力:
+{mood_notes_url}
+"""
+        plain_text = f"{plain_text.rstrip()}\n\n{mood_notes_text.strip()}\n"
+
     html_body = render_daily_log_html(payload)
+    if mood_notes_url:
+        mood_notes_html = f"""
+<div style="margin-top:16px">
+  <a href="{mood_notes_url}"
+     style="
+       display:inline-block;
+       padding:10px 14px;
+       background:#4f46e5;
+       color:#ffffff;
+       text-decoration:none;
+       border-radius:6px;
+       font-weight:600;
+     ">
+     Mood / Notes を入力
+  </a>
+</div>
+"""
+        body_marker = "</body>"
+        marker_index = html_body.rfind(body_marker)
+        if marker_index != -1:
+            html_body = f"{html_body[:marker_index]}{mood_notes_html}{html_body[marker_index:]}"
+        else:
+            html_body = f"{html_body}{mood_notes_html}"
 
     return MailContent(subject=subject, plain_text=plain_text, html_body=html_body)
