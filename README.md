@@ -80,7 +80,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Fat` (number)
 - `Carb` (number)
 - `Kcal` (number)
-- `Meal Photo` (files)
+- `Meal Photos` (files)
 - `Done Tasks` (relation -> Tasks DB)
 - `Drop Tasks` (relation -> Tasks DB)
 - `Done Count` (rollup: Done Tasks の `名前` を Count all)
@@ -89,7 +89,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
 `Notes` は仕様として **一切書き込まない** 方針です（DBに存在していても更新対象にしません）。
 
-> **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photo` は任意**です。  
+> **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos` は任意**です。  
 > 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
 
 ### Health condition DB (`HEALTH_DB_ID`)
@@ -100,7 +100,7 @@ MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を
 - `Carb` (number)
 - `Kcal` (number)
 - `Weight` (number)
-- `Meal Photo` (files)
+- `Meal Photos` (files)
 - `Source` (select) : `healthkit` を想定
 
 > プロパティ名が違う場合は `HEALTH_*_PROPERTY_NAME` 環境変数で変更できます。
@@ -169,7 +169,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `HEALTH_CARB_PROPERTY_NAME` (任意: `Carb` がデフォルト)
 - `HEALTH_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
 - `HEALTH_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
-- `HEALTH_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photo` がデフォルト)
+- `HEALTH_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photos` がデフォルト)
 - `HEALTH_SOURCE_PROPERTY_NAME` (任意: `Source` がデフォルト)
 - `HEALTH_SOURCE_VALUE` (任意: `healthkit` がデフォルト)
 - `DAILY_LOG_PROTEIN_PROPERTY_NAME` (任意: `Protein` がデフォルト)
@@ -177,7 +177,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `DAILY_LOG_CARB_PROPERTY_NAME` (任意: `Carb` がデフォルト)
 - `DAILY_LOG_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
 - `DAILY_LOG_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
-- `DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photo` がデフォルト)
+- `DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photos` がデフォルト)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
@@ -302,7 +302,7 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 - **0件ならスキップ**（`ok: true` を返し、Phase A 全体は継続）
 - **2件以上なら `created_time` が最新の1件を採用**
 - **Daily_Logへの更新は栄養/体重/食事写真のみ**
-  - `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photo`
+  - `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos`
   - **`Source` は既存値を維持**（`automation` 判定を壊さないため上書きしない）
   - `Notes` は更新しない
 
@@ -483,7 +483,7 @@ python scripts/test_email_mime.py
 1. Health condition DB に `Date = 昨日` のレコードを1件作成（`Source = healthkit`）
 2. GitHub Actions の `workflow_dispatch` で Phase A (Ingest) を実行
 3. Workersログで `Health ingest: ...` が出ることを確認
-4. Daily_Log の同日ページに `Protein/Fat/Carb/Kcal/Weight/Meal Photo` が転記されることを確認
+4. Daily_Log の同日ページに `Protein/Fat/Carb/Kcal/Weight/Meal Photos` が転記されることを確認
 
 ## Daily Log に Done/Drop タスクを Relation で記録する設定
 

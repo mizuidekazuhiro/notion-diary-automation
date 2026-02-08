@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlencode
 
 from ingest.http_client import fetch_json
@@ -17,6 +17,8 @@ class DailyLogSummary:
     mail_id: str
     source: Optional[str]
     diary: Optional[str]
+    meal_summary: Optional[str]
+    meal_photos: List[str]
     expenses_total: Optional[float]
     location_summary: Optional[str]
     mood: Optional[str]
@@ -40,6 +42,8 @@ def read_daily_log(
         mail_id=payload.get("mail_id", ""),
         source=payload.get("source"),
         diary=payload.get("diary"),
+        meal_summary=payload.get("meal_summary"),
+        meal_photos=payload.get("meal_photos", []) or [],
         expenses_total=payload.get("expenses_total"),
         location_summary=payload.get("location_summary"),
         mood=payload.get("mood"),
