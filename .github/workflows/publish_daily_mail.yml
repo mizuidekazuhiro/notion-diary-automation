@@ -33,4 +33,5 @@ jobs:
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
           PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}   # ← これを追加
+          MAIL_LINK_SECRET: ${{ secrets.MAIL_LINK_SECRET }}   # ←追加
         run: python scripts/daily_job.py --phase publish
