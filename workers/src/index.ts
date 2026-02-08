@@ -106,6 +106,7 @@ const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
 ];
 
 const MOOD_OPTIONS = ["★", "★★", "★★★", "★★★★", "★★★★★"] as const;
+const MOOD_NOTES_ICON = "📝";
 
 const BODY_CHUNK_LENGTH = 1800;
 
@@ -127,7 +128,6 @@ function buildDailyLogMoodNotesProperties(): ExpectedProperty[] {
     { name: TITLE_PROPERTIES.dailyLog, type: "title" },
     { name: "Date", type: "date" },
     { name: "Mood", type: "select" },
-    { name: "Notes", type: "rich_text" },
   ];
 }
 
@@ -709,6 +709,14 @@ function createRichTextProperty(content: string) {
   };
 }
 
+function createRichTextItems(content: string) {
+  const chunks = splitIntoChunks(content, BODY_CHUNK_LENGTH);
+  return chunks.map((chunk) => ({
+    type: "text",
+    text: { content: chunk },
+  }));
+}
+
 function createDateProperty(date: string) {
   return {
     date: date ? { start: date } : null,
@@ -782,6 +790,15 @@ function getPlainTextFromTitle(property: Record<string, any> | undefined): strin
     .join("");
 }
 
+function getPlainTextFromRichTextItems(
+  items: Array<{ plain_text?: string }> | undefined,
+): string {
+  if (!Array.isArray(items)) {
+    return "";
+  }
+  return items.map((item) => item.plain_text ?? "").join("");
+}
+
 function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
   const trimmedNotes = notes.trim();
   const timestamp = getJstTimeString();
@@ -817,6 +834,68 @@ function shouldSkipMoodNotesAppend(
     return existingText.includes(sourceUrl);
   }
   return false;
+}
+
+async function fetchBlockChildren(
+  env: Env,
+  blockId: string,
+): Promise<Record<string, any>[]> {
+  const results: Record<string, any>[] = [];
+  let hasMore = true;
+  let startCursor: string | undefined;
+
+  while (hasMore) {
+    const params = new URLSearchParams({ page_size: "100" });
+    if (startCursor) {
+      params.set("start_cursor", startCursor);
+    }
+    const response = await notionFetch(env, `/blocks/${blockId}/children?${params}`);
+    if (!response.ok) {
+      const details = await getNotionErrorDetails(response);
+      throw new NotionApiError(details);
+    }
+    const data = await response.json();
+    results.push(...(data.results ?? []));
+    hasMore = data.has_more ?? false;
+    startCursor = data.next_cursor ?? undefined;
+  }
+
+  return results;
+}
+
+function getMoodLogEntries(
+  blocks: Record<string, any>[],
+): Array<{ id: string; text: string }> {
+  return blocks
+    .filter((block) => block.type === "callout")
+    .map((block) => {
+      const callout = block.callout ?? {};
+      const icon = callout.icon ?? {};
+      const emoji = icon.type === "emoji" ? icon.emoji : undefined;
+      if (emoji !== MOOD_NOTES_ICON) {
+        return null;
+      }
+      const text = getPlainTextFromRichTextItems(callout.rich_text);
+      return { id: block.id, text };
+    })
+    .filter((entry): entry is { id: string; text: string } => Boolean(entry));
+}
+
+function buildMoodNotesBlocks(entry: string): Record<string, any>[] {
+  const trimmed = entry.trim();
+  if (!trimmed) {
+    return [];
+  }
+  return [
+    {
+      object: "block",
+      type: "callout",
+      callout: {
+        rich_text: createRichTextItems(trimmed),
+        icon: { type: "emoji", emoji: MOOD_NOTES_ICON },
+      },
+    },
+  ];
 }
 
 function getNumberFromProperty(
@@ -1768,9 +1847,6 @@ async function handleMoodNotesIngest(
 
   const queryData = await queryResponse.json();
   const existingPage = (queryData.results ?? [])[0] ?? null;
-  const existingProperties = existingPage?.properties ?? {};
-  const existingNotes = getPlainTextFromRichText(existingProperties.Notes);
-
   const updateProperties: Record<string, any> = {};
 
   if (mood) {
@@ -1778,31 +1854,41 @@ async function handleMoodNotesIngest(
   }
 
   const shouldUpdateNotes = notes !== undefined || sourceUrl !== undefined;
-  let updatedNotesText = existingNotes;
+  const notesValue = notes ?? "";
+  const entry = shouldUpdateNotes ? buildMoodNotesEntry(notesValue, sourceUrl) : "";
   let notesUpdated = false;
+  let existingMoodEntries: Array<{ id: string; text: string }> = [];
 
-  if (shouldUpdateNotes) {
-    const notesValue = notes ?? "";
+  if (shouldUpdateNotes && existingPage) {
+    let blocks: Record<string, any>[] = [];
+    try {
+      blocks = await fetchBlockChildren(env, existingPage.id);
+    } catch (error) {
+      if (error instanceof NotionApiError) {
+        return notionErrorResponseFromDetails({
+          status: error.status,
+          code: error.code,
+          notionMessage: error.notionMessage,
+          requestId: error.requestId,
+          body: error.body,
+        });
+      }
+      throw error;
+    }
+    existingMoodEntries = getMoodLogEntries(blocks);
+    const existingText = existingMoodEntries.map((item) => item.text).join("\n");
     if (mode === "replace") {
-      const entry = buildMoodNotesEntry(notesValue, sourceUrl);
-      if (entry !== existingNotes) {
-        updatedNotesText = entry;
+      if (entry && entry !== existingText) {
         notesUpdated = true;
       }
-    } else if (!shouldSkipMoodNotesAppend(existingNotes, notesValue, sourceUrl)) {
-      const entry = buildMoodNotesEntry(notesValue, sourceUrl);
-      updatedNotesText = existingNotes
-        ? `${existingNotes}\n${entry}`
-        : entry;
+    } else if (entry && !shouldSkipMoodNotesAppend(existingText, notesValue, sourceUrl)) {
       notesUpdated = true;
     }
+  } else if (shouldUpdateNotes && entry) {
+    notesUpdated = true;
   }
 
-  if (notesUpdated) {
-    updateProperties.Notes = createRichTextProperty(updatedNotesText);
-  }
-
-  if (!Object.keys(updateProperties).length) {
+  if (!Object.keys(updateProperties).length && !notesUpdated) {
     return new Response(
       JSON.stringify({
         ok: true,
@@ -1816,17 +1902,45 @@ async function handleMoodNotesIngest(
     );
   }
 
-  let resultResponse: Response;
-  if (existingPage) {
-    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ properties: updateProperties }),
-    });
-  } else {
+  let pageId = existingPage?.id ?? null;
+
+  if (Object.keys(updateProperties).length) {
+    let resultResponse: Response;
+    if (existingPage) {
+      resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ properties: updateProperties }),
+      });
+    } else {
+      const properties: Record<string, any> = {
+        [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
+        Date: createDateProperty(targetDate),
+        ...updateProperties,
+      };
+
+      const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+      if (hasPropertyType(dailyLogProperties, "Target Date", "date")) {
+        properties["Target Date"] = createDateProperty(targetDate);
+      }
+
+      resultResponse = await notionFetch(env, "/pages", {
+        method: "POST",
+        body: JSON.stringify({
+          parent: { database_id: env.DAILY_LOG_DB_ID },
+          properties,
+        }),
+      });
+    }
+
+    if (!resultResponse.ok) {
+      return notionErrorResponse(resultResponse, "handleMoodNotesIngest.upsert");
+    }
+
+    pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  } else if (!pageId) {
     const properties: Record<string, any> = {
       [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
       Date: createDateProperty(targetDate),
-      ...updateProperties,
     };
 
     const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
@@ -1834,20 +1948,46 @@ async function handleMoodNotesIngest(
       properties["Target Date"] = createDateProperty(targetDate);
     }
 
-    resultResponse = await notionFetch(env, "/pages", {
+    const createResponse = await notionFetch(env, "/pages", {
       method: "POST",
       body: JSON.stringify({
         parent: { database_id: env.DAILY_LOG_DB_ID },
         properties,
       }),
     });
+
+    if (!createResponse.ok) {
+      return notionErrorResponse(createResponse, "handleMoodNotesIngest.upsert");
+    }
+
+    pageId = (await createResponse.json()).id;
   }
 
-  if (!resultResponse.ok) {
-    return notionErrorResponse(resultResponse, "handleMoodNotesIngest.upsert");
+  if (notesUpdated && pageId) {
+    if (mode === "replace" && existingMoodEntries.length) {
+      for (const entryItem of existingMoodEntries) {
+        const archiveResponse = await notionFetch(env, `/blocks/${entryItem.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ archived: true }),
+        });
+        if (!archiveResponse.ok) {
+          return notionErrorResponse(archiveResponse, "handleMoodNotesIngest.archive");
+        }
+      }
+    }
+
+    const blocks = buildMoodNotesBlocks(entry);
+    if (blocks.length) {
+      const appendResponse = await notionFetch(env, `/blocks/${pageId}/children`, {
+        method: "PATCH",
+        body: JSON.stringify({ children: blocks }),
+      });
+      if (!appendResponse.ok) {
+        return notionErrorResponse(appendResponse, "handleMoodNotesIngest.append");
+      }
+    }
   }
 
-  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
   return new Response(
     JSON.stringify({
       ok: true,

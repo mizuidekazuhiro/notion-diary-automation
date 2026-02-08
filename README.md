@@ -37,7 +37,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `toISOString()` / `new Date("YYYY-MM-DD")` のUTC変換は**1日ズレる**ので使いません。
 - `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
 - `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
-- `Notes` は通常のDaily_Log Upsertでは書き込まず、`/ingest/mood-notes` でのみ更新します。
+- Mood/メモはDaily_Logのプロパティではなく、`/ingest/mood-notes` でページ本文（子ブロック）へ追記します。
 - 追加で「Expenses (昨日の支出)」セクションを表示します（合計 + 上位3件 + 残り件数）。
   - 合計は `Total: ¥{expenses_total}` を表示します。
   - 明細は `• {title_or_merchant} — ¥{amount} (link)` を最大3件表示します。
@@ -93,7 +93,7 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
 - `Drop Count` (rollup: Drop Tasks の `名前` を Count all)
 
 MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
-`Notes` は通常のDaily_Log Upsertでは書き込まず、`/ingest/mood-notes` でのみ更新します。
+Mood/メモはDaily_Logのプロパティではなく、`/ingest/mood-notes` でページ本文（子ブロック）へ追記します。
 
 > **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos` は任意**です。  
 > 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
@@ -131,7 +131,7 @@ MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を
 - **Raw**: `data_json` をDaily_Logページの子ブロックに分割保存
 
 > Notionの `rich_text` は1ブロック2000文字制限があるため、コード側で自動分割します。  
-> `Notes` プロパティに巨大テキストやJSONを入れるのは禁止です。
+> Mood/メモはページ本文の子ブロックに保存し、巨大テキストやJSONをプロパティに載せません。
 
 ## セキュリティ設計（2段階更新）
 
@@ -221,7 +221,7 @@ Workers環境変数（Secrets）に以下を設定します。
 | POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
 | POST | `/execute/api/daily_log/ingest_health` | Health condition → Daily_Log 転記 |
 | POST | `/execute/api/daily_log/ingest_expenses` | Expenses → Daily_Log 転記 |
-| POST | `/ingest/mood-notes` | メール本文/リンク経由で Mood / Notes を更新 |
+| POST | `/ingest/mood-notes` | メール本文/リンク経由で Mood / メモをページ本文へ追記 |
 | GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
 | POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
 
@@ -286,7 +286,7 @@ curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
 - **検索条件**: `Target Date` が `YYYY-MM-DD` で一致するページを検索
 - 存在すれば更新 / 無ければ作成
 - `Date` も `Target Date` と同じ日付で更新されます
-- `Notes` は `/ingest/mood-notes` 専用の更新対象とし、Daily_Log Upsertでは更新しません
+- Mood/メモは `/ingest/mood-notes` 専用の更新対象とし、Daily_Log Upsertでは更新しません
 - 先に `POST /execute/api/daily_log/ensure` でページだけ作成する運用を推奨
 
 Workersへのリクエスト例（Pythonから送信）:
@@ -323,14 +323,15 @@ curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
 
 > `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
 
-### Mood / Notes 更新（メールリンク対応）
+### Mood / メモ更新（メールリンク対応）
 
 - **エンドポイント**: `POST /ingest/mood-notes`
-- **用途**: メール受信側（Pythonなど）から本文/リンク情報を渡して、当日ページの `Mood` / `Notes` を更新します。
+- **用途**: メール受信側（Pythonなど）から本文/リンク情報を渡して、当日ページの `Mood` とページ本文（子ブロック）にメモを追記します。
 - **認証**: `Authorization: Bearer <WORKERS_BEARER_TOKEN>`
 - **date** 未指定時はJSTの今日が使われます。
 - **mode** は `append` (デフォルト) / `replace`。
-- `source_url` がある場合は `Notes` 末尾に `参照: <url>` 形式で追記します。
+- メモはDaily_Logページの子ブロックに 📝 アイコンのCalloutとして保存されます。
+- `source_url` がある場合はメモ末尾に `参照: <url>` 形式で追記します。
 
 リクエスト例（Pythonメール受信側がHTTP POSTする想定）:
 
@@ -369,7 +370,7 @@ curl -X POST "https://<worker>.workers.dev/ingest/mood-notes" \
 - **Daily_Logへの更新は栄養/体重/食事写真のみ**
   - `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos`
   - **`Source` は既存値を維持**（`automation` 判定を壊さないため上書きしない）
-  - `Notes` は更新しない（`/ingest/mood-notes` のみが更新対象）
+  - メモはページ本文（子ブロック）へ追記し、Daily_Logのプロパティは更新しない
 
 > Daily_Log側に対象プロパティが無い場合は **警告ログを出してスキップ** します。
 
@@ -384,7 +385,7 @@ curl -X POST "https://<worker>.workers.dev/ingest/mood-notes" \
   - `/api/daily_log` でDaily_LogのSummaryを読み取り、メール送信
   - Tasks/Inboxなどは再取得しない（Daily_Logのみが情報源）
 - メール受信（任意）:
-  - 受信側プロセスから `/ingest/mood-notes` にPOSTして Mood / Notes を更新
+  - 受信側プロセスから `/ingest/mood-notes` にPOSTして Mood / メモをページ本文へ追記
 - HTMLメール（multipart/alternative）で text/plain と text/html を送信
 - `MAIL_TO` はカンマ区切りで複数対応
 - SMTP送信に失敗しても処理は継続（ログにエラーを出力）
@@ -467,7 +468,7 @@ python scripts/daily_job.py --phase all
 ## トラブルシュート
 
 - **Notion rich_text 2000文字制限**  
-  long textは自動で分割保存します。`Notes` には巨大JSONを入れないでください。
+  long textは自動で分割保存します。巨大JSONはプロパティではなくページ本文に保存してください。
 - **PublishがDaily_Logを見つけられない**  
   対象日のDaily_Logが無い場合は送信をスキップし、ログに理由を残して正常終了します。
 
