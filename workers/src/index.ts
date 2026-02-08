@@ -105,6 +105,8 @@ const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
   { name: "Drop Tasks", type: "relation" },
 ];
 
+const MOOD_OPTIONS = ["★", "★★", "★★★", "★★★★", "★★★★★"] as const;
+
 const BODY_CHUNK_LENGTH = 1800;
 
 function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
@@ -117,6 +119,15 @@ function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
     { name: TITLE_PROPERTIES.tasks, type: "title" },
     { name: doneDatePropertyName, type: "date" },
     { name: dropDatePropertyName, type: "date" },
+  ];
+}
+
+function buildDailyLogMoodNotesProperties(): ExpectedProperty[] {
+  return [
+    { name: TITLE_PROPERTIES.dailyLog, type: "title" },
+    { name: "Date", type: "date" },
+    { name: "Mood", type: "select" },
+    { name: "Notes", type: "rich_text" },
   ];
 }
 
@@ -372,6 +383,75 @@ function validateDailyLogEnsurePayload(payload: Record<string, any>): {
   };
 }
 
+type MoodNotesMode = "append" | "replace";
+
+function validateMoodNotesPayload(payload: Record<string, any>): {
+  data?: {
+    targetDate: string;
+    mood?: (typeof MOOD_OPTIONS)[number];
+    notes?: string;
+    mode: MoodNotesMode;
+    sourceUrl?: string;
+  };
+  error?: Response;
+} {
+  let targetDate = typeof payload.date === "string" ? payload.date.trim() : "";
+  if (!targetDate) {
+    targetDate = getJstDateString();
+  }
+  if (!isValidDateString(targetDate)) {
+    return { error: badRequest("invalid date format") };
+  }
+
+  const rawMood = typeof payload.mood === "string" ? payload.mood.trim() : "";
+  const mood = rawMood ? (rawMood as (typeof MOOD_OPTIONS)[number]) : undefined;
+  if (rawMood && !MOOD_OPTIONS.includes(rawMood as (typeof MOOD_OPTIONS)[number])) {
+    return { error: badRequest("invalid mood") };
+  }
+
+  let notes: string | undefined = undefined;
+  if (payload.notes !== undefined) {
+    if (typeof payload.notes !== "string") {
+      return { error: badRequest("notes must be a string") };
+    }
+    notes = payload.notes;
+  }
+
+  const mode =
+    typeof payload.mode === "string" && payload.mode.trim()
+      ? payload.mode.trim().toLowerCase()
+      : "append";
+  if (mode !== "append" && mode !== "replace") {
+    return { error: badRequest("invalid mode") };
+  }
+
+  let sourceUrl: string | undefined = undefined;
+  if (payload.source_url !== undefined) {
+    if (typeof payload.source_url !== "string") {
+      return { error: badRequest("source_url must be a string") };
+    }
+    const trimmed = payload.source_url.trim();
+    if (trimmed) {
+      sourceUrl = trimmed;
+    }
+  }
+
+  const notesValue = notes?.trim() ?? "";
+  if (!mood && !notesValue && !sourceUrl) {
+    return { error: badRequest("missing mood or notes") };
+  }
+
+  return {
+    data: {
+      targetDate,
+      ...(mood ? { mood } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+      mode: mode as MoodNotesMode,
+      ...(sourceUrl ? { sourceUrl } : {}),
+    },
+  };
+}
+
 function getSchemaCacheKey(
   dbId: string,
   expectedProperties: ExpectedProperty[],
@@ -600,6 +680,16 @@ function getPageTitleFromProperty(
   return titleProp.map((item: { plain_text: string }) => item.plain_text).join("");
 }
 
+function getJstTimeString(date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return formatter.format(date);
+}
+
 function createTitleProperty(title: string) {
   return {
     title: [
@@ -690,6 +780,43 @@ function getPlainTextFromTitle(property: Record<string, any> | undefined): strin
   return title
     .map((item: { plain_text?: string }) => item.plain_text ?? "")
     .join("");
+}
+
+function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
+  const trimmedNotes = notes.trim();
+  const timestamp = getJstTimeString();
+  let entry = "";
+  if (trimmedNotes) {
+    entry = `[${timestamp}] ${trimmedNotes}`;
+  } else if (sourceUrl) {
+    entry = `[${timestamp}]`;
+  }
+  if (sourceUrl) {
+    const referenceLine = `参照: ${sourceUrl}`;
+    entry = entry ? `${entry}\n${referenceLine}` : referenceLine;
+  }
+  return entry;
+}
+
+function shouldSkipMoodNotesAppend(
+  existingText: string,
+  notes: string,
+  sourceUrl?: string,
+): boolean {
+  const trimmedNotes = notes.trim();
+  if (!existingText) {
+    return false;
+  }
+  if (trimmedNotes && sourceUrl) {
+    return existingText.includes(trimmedNotes) && existingText.includes(sourceUrl);
+  }
+  if (trimmedNotes) {
+    return existingText.includes(trimmedNotes);
+  }
+  if (sourceUrl) {
+    return existingText.includes(sourceUrl);
+  }
+  return false;
 }
 
 function getNumberFromProperty(
@@ -1586,6 +1713,152 @@ async function handleDailyLogExpensesIngest(
   );
 }
 
+async function handleMoodNotesIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /ingest/mood-notes");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  await validateDatabaseSchema(
+    env,
+    env.DAILY_LOG_DB_ID,
+    buildDailyLogMoodNotesProperties(),
+    { Mood: [...MOOD_OPTIONS] },
+  );
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+
+  const { data, error } = validateMoodNotesPayload(payload);
+  if (error) {
+    return error;
+  }
+  if (!data) {
+    return badRequest("invalid payload");
+  }
+
+  const { targetDate, mood, notes, mode, sourceUrl } = data;
+
+  const queryResponse = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleMoodNotesIngest.query");
+  }
+
+  const queryData = await queryResponse.json();
+  const existingPage = (queryData.results ?? [])[0] ?? null;
+  const existingProperties = existingPage?.properties ?? {};
+  const existingNotes = getPlainTextFromRichText(existingProperties.Notes);
+
+  const updateProperties: Record<string, any> = {};
+
+  if (mood) {
+    updateProperties.Mood = createSelectProperty(mood);
+  }
+
+  const shouldUpdateNotes = notes !== undefined || sourceUrl !== undefined;
+  let updatedNotesText = existingNotes;
+  let notesUpdated = false;
+
+  if (shouldUpdateNotes) {
+    const notesValue = notes ?? "";
+    if (mode === "replace") {
+      const entry = buildMoodNotesEntry(notesValue, sourceUrl);
+      if (entry !== existingNotes) {
+        updatedNotesText = entry;
+        notesUpdated = true;
+      }
+    } else if (!shouldSkipMoodNotesAppend(existingNotes, notesValue, sourceUrl)) {
+      const entry = buildMoodNotesEntry(notesValue, sourceUrl);
+      updatedNotesText = existingNotes
+        ? `${existingNotes}\n${entry}`
+        : entry;
+      notesUpdated = true;
+    }
+  }
+
+  if (notesUpdated) {
+    updateProperties.Notes = createRichTextProperty(updatedNotesText);
+  }
+
+  if (!Object.keys(updateProperties).length) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        updated: false,
+        reason: "no changes",
+        target_date: targetDate,
+        found: Boolean(existingPage),
+        page_id: existingPage?.id ?? null,
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  let resultResponse: Response;
+  if (existingPage) {
+    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: updateProperties }),
+    });
+  } else {
+    const properties: Record<string, any> = {
+      [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
+      Date: createDateProperty(targetDate),
+      ...updateProperties,
+    };
+
+    const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+    if (hasPropertyType(dailyLogProperties, "Target Date", "date")) {
+      properties["Target Date"] = createDateProperty(targetDate);
+    }
+
+    resultResponse = await notionFetch(env, "/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: env.DAILY_LOG_DB_ID },
+        properties,
+      }),
+    });
+  }
+
+  if (!resultResponse.ok) {
+    return notionErrorResponse(resultResponse, "handleMoodNotesIngest.upsert");
+  }
+
+  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      updated: true,
+      target_date: targetDate,
+      page_id: pageId,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleDailyLogEnsure(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return methodNotAllowed("use POST /execute/api/daily_log/ensure");
@@ -1984,6 +2257,9 @@ export default {
       }
       if (path === "/execute/api/daily_log/ingest_expenses") {
         return await handleDailyLogExpensesIngest(request, env);
+      }
+      if (path === "/ingest/mood-notes") {
+        return await handleMoodNotesIngest(request, env);
       }
       if (path === "/execute/api/daily_log/ensure") {
         return await handleDailyLogEnsure(request, env);
