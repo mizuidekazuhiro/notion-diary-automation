@@ -60,6 +60,7 @@ interface Env {
   EXPENSES_AMOUNT_PROPERTY_NAME?: string;
   EXPENSES_NAME_PROPERTY_NAME?: string;
   EXPENSES_MERCHANT_PROPERTY_NAME?: string;
+  EXPENSES_DAY_START_HOUR?: string;
 }
 
 type NotionPropertyType =
@@ -313,6 +314,29 @@ function normalizeMoodInput(rawMood: string): (typeof MOOD_OPTIONS)[number] | un
     return MOOD_OPTIONS[number - 1];
   }
   return undefined;
+}
+
+function getExpensesDayStartHour(env: Env): number {
+  if (!env.EXPENSES_DAY_START_HOUR) {
+    return 0;
+  }
+  const raw = env.EXPENSES_DAY_START_HOUR.trim();
+  if (!raw) {
+    return 0;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 23) {
+    console.warn(
+      `EXPENSES_DAY_START_HOUR must be an integer between 0 and 23. got="${env.EXPENSES_DAY_START_HOUR}". fallback to 0.`,
+    );
+    return 0;
+  }
+  return value;
+}
+
+function formatJstTimeFromHour(hour: number): string {
+  const normalized = Math.min(Math.max(hour, 0), 23);
+  return `${String(normalized).padStart(2, "0")}:00:00`;
 }
 
 async function notionErrorResponse(
@@ -1999,8 +2023,10 @@ async function handleDailyLogExpensesIngest(
     );
   }
 
-  const startJst = formatJstDateTime(targetDate);
-  const endJst = formatJstDateTime(addDaysToJstDate(targetDate, 1));
+  const expensesDayStartHour = getExpensesDayStartHour(env);
+  const expensesTime = formatJstTimeFromHour(expensesDayStartHour);
+  const startJst = formatJstDateTime(targetDate, expensesTime);
+  const endJst = formatJstDateTime(addDaysToJstDate(targetDate, 1), expensesTime);
   const filter = {
     and: [
       {
@@ -2013,6 +2039,10 @@ async function handleDailyLogExpensesIngest(
       },
     ],
   };
+
+  console.log(
+    `Expenses ingest: target_date=${targetDate}(JST) range=${startJst}..${endJst} day_start_hour=${expensesDayStartHour}`,
+  );
 
   let expensePages: Record<string, any>[] = [];
   try {

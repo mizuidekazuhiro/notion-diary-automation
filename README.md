@@ -43,6 +43,10 @@ Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub 
   - 明細は `• {title_or_merchant} — ¥{amount} (link)` を最大3件表示します。
   - 4件以上ある場合は `…and {remaining} more` を追加します。
   - 0件の場合は `—` を表示します。
+  - Expenses集計は `target_date` を基準に、`EXPENSES_DAY_START_HOUR` で日付開始時刻を調整します（未設定は `0`）。
+    - `start = ${target_date}T{HH}:00:00+09:00`（含む）
+    - `end = ${next_date}T{HH}:00:00+09:00`（排他）
+    - 例: `EXPENSES_DAY_START_HOUR=5` の場合は「05:00〜翌日05:00（排他）」が1日分になります。
 
 ## Notion DBの必須プロパティ
 
@@ -204,6 +208,7 @@ Workers環境変数（Secrets）に以下を設定します。
 - `EXPENSES_AMOUNT_PROPERTY_NAME` (任意: `Amount` がデフォルト)
 - `EXPENSES_NAME_PROPERTY_NAME` (任意: `Name` がデフォルト)
 - `EXPENSES_MERCHANT_PROPERTY_NAME` (任意: `Merchant` がデフォルト)
+- `EXPENSES_DAY_START_HOUR` (任意: Expenses集計の開始時刻。`0`〜`23` の整数、未設定は `0`)
 
 > **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
 
