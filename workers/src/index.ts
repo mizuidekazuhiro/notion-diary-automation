@@ -2041,7 +2041,7 @@ async function handleDailyLogExpensesIngest(
   };
 
   console.log(
-    `Expenses ingest: target_date=${targetDate}(JST) range=${startJst}..${endJst} day_start_hour=${expensesDayStartHour}`,
+    `INFO: Expenses window. target_date=${targetDate} start=${startJst} end=${endJst} day_start_hour=${expensesDayStartHour}`,
   );
 
   let expensePages: Record<string, any>[] = [];
