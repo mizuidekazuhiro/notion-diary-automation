@@ -322,21 +322,54 @@ function normalizeMoodInput(rawMood: string): (typeof MOOD_OPTIONS)[number] | un
 }
 
 function getExpensesDayStartHour(env: Env): number {
-  if (!env.EXPENSES_DAY_START_HOUR) {
-    return 0;
+  const dayStartHour = Number(env.EXPENSES_DAY_START_HOUR ?? "5");
+  console.log("EXPENSES_DAY_START_HOUR =", dayStartHour);
+  return dayStartHour;
+}
+
+function formatShiftedJstDate(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function resolveExpensesAggregationWindow(env: Env): {
+  targetDate: string;
+  startJst: string;
+  endJst: string;
+  dayStartHour: number;
+} {
+  const dayStartHour = getExpensesDayStartHour(env);
+
+  // JST基準の現在時刻
+  const now = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+
+  // 集計基準日を計算
+  const baseDate = new Date(jstNow);
+  if (jstNow.getUTCHours() < dayStartHour) {
+    baseDate.setUTCDate(baseDate.getUTCDate() - 1);
   }
-  const raw = env.EXPENSES_DAY_START_HOUR.trim();
-  if (!raw) {
-    return 0;
-  }
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0 || value > 23) {
-    console.warn(
-      `EXPENSES_DAY_START_HOUR must be an integer between 0 and 23. got="${env.EXPENSES_DAY_START_HOUR}". fallback to 0.`,
-    );
-    return 0;
-  }
-  return value;
+
+  // 集計開始（JST）
+  const start = new Date(baseDate);
+  start.setUTCHours(dayStartHour, 0, 0, 0);
+
+  // 集計終了（翌日の同時刻）
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+
+  const targetDate = formatShiftedJstDate(baseDate);
+  const startJst = formatJstDateTime(targetDate, formatJstTimeFromHour(dayStartHour));
+  const endJst = formatJstDateTime(
+    addDaysToJstDate(targetDate, 1),
+    formatJstTimeFromHour(dayStartHour),
+  );
+
+  console.log("Expense aggregation range (JST):", start, "to", end);
+
+  return { targetDate, startJst, endJst, dayStartHour };
 }
 
 function formatJstTimeFromHour(hour: number): string {
@@ -1747,6 +1780,7 @@ async function handleDailyLogHealthIngest(
   if (!targetDateResult.ok) {
     return badRequest(targetDateResult.reason);
   }
+
   const { targetDate } = targetDateResult;
 
   const healthPropertyNames = getHealthPropertyNames(env);
@@ -2260,7 +2294,12 @@ async function handleDailyLogExpensesIngest(
   if (!targetDateResult.ok) {
     return badRequest(targetDateResult.reason);
   }
-  const { targetDate } = targetDateResult;
+
+  const expensesWindow = resolveExpensesAggregationWindow(env);
+  const targetDate =
+    typeof payload.target_date === "string" || typeof payload.date === "string"
+      ? targetDateResult.targetDate
+      : expensesWindow.targetDate;
 
   const expensesPropertyNames = getExpensesPropertyNames(env);
   const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
@@ -2276,10 +2315,18 @@ async function handleDailyLogExpensesIngest(
     );
   }
 
-  const expensesDayStartHour = getExpensesDayStartHour(env);
-  const expensesTime = formatJstTimeFromHour(expensesDayStartHour);
-  const startJst = formatJstDateTime(targetDate, expensesTime);
-  const endJst = formatJstDateTime(addDaysToJstDate(targetDate, 1), expensesTime);
+  const expensesDayStartHour = expensesWindow.dayStartHour;
+  const startJst =
+    targetDate === expensesWindow.targetDate
+      ? expensesWindow.startJst
+      : formatJstDateTime(targetDate, formatJstTimeFromHour(expensesDayStartHour));
+  const endJst =
+    targetDate === expensesWindow.targetDate
+      ? expensesWindow.endJst
+      : formatJstDateTime(
+          addDaysToJstDate(targetDate, 1),
+          formatJstTimeFromHour(expensesDayStartHour),
+        );
   const filter = {
     and: [
       {
