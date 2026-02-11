@@ -33,7 +33,7 @@ jobs:
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
         run: python scripts/daily_job.py --phase ingest
-      
+
       - name: Debug health ingest endpoint
         env:
           URL: https://notion-diary-automation.kazuhiro-mizuide.workers.dev/execute/api/daily_log/ingest_health
@@ -46,4 +46,16 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{}' \
             --max-time 30
-      
+
+      - name: Debug photos ingest endpoint
+        env:
+          URL: https://notion-diary-automation.kazuhiro-mizuide.workers.dev/execute/api/daily_log/ingest_photos
+          TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+        run: |
+          set -euxo pipefail
+          curl -i --fail-with-body \
+            -X POST "$URL" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 30
