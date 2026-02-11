@@ -15,6 +15,11 @@ import {
 } from "./notion_client";
 import { formatMealSummary } from "./meal_summary";
 import {
+  buildPhotoOnlyUpdateProperties,
+  collectMealPhotosFromHealthPages,
+  resolveIngestTargetDate,
+} from "./daily_log_ingest";
+import {
   getTaskPropertyNames,
   TaskPropertyNameEnv,
 } from "./task_property_names";
@@ -1738,14 +1743,11 @@ async function handleDailyLogHealthIngest(
     return badRequest("invalid json body");
   }
 
-  let targetDate =
-    typeof payload.target_date === "string" ? payload.target_date.trim() : "";
-  if (!targetDate) {
-    targetDate = getJstYesterdayString();
+  const targetDateResult = resolveIngestTargetDate(payload);
+  if (!targetDateResult.ok) {
+    return badRequest(targetDateResult.reason);
   }
-  if (!isValidDateString(targetDate)) {
-    return badRequest("invalid target_date format");
-  }
+  const { targetDate } = targetDateResult;
 
   const healthPropertyNames = getHealthPropertyNames(env);
   const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
@@ -1977,6 +1979,260 @@ async function handleDailyLogHealthIngest(
   );
 }
 
+async function upsertDailyLogByTargetDate(
+  env: Env,
+  targetDate: string,
+  updateProperties: Record<string, any>,
+  logContext: string,
+): Promise<{ pageId: string } | { error: Response }> {
+  const dailyLogQuery = await notionFetch(
+    env,
+    `/databases/${env.DAILY_LOG_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 1,
+        filter: {
+          property: "Target Date",
+          date: { equals: targetDate },
+        },
+      }),
+    },
+  );
+
+  if (!dailyLogQuery.ok) {
+    return {
+      error: await notionErrorResponse(dailyLogQuery, `${logContext}.queryDaily`),
+    };
+  }
+
+  const dailyLogData = await dailyLogQuery.json();
+  const existingPage = (dailyLogData.results ?? [])[0] ?? null;
+
+  let resultResponse: Response;
+  if (existingPage) {
+    resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: updateProperties }),
+    });
+  } else {
+    const title = `Daily Log｜${targetDate}`;
+    const properties = {
+      [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
+      "Target Date": createDateProperty(targetDate),
+      Date: createDateProperty(targetDate),
+      ...updateProperties,
+    };
+    resultResponse = await notionFetch(env, "/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: env.DAILY_LOG_DB_ID },
+        properties,
+      }),
+    });
+  }
+
+  if (!resultResponse.ok) {
+    const details = await getNotionErrorDetails(resultResponse);
+    const requestIdLog = details.requestId ? ` request_id=${details.requestId}` : "";
+    const codeLog = details.code ? ` code=${details.code}` : "";
+    const messageLog = details.notionMessage ?? details.message;
+    console.error(
+      `Notion API error in ${logContext}.upsert: status=${details.status}${requestIdLog}${codeLog} message=${messageLog}`,
+    );
+    console.error(
+      `DailyLog upsert properties (${logContext}): ${Object.keys(updateProperties).join(", ")}`,
+    );
+    return { error: notionErrorResponseFromDetails(details) };
+  }
+
+  const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
+  return { pageId };
+}
+
+async function handleDailyLogPhotosIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ingest_photos");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+  if (!env.HEALTH_DB_ID) {
+    return new Response(JSON.stringify({ error: "missing HEALTH_DB_ID" }), {
+      status: 500,
+      headers: jsonHeaders,
+    });
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+
+  const targetDateResult = resolveIngestTargetDate(payload);
+  if (!targetDateResult.ok) {
+    return badRequest(targetDateResult.reason);
+  }
+  const { targetDate } = targetDateResult;
+
+  const healthPropertyNames = getHealthPropertyNames(env);
+  const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
+  const healthDbProperties = await getDatabaseProperties(env, env.HEALTH_DB_ID);
+  if (!hasPropertyType(healthDbProperties, healthPropertyNames.date, "date")) {
+    return new Response(
+      JSON.stringify({
+        error: "health db schema error",
+        message: `Missing date property: ${healthPropertyNames.date}`,
+      }),
+      { status: 500, headers: jsonHeaders },
+    );
+  }
+
+  const queryResponse = await notionFetch(
+    env,
+    `/databases/${env.HEALTH_DB_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 100,
+        filter: { property: healthPropertyNames.date, date: { equals: targetDate } },
+        sorts: [{ timestamp: "created_time", direction: "descending" }],
+      }),
+    },
+  );
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleDailyLogPhotosIngest.queryHealth");
+  }
+
+  const queryData = await queryResponse.json();
+  const healthPages = queryData.results ?? [];
+  const mealPhotos = collectMealPhotosFromHealthPages(
+    healthPages,
+    healthPropertyNames.mealPhoto,
+    normalizeFilesFromProperty,
+  );
+  if (!mealPhotos.length) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target_date: targetDate,
+        found: false,
+        updated: false,
+        reason: "no photos",
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  let updateProperties: Record<string, any> = {};
+  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.mealPhoto, "files")) {
+    updateProperties = buildPhotoOnlyUpdateProperties(
+      dailyLogHealthPropertyNames.mealPhoto,
+      createFilesProperty(mealPhotos),
+    );
+  } else {
+    console.warn(
+      `Daily_Log missing files property "${dailyLogHealthPropertyNames.mealPhoto}", skipping.`,
+    );
+  }
+
+  if (!Object.keys(updateProperties).length) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target_date: targetDate,
+        found: true,
+        updated: false,
+        reason: "no updatable properties",
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const upsertResult = await upsertDailyLogByTargetDate(
+    env,
+    targetDate,
+    updateProperties,
+    "handleDailyLogPhotosIngest",
+  );
+  if ("error" in upsertResult) {
+    return upsertResult.error;
+  }
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      target_date: targetDate,
+      found: true,
+      updated: true,
+      page_id: upsertResult.pageId,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
+async function handleDailyLogIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ingest_daily_log");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+  const targetDateResult = resolveIngestTargetDate(payload);
+  if (!targetDateResult.ok) {
+    return badRequest(targetDateResult.reason);
+  }
+  const { targetDate } = targetDateResult;
+  const ingestPayload = { target_date: targetDate };
+
+  const commonHeaders = new Headers({ "content-type": "application/json" });
+  const authorization = request.headers.get("authorization");
+  if (authorization) {
+    commonHeaders.set("authorization", authorization);
+  }
+
+  const healthRequest = new Request(request.url, {
+    method: "POST",
+    headers: commonHeaders,
+    body: JSON.stringify(ingestPayload),
+  });
+  const photosRequest = new Request(request.url, {
+    method: "POST",
+    headers: commonHeaders,
+    body: JSON.stringify(ingestPayload),
+  });
+
+  const healthResponse = await handleDailyLogHealthIngest(healthRequest, env);
+  const photosResponse = await handleDailyLogPhotosIngest(photosRequest, env);
+  const health = await healthResponse.json();
+  const photos = await photosResponse.json();
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      target_date: targetDate,
+      health,
+      photos,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleDailyLogExpensesIngest(
   request: Request,
   env: Env,
@@ -2000,14 +2256,11 @@ async function handleDailyLogExpensesIngest(
     return badRequest("invalid json body");
   }
 
-  let targetDate =
-    typeof payload.target_date === "string" ? payload.target_date.trim() : "";
-  if (!targetDate) {
-    targetDate = getJstYesterdayString();
+  const targetDateResult = resolveIngestTargetDate(payload);
+  if (!targetDateResult.ok) {
+    return badRequest(targetDateResult.reason);
   }
-  if (!isValidDateString(targetDate)) {
-    return badRequest("invalid target_date format");
-  }
+  const { targetDate } = targetDateResult;
 
   const expensesPropertyNames = getExpensesPropertyNames(env);
   const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
@@ -2728,6 +2981,12 @@ export default {
       }
       if (path === "/execute/api/daily_log/ingest_health") {
         return await handleDailyLogHealthIngest(request, env);
+      }
+      if (path === "/execute/api/daily_log/ingest_photos") {
+        return await handleDailyLogPhotosIngest(request, env);
+      }
+      if (path === "/execute/api/daily_log/ingest_daily_log") {
+        return await handleDailyLogIngest(request, env);
       }
       if (path === "/execute/api/daily_log/ingest_expenses") {
         return await handleDailyLogExpensesIngest(request, env);
