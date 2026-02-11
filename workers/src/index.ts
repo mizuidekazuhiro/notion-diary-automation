@@ -351,14 +351,26 @@ function formatJstTimeFromHour(hour: number): string {
   return `${String(hour).padStart(2, "0")}:00:00`;
 }
 
-function parseExpenseTimestampMs(page: Record<string, any>, datePropertyName: string): number {
-  const dateValue = page.properties?.[datePropertyName]?.date;
-  const rawTimestamp = typeof dateValue?.start === "string" ? dateValue.start : null;
-  if (!rawTimestamp) {
-    return Number.NaN;
-  }
-  const timestampMs = Date.parse(rawTimestamp);
+function parseExpenseCreatedTimeMs(page: Record<string, any>): number {
+  const raw = typeof page.created_time === "string" ? page.created_time : "";
+  const timestampMs = Date.parse(raw);
   return Number.isNaN(timestampMs) ? Number.NaN : timestampMs;
+}
+
+function formatDebugJstDateTime(timestampMs: number): string {
+  if (!Number.isFinite(timestampMs)) {
+    return "invalid";
+  }
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(timestampMs));
 }
 
 async function notionErrorResponse(
@@ -2289,32 +2301,21 @@ async function handleDailyLogExpensesIngest(
   const expensesPropertyNames = getExpensesPropertyNames(env);
   const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
 
-  const expensesDbProperties = await getDatabaseProperties(env, env.EXPENSES_DB_ID);
-  if (!hasPropertyType(expensesDbProperties, expensesPropertyNames.date, "date")) {
-    return new Response(
-      JSON.stringify({
-        error: "expenses db schema error",
-        message: `Missing date property: ${expensesPropertyNames.date}`,
-      }),
-      { status: 500, headers: jsonHeaders },
-    );
-  }
-
   const { startJst, endJst } = expensesWindow;
   const filter = {
     and: [
       {
-        property: expensesPropertyNames.date,
-        date: { on_or_after: startJst },
+        timestamp: "created_time",
+        created_time: { on_or_after: startJst },
       },
       {
-        property: expensesPropertyNames.date,
-        date: { before: endJst },
+        timestamp: "created_time",
+        created_time: { before: endJst },
       },
     ],
   };
 
-  console.log(`INFO: expense range start=${startJst} end=${endJst} timezone=JST`);
+  console.log(`INFO: expense aggregation window start_jst=${startJst} end_jst=${endJst}`);
 
   let expensePages: Record<string, any>[] = [];
   try {
@@ -2329,12 +2330,22 @@ async function handleDailyLogExpensesIngest(
   const startMs = Date.parse(startJst);
   const endMs = Date.parse(endJst);
   const filteredExpensePages = expensePages.filter((page) => {
-    const timestampMs = parseExpenseTimestampMs(page, expensesPropertyNames.date);
+    const timestampMs = parseExpenseCreatedTimeMs(page);
     return Number.isFinite(timestampMs) && timestampMs >= startMs && timestampMs < endMs;
   });
 
+  const sampleCreatedTimeLogs = expensePages.slice(0, 3).map((page) => {
+    const rawCreatedTime = typeof page.created_time === "string" ? page.created_time : "";
+    const createdTimeMs = parseExpenseCreatedTimeMs(page);
+    return {
+      id: page.id ?? null,
+      created_time: rawCreatedTime || null,
+      created_time_jst: formatDebugJstDateTime(createdTimeMs),
+    };
+  });
+
   console.log(
-    `INFO: expenses fetched_count=${expensePages.length} filtered_count=${filteredExpensePages.length}`,
+    `INFO: expenses fetched_count=${expensePages.length} filtered_count=${filteredExpensePages.length} sample_created_time=${JSON.stringify(sampleCreatedTimeLogs)}`,
   );
 
   const pageIds = filteredExpensePages.map((page) => page.id).filter(Boolean);
