@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from connectors.expenses import ExpensesConnector
 from connectors.health import HealthConnector
+from connectors.location import LocationConnector
 from connectors.tasks import TasksConnector
 from delivery.email_templates import build_email_html, build_email_text
 from ingest.daily_log_upsert import upsert_daily_log
@@ -27,6 +28,7 @@ def ingest_sources(
     health_ingest_url: str,
     expenses_ingest_url: str,
     daily_log_upsert_url: str,
+    location_ingest_url: str,
     bearer_token: Optional[str],
     run_id: str,
     source_label: str,
@@ -35,6 +37,7 @@ def ingest_sources(
         TasksConnector(tasks_closed_url, bearer_token),
         HealthConnector(health_ingest_url, bearer_token),
         ExpensesConnector(expenses_ingest_url, bearer_token),
+        LocationConnector(location_ingest_url, bearer_token),
     ]
 
     summary_blocks: Dict[str, Any] = {}
