@@ -46,7 +46,6 @@
 - `LOCATION_LOG_PLACE_PROP`（default: `Place`）
 - `LOCATION_LOG_LAT_PROP`（default: `Latitude (raw)`）
 - `LOCATION_LOG_LON_PROP`（default: `Longitude (raw)`）
-- `LOCATION_LOG_SOURCE_PROP`（default: `Source`）
 - `OPENAI_MODEL`（default: `gpt-4.1-mini`）
 - `OPENAI_BASE_URL`（default: `https://api.openai.com/v1`）
 - `DRY_RUN`（default: `false`）

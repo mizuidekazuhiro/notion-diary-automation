@@ -30,7 +30,6 @@ class Config:
     location_log_place_prop: str = "Place"
     location_log_lat_prop: str = "Latitude (raw)"
     location_log_lon_prop: str = "Longitude (raw)"
-    location_log_source_prop: str = "Source"
 
     openai_model: str = "gpt-4.1-mini"
     openai_base_url: str = DEFAULT_OPENAI_BASE_URL
@@ -48,7 +47,6 @@ class LocationLog:
     place: str
     lat: float | None
     lon: float | None
-    source: str
 
 
 @dataclass
@@ -93,13 +91,6 @@ class NotionClient:
             next_cursor = data.get("next_cursor")
 
         return all_results
-
-    def get_page(self, page_id: str) -> dict[str, Any]:
-        url = f"https://api.notion.com/v1/pages/{page_id}"
-        resp = self.session.get(url, timeout=30)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Notion get page failed ({resp.status_code}): {resp.text}")
-        return resp.json()
 
     def update_page_properties(self, page_id: str, properties: dict[str, Any]) -> None:
         url = f"https://api.notion.com/v1/pages/{page_id}"
@@ -244,7 +235,6 @@ def load_config() -> Config:
         location_log_place_prop=os.getenv("LOCATION_LOG_PLACE_PROP", "Place"),
         location_log_lat_prop=os.getenv("LOCATION_LOG_LAT_PROP", "Latitude (raw)"),
         location_log_lon_prop=os.getenv("LOCATION_LOG_LON_PROP", "Longitude (raw)"),
-        location_log_source_prop=os.getenv("LOCATION_LOG_SOURCE_PROP", "Source"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         openai_base_url=os.getenv("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL),
         dry_run=os.getenv("DRY_RUN", "false").lower() == "true",
@@ -306,6 +296,14 @@ def parse_number(prop: dict[str, Any] | None) -> float | None:
         return None
 
 
+def bucket_datetime(dt: datetime, bucket_minutes: int) -> datetime:
+    if bucket_minutes <= 1:
+        return dt.replace(second=0, microsecond=0)
+
+    floored_minute = (dt.minute // bucket_minutes) * bucket_minutes
+    return dt.replace(minute=floored_minute, second=0, microsecond=0)
+
+
 def parse_location_logs(pages: list[dict[str, Any]], cfg: Config) -> list[LocationLog]:
     logs: list[LocationLog] = []
     for page in pages:
@@ -322,7 +320,6 @@ def parse_location_logs(pages: list[dict[str, Any]], cfg: Config) -> list[Locati
                 place=rich_text_plain(props.get(cfg.location_log_place_prop)).strip() or "不明な場所",
                 lat=parse_number(props.get(cfg.location_log_lat_prop)),
                 lon=parse_number(props.get(cfg.location_log_lon_prop)),
-                source=rich_text_plain(props.get(cfg.location_log_source_prop)).strip(),
             )
         )
 
@@ -350,14 +347,16 @@ def segment_logs(logs: list[LocationLog], cfg: Config, window_end: datetime) -> 
 
     for idx, log in enumerate(logs):
         key = (rounded(log.lat), rounded(log.lon))
+        bucketed_time = bucket_datetime(log.timestamp, cfg.time_bucket_minutes)
         if current_key is None:
             current_key = key
+            current_start = bucketed_time
 
         if key != current_key:
             segments.append(
                 Segment(
                     start=current_start,
-                    end=log.timestamp,
+                    end=bucketed_time,
                     place_label=current_place,
                     rounded_lat=current_lat,
                     rounded_lon=current_lon,
@@ -365,7 +364,7 @@ def segment_logs(logs: list[LocationLog], cfg: Config, window_end: datetime) -> 
                 )
             )
             current_key = key
-            current_start = log.timestamp
+            current_start = bucketed_time
             current_place = log.place
             current_lat = rounded(log.lat)
             current_lon = rounded(log.lon)
@@ -436,45 +435,20 @@ def build_summary_property(page: dict[str, Any], property_name: str, text: str) 
 
 
 def fallback_summary(window_start: datetime, window_end: datetime, segments: list[Segment]) -> dict[str, Any]:
+    _ = segments
     header = f"対象: {window_start.strftime('%m/%d %H:%M')}〜{window_end.strftime('%m/%d %H:%M')}"
-    if not segments:
-        text = f"{header}\n位置ログがありませんでした"
-        return {
-            "location_summary_text": text,
-            "primary_place_label": "",
-            "stats": {
-                "window_start": window_start.isoformat(),
-                "window_end": window_end.isoformat(),
-                "move_count": 0,
-                "first_seen": "",
-                "last_seen": "",
-                "top_places": [],
-                "data_quality_notes": ["location logs not found"],
-            },
-        }
-
-    timeline = []
-    for seg in segments[:6]:
-        timeline.append(f"- {seg.start.strftime('%H:%M')}〜{seg.end.strftime('%H:%M')} {seg.place_label}")
-    body = "\n".join(
-        [
-            header,
-            "位置データを要約しました。",
-            "主に滞在したエリアと移動時刻を記録します。",
-            *timeline,
-        ]
-    )
+    text = f"{header}\n位置ログがありませんでした"
     return {
-        "location_summary_text": body,
-        "primary_place_label": segments[0].place_label,
+        "location_summary_text": text,
+        "primary_place_label": "",
         "stats": {
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
-            "move_count": max(0, len(segments) - 1),
-            "first_seen": segments[0].start.strftime("%H:%M"),
-            "last_seen": segments[-1].end.strftime("%H:%M"),
+            "move_count": 0,
+            "first_seen": "",
+            "last_seen": "",
             "top_places": [],
-            "data_quality_notes": ["fallback summary used"],
+            "data_quality_notes": ["location logs not found"],
         },
     }
 
@@ -525,8 +499,7 @@ def run() -> None:
         print(summary_text)
         return
 
-    full_page = notion.get_page(page["id"])
-    patch = build_summary_property(full_page, cfg.daily_log_location_summary_prop, summary_text)
+    patch = build_summary_property(page, cfg.daily_log_location_summary_prop, summary_text)
     notion.update_page_properties(page["id"], patch)
     print("Daily Log Location summary updated successfully")
 

@@ -24,9 +24,9 @@ class MainTests(unittest.TestCase):
             openai_api_key="x",
         )
         logs = [
-            LocationLog("1", datetime.fromisoformat("2026-02-15T06:00:00+09:00"), "A", 35.10004, 139.10004, ""),
-            LocationLog("2", datetime.fromisoformat("2026-02-15T06:30:00+09:00"), "A", 35.10003, 139.10001, ""),
-            LocationLog("3", datetime.fromisoformat("2026-02-15T07:00:00+09:00"), "B", 35.20001, 139.20001, ""),
+            LocationLog("1", datetime.fromisoformat("2026-02-15T06:00:00+09:00"), "A", 35.10004, 139.10004),
+            LocationLog("2", datetime.fromisoformat("2026-02-15T06:30:00+09:00"), "A", 35.10003, 139.10001),
+            LocationLog("3", datetime.fromisoformat("2026-02-15T07:00:00+09:00"), "B", 35.20001, 139.20001),
         ]
         segments = segment_logs(logs, cfg, datetime.fromisoformat("2026-02-16T05:00:00+09:00"))
         self.assertEqual(len(segments), 2)
