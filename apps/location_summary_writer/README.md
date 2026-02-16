@@ -38,6 +38,7 @@
 - `OPENAI_API_KEY`
 
 ### 任意（未設定時デフォルトあり）
+- 空文字（`""`）や空白のみの値は **未設定と同じ扱い** になります。
 - `TZ`（default: `Asia/Tokyo`）
 - `WINDOW_START_HOUR`（default: `5`）
 - `DAILY_LOG_DATE_PROP`（default: `Date`）
@@ -50,7 +51,9 @@
 - `OPENAI_BASE_URL`（default: `https://api.openai.com/v1`）
 - `DRY_RUN`（default: `false`）
 - `LOCATION_ROUND_DECIMALS`（default: `4`）
-- `TIME_BUCKET_MINUTES`（default: `5`）
+- `TIME_BUCKET_MINUTES`（default: `30`）
+
+> `OPENAI_API_KEY` は必須です。空文字の場合も未設定扱いとなり、`ConfigError` で起動失敗します。
 
 > `DRY_RUN=true` にすると Notion 更新をスキップし、生成結果のみログ出力します。
 
@@ -106,4 +109,3 @@ python src/main.py
   - `DAILY_LOG_LOCATION_SUMMARY_PROP` などのプロパティ名が Notion 側と不一致
 - `Daily Log page not found`
   - 対象日（前日）の `Date` プロパティが一致するページが無い
-

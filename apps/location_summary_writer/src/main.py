@@ -2,15 +2,19 @@ import json
 import os
 import sys
 import time
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import requests
+from env import ConfigError, get_env_bool, get_env_int, get_env_str
 
 NOTION_VERSION = "2022-06-28"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,7 +40,7 @@ class Config:
     dry_run: bool = False
 
     location_round_decimals: int = 4
-    time_bucket_minutes: int = 5
+    time_bucket_minutes: int = 30
     openai_max_retries: int = 4
 
 
@@ -217,31 +221,55 @@ class OpenAIClient:
 
 
 def load_config() -> Config:
-    required = ["NOTION_TOKEN", "LOCATION_LOG_DB_ID", "DAILY_LOG_DB_ID", "OPENAI_API_KEY"]
-    missing = [k for k in required if not os.getenv(k)]
-    if missing:
-        raise ValueError(f"Missing required env vars: {', '.join(missing)}")
-
     return Config(
-        notion_token=os.environ["NOTION_TOKEN"],
-        location_log_db_id=os.environ["LOCATION_LOG_DB_ID"],
-        daily_log_db_id=os.environ["DAILY_LOG_DB_ID"],
-        openai_api_key=os.environ["OPENAI_API_KEY"],
-        tz=os.getenv("TZ", "Asia/Tokyo"),
-        window_start_hour=int(os.getenv("WINDOW_START_HOUR", "5")),
-        daily_log_date_prop=os.getenv("DAILY_LOG_DATE_PROP", "Date"),
-        daily_log_location_summary_prop=os.getenv("DAILY_LOG_LOCATION_SUMMARY_PROP", "Location summary"),
-        location_log_time_prop=os.getenv("LOCATION_LOG_TIME_PROP", "Time"),
-        location_log_place_prop=os.getenv("LOCATION_LOG_PLACE_PROP", "Place"),
-        location_log_lat_prop=os.getenv("LOCATION_LOG_LAT_PROP", "Latitude (raw)"),
-        location_log_lon_prop=os.getenv("LOCATION_LOG_LON_PROP", "Longitude (raw)"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-        openai_base_url=os.getenv("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL),
-        dry_run=os.getenv("DRY_RUN", "false").lower() == "true",
-        location_round_decimals=int(os.getenv("LOCATION_ROUND_DECIMALS", "4")),
-        time_bucket_minutes=int(os.getenv("TIME_BUCKET_MINUTES", "5")),
-        openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "4")),
+        notion_token=get_env_str("NOTION_TOKEN", required=True),
+        location_log_db_id=get_env_str("LOCATION_LOG_DB_ID", required=True),
+        daily_log_db_id=get_env_str("DAILY_LOG_DB_ID", required=True),
+        openai_api_key=get_env_str("OPENAI_API_KEY", required=True),
+        tz=get_env_str("TZ", default="Asia/Tokyo"),
+        window_start_hour=get_env_int("WINDOW_START_HOUR", default=5, min=0, max=23),
+        daily_log_date_prop=get_env_str("DAILY_LOG_DATE_PROP", default="Date"),
+        daily_log_location_summary_prop=get_env_str(
+            "DAILY_LOG_LOCATION_SUMMARY_PROP", default="Location summary"
+        ),
+        location_log_time_prop=get_env_str("LOCATION_LOG_TIME_PROP", default="Time"),
+        location_log_place_prop=get_env_str("LOCATION_LOG_PLACE_PROP", default="Place"),
+        location_log_lat_prop=get_env_str("LOCATION_LOG_LAT_PROP", default="Latitude (raw)"),
+        location_log_lon_prop=get_env_str("LOCATION_LOG_LON_PROP", default="Longitude (raw)"),
+        openai_model=get_env_str("OPENAI_MODEL", default="gpt-4.1-mini"),
+        openai_base_url=get_env_str("OPENAI_BASE_URL", default=DEFAULT_OPENAI_BASE_URL),
+        dry_run=get_env_bool("DRY_RUN", default=False),
+        location_round_decimals=get_env_int("LOCATION_ROUND_DECIMALS", default=4, min=0, max=8),
+        time_bucket_minutes=get_env_int("TIME_BUCKET_MINUTES", default=30, min=1, max=1440),
+        openai_max_retries=get_env_int("OPENAI_MAX_RETRIES", default=4, min=1),
     )
+
+
+def _openai_base_host(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    return parsed.hostname or "unknown"
+
+
+def log_effective_config(cfg: Config) -> None:
+    LOGGER.info(
+        "config: tz=%s window_start_hour=%s time_bucket_minutes=%s location_round_decimals=%s dry_run=%s",
+        cfg.tz,
+        cfg.window_start_hour,
+        cfg.time_bucket_minutes,
+        cfg.location_round_decimals,
+        cfg.dry_run,
+    )
+    LOGGER.info(
+        "config: daily_log_date_prop=%s daily_log_location_summary_prop=%s "
+        "location_log_time_prop=%s location_log_place_prop=%s location_log_lat_prop=%s location_log_lon_prop=%s",
+        cfg.daily_log_date_prop,
+        cfg.daily_log_location_summary_prop,
+        cfg.location_log_time_prop,
+        cfg.location_log_place_prop,
+        cfg.location_log_lat_prop,
+        cfg.location_log_lon_prop,
+    )
+    LOGGER.info("config: openai_model=%s openai_base_host=%s", cfg.openai_model, _openai_base_host(cfg.openai_base_url))
 
 
 def compute_window(now_utc: datetime, tz_name: str, window_start_hour: int) -> tuple[datetime, datetime, str]:
@@ -455,6 +483,8 @@ def fallback_summary(window_start: datetime, window_end: datetime, segments: lis
 
 def run() -> None:
     cfg = load_config()
+    os.environ["TZ"] = cfg.tz
+    log_effective_config(cfg)
     now = datetime.now(timezone.utc)
     window_start, window_end, diary_date = compute_window(now, cfg.tz, cfg.window_start_hour)
 
@@ -505,8 +535,12 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         run()
+    except ConfigError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}")
         sys.exit(1)

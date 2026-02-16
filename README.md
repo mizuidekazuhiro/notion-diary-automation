@@ -639,6 +639,8 @@ Daily_Log の `Location summary` を、Notion の `Location_Log` DB と GPT API 
 
 #### 任意（未設定時はデフォルト）
 
+- 空文字（`""`）または空白のみの値は、未設定として扱われます。
+
 - `TZ` (`Asia/Tokyo`)
 - `DAILY_LOG_DATE_PROP` (`Date`)
 - `DAILY_LOG_LOCATION_SUMMARY_PROP` (`Location summary`)
@@ -651,8 +653,10 @@ Daily_Log の `Location summary` を、Notion の `Location_Log` DB と GPT API 
 - `OPENAI_BASE_URL` (`https://api.openai.com/v1`)
 - `DRY_RUN` (`false`)
 - `LOCATION_ROUND_DECIMALS` (`4`)
-- `TIME_BUCKET_MINUTES` (`5`)
+- `TIME_BUCKET_MINUTES` (`30`)
 - `WINDOW_START_HOUR` (`5`)
+
+`NOTION_TOKEN` / `LOCATION_LOG_DB_ID` / `DAILY_LOG_DB_ID` / `OPENAI_API_KEY` は必須です。空文字の場合も未設定扱いとなり、`ConfigError` で失敗します。
 
 ### 実行方法
 

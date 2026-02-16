@@ -32,21 +32,9 @@ jobs:
           DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-          TZ: ${{ vars.TZ }}
-          WINDOW_START_HOUR: ${{ vars.WINDOW_START_HOUR }}
-
-          DAILY_LOG_DATE_PROP: ${{ vars.DAILY_LOG_DATE_PROP }}
-          DAILY_LOG_LOCATION_SUMMARY_PROP: ${{ vars.DAILY_LOG_LOCATION_SUMMARY_PROP }}
-
-          LOCATION_LOG_TIME_PROP: ${{ vars.LOCATION_LOG_TIME_PROP }}
-          LOCATION_LOG_PLACE_PROP: ${{ vars.LOCATION_LOG_PLACE_PROP }}
-          LOCATION_LOG_LAT_PROP: ${{ vars.LOCATION_LOG_LAT_PROP }}
-          LOCATION_LOG_LON_PROP: ${{ vars.LOCATION_LOG_LON_PROP }}
-
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
-          DRY_RUN: ${{ vars.DRY_RUN }}
-
-          LOCATION_ROUND_DECIMALS: ${{ vars.LOCATION_ROUND_DECIMALS }}
-          TIME_BUCKET_MINUTES: ${{ vars.TIME_BUCKET_MINUTES }}
+          TZ: "Asia/Tokyo"
+          WINDOW_START_HOUR: "5"
+          TIME_BUCKET_MINUTES: "30"
+          LOCATION_ROUND_DECIMALS: "4"
+          DRY_RUN: "false"
         run: python src/main.py
