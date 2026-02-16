@@ -1,0 +1,53 @@
+name: Location Summary Writer
+
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-location-summary:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/location_summary_writer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Location Summary Writer
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          LOCATION_LOG_DB_ID: ${{ secrets.LOCATION_LOG_DB_ID }}
+          DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+          TZ: ${{ vars.TZ }}
+          WINDOW_START_HOUR: ${{ vars.WINDOW_START_HOUR }}
+
+          DAILY_LOG_DATE_PROP: ${{ vars.DAILY_LOG_DATE_PROP }}
+          DAILY_LOG_LOCATION_SUMMARY_PROP: ${{ vars.DAILY_LOG_LOCATION_SUMMARY_PROP }}
+
+          LOCATION_LOG_TIME_PROP: ${{ vars.LOCATION_LOG_TIME_PROP }}
+          LOCATION_LOG_PLACE_PROP: ${{ vars.LOCATION_LOG_PLACE_PROP }}
+          LOCATION_LOG_LAT_PROP: ${{ vars.LOCATION_LOG_LAT_PROP }}
+          LOCATION_LOG_LON_PROP: ${{ vars.LOCATION_LOG_LON_PROP }}
+          LOCATION_LOG_SOURCE_PROP: ${{ vars.LOCATION_LOG_SOURCE_PROP }}
+
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          DRY_RUN: ${{ vars.DRY_RUN }}
+
+          LOCATION_ROUND_DECIMALS: ${{ vars.LOCATION_ROUND_DECIMALS }}
+          TIME_BUCKET_MINUTES: ${{ vars.TIME_BUCKET_MINUTES }}
+        run: python src/main.py
