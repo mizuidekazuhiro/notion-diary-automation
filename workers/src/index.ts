@@ -15,6 +15,14 @@ import {
 } from "./notion_client";
 import { formatMealSummary } from "./meal_summary";
 import {
+  buildFallbackLocationSummary,
+  resolveLocationWindow,
+  segmentLocationLogs,
+  type LocationSegment,
+  type LocationSummaryResult,
+  type NormalizedLocationLog,
+} from "./location_summary";
+import {
   buildPhotoOnlyUpdateProperties,
   collectMealPhotosFromHealthPages,
   resolveIngestTargetDate,
@@ -66,6 +74,22 @@ interface Env {
   EXPENSES_NAME_PROPERTY_NAME?: string;
   EXPENSES_MERCHANT_PROPERTY_NAME?: string;
   EXPENSES_DAY_START_HOUR?: string;
+  LOCATION_LOG_DB_ID?: string;
+  OPENAI_API_KEY?: string;
+  TZ?: string;
+  DAILY_LOG_DATE_PROP?: string;
+  DAILY_LOG_LOCATION_SUMMARY_PROP?: string;
+  LOCATION_LOG_TIME_PROP?: string;
+  LOCATION_LOG_PLACE_PROP?: string;
+  LOCATION_LOG_LAT_PROP?: string;
+  LOCATION_LOG_LON_PROP?: string;
+  LOCATION_LOG_SOURCE_PROP?: string;
+  OPENAI_MODEL?: string;
+  OPENAI_BASE_URL?: string;
+  DRY_RUN?: string;
+  LOCATION_ROUND_DECIMALS?: string;
+  TIME_BUCKET_MINUTES?: string;
+  WINDOW_START_HOUR?: string;
 }
 
 type NotionPropertyType =
@@ -1147,6 +1171,47 @@ function getDailyLogNotesPropertyName(env: Env): string {
   return env.DAILY_LOG_NOTES_PROPERTY_NAME || "Notes";
 }
 
+type LocationPropertyNames = {
+  time: string;
+  place: string;
+  lat: string;
+  lon: string;
+  source: string;
+};
+
+function getDailyLogDatePropertyName(env: Env): string {
+  return env.DAILY_LOG_DATE_PROP || "Date";
+}
+
+function getDailyLogLocationSummaryPropertyName(env: Env): string {
+  return env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary";
+}
+
+function getLocationPropertyNames(env: Env): LocationPropertyNames {
+  return {
+    time: env.LOCATION_LOG_TIME_PROP || "Time",
+    place: env.LOCATION_LOG_PLACE_PROP || "Place",
+    lat: env.LOCATION_LOG_LAT_PROP || "Latitude (raw)",
+    lon: env.LOCATION_LOG_LON_PROP || "Longitude (raw)",
+    source: env.LOCATION_LOG_SOURCE_PROP || "Source",
+  };
+}
+
+function parseBooleanEnvWithDefault(value: string | undefined, defaultValue: boolean): boolean {
+  if (typeof value !== "string") {
+    return defaultValue;
+  }
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function parseIntEnv(value: string | undefined, defaultValue: number): number {
+  if (!value) {
+    return defaultValue;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
 async function validateTasksDatabaseSchema(env: Env): Promise<void> {
   await validateDatabaseSchema(
     env,
@@ -2207,6 +2272,364 @@ async function handleDailyLogPhotosIngest(
   );
 }
 
+
+function getDateTimeFromProperty(property: Record<string, any> | undefined): string {
+  const value = property?.date?.start;
+  return typeof value === "string" ? value : "";
+}
+
+function getStringFromProperty(property: Record<string, any> | undefined): string {
+  if (!property) {
+    return "";
+  }
+  const richText = getPlainTextFromRichText(property);
+  if (richText) {
+    return richText;
+  }
+  const titleText = getPlainTextFromTitle(property);
+  if (titleText) {
+    return titleText;
+  }
+  if (typeof property.select?.name === "string") {
+    return property.select.name;
+  }
+  return "";
+}
+
+function getNumberLikeFromProperty(property: Record<string, any> | undefined): number | null {
+  const num = getNumberFromProperty(property);
+  if (typeof num === "number") {
+    return num;
+  }
+  const text = getStringFromProperty(property).trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = Number.parseFloat(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function queryDatabaseAllWithBody(
+  env: Env,
+  dbId: string,
+  body: Record<string, any>,
+): Promise<Record<string, any>[]> {
+  const results: Record<string, any>[] = [];
+  let hasMore = true;
+  let startCursor: string | undefined;
+
+  while (hasMore) {
+    const response = await notionFetch(env, `/databases/${dbId}/query`, {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 100,
+        ...body,
+        ...(startCursor ? { start_cursor: startCursor } : {}),
+      }),
+    });
+    if (!response.ok) {
+      const details = await getNotionErrorDetails(response);
+      throw new NotionApiError(details);
+    }
+    const data = await response.json();
+    results.push(...(data.results ?? []));
+    hasMore = data.has_more ?? false;
+    startCursor = data.next_cursor ?? undefined;
+  }
+
+  return results;
+}
+
+type LocationGptOutput = {
+  location_summary_text?: string;
+  primary_place_label?: string;
+  stats?: Record<string, any>;
+};
+
+async function generateLocationSummaryWithGpt(
+  env: Env,
+  diaryDate: string,
+  windowStart: string,
+  windowEnd: string,
+  segments: LocationSegment[],
+  moveCount: number,
+  dataQualityNotes: string[],
+): Promise<LocationSummaryResult> {
+  const fallback = buildFallbackLocationSummary(
+    windowStart,
+    windowEnd,
+    segments,
+    moveCount,
+    dataQualityNotes,
+  );
+  if (!env.OPENAI_API_KEY) {
+    console.warn("Location summary: OPENAI_API_KEY is missing, using fallback text.");
+    return fallback;
+  }
+
+  const model = env.OPENAI_MODEL || "gpt-4.1-mini";
+  const baseUrl = env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  const systemPrompt = `あなたは位置ログから「日記風の行動記録」を作成するアシスタントです。
+入力に含まれる時刻と場所（住所文字列/緯度経度）だけを根拠に書いてください。
+
+禁止:
+- 店名・施設名・目的・同行者・活動内容の推測（例: “食事した”“打ち合わせした”など）
+- “たぶん/おそらく/〜と思う” などの推測表現
+- 入力にない地名の追加
+
+許可:
+- 時間帯、移動、滞在の事実整理
+- 住所文字列からの短縮（ただし元の文字列に含まれる語だけで短縮）
+
+出力は必ずJSONのみ。`;
+
+  const userPrompt = `日記対象日: ${diaryDate}
+対象時間窓（JST）:
+- start: ${windowStart}
+- end: ${windowEnd}
+
+以下は同一地点をまとめた滞在セグメントです（JST）。
+これを元に、Notionに貼れる「日記風のLocation summary」を作ってください。
+
+入力:
+${JSON.stringify(
+    {
+      window_start: windowStart,
+      window_end: windowEnd,
+      diary_date: diaryDate,
+      move_count: moveCount,
+      segments,
+    },
+    null,
+    2,
+  )}
+
+出力JSON（厳守）:
+{
+  "location_summary_text": "（日本語の日記風。Notionにそのまま貼る）",
+  "primary_place_label": "（最長滞在の短縮ラベル、無ければ空）",
+  "stats": {
+    "window_start": "...",
+    "window_end": "...",
+    "move_count": 0,
+    "first_seen": "HH:MM",
+    "last_seen": "HH:MM",
+    "top_places": [
+      { "place_label": "...", "duration_min": 0, "visits": 0 }
+    ],
+    "data_quality_notes": []
+  }
+}
+
+location_summary_text の書式ルール:
+- 冒頭に「（前日05:00〜当日05:00）」の対象時間窓を1行で書く
+- その後、2〜6行程度の“日記風”文章
+- 最後に「タイムライン:」として箇条書きでセグメントを列挙
+- 活動内容は書かない（場所と移動だけ）`;
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    console.warn(`Location summary GPT failed status=${response.status} body=${body.slice(0, 500)}`);
+    return fallback;
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as LocationGptOutput;
+    const text = typeof parsed.location_summary_text === "string" ? parsed.location_summary_text.trim() : "";
+    if (!text) {
+      return fallback;
+    }
+    const primary =
+      typeof parsed.primary_place_label === "string" && parsed.primary_place_label.trim()
+        ? parsed.primary_place_label.trim()
+        : fallback.primary_place_label;
+    const stats = typeof parsed.stats === "object" && parsed.stats ? parsed.stats : fallback.stats;
+    return {
+      location_summary_text: text,
+      primary_place_label: primary,
+      stats: {
+        ...fallback.stats,
+        ...stats,
+        data_quality_notes: dataQualityNotes,
+      },
+    } as LocationSummaryResult;
+  } catch (error) {
+    console.warn("Location summary: failed to parse GPT JSON, using fallback.", error);
+    return fallback;
+  }
+}
+
+async function handleDailyLogLocationIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ingest_location");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  if (!env.LOCATION_LOG_DB_ID) {
+    return new Response(JSON.stringify({ error: "missing LOCATION_LOG_DB_ID" }), {
+      status: 500,
+      headers: jsonHeaders,
+    });
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+
+  const targetDateResult = resolveIngestTargetDate(payload);
+  const windowStartHour = parseIntEnv(env.WINDOW_START_HOUR, 5);
+  const window = resolveLocationWindow(new Date(), windowStartHour);
+  const diaryDate = targetDateResult.ok ? targetDateResult.targetDate : window.diaryDate;
+  const roundDecimals = parseIntEnv(env.LOCATION_ROUND_DECIMALS, 4);
+  const bucketMinutes = parseIntEnv(env.TIME_BUCKET_MINUTES, 5);
+  const locationProp = getLocationPropertyNames(env);
+  const dailyLogDateProp = getDailyLogDatePropertyName(env);
+  const dailyLogLocationSummaryProp = getDailyLogLocationSummaryPropertyName(env);
+
+  const dataQualityNotes: string[] = [];
+  const locationRows = await queryDatabaseAllWithBody(env, env.LOCATION_LOG_DB_ID, {
+    filter: {
+      and: [
+        { property: locationProp.time, date: { on_or_after: window.anchorStartIso } },
+        { property: locationProp.time, date: { before: window.anchorEndIso } },
+      ],
+    },
+    sorts: [{ property: locationProp.time, direction: "ascending" }],
+  });
+
+  const normalized: NormalizedLocationLog[] = [];
+  for (const row of locationRows) {
+    const properties = row.properties || {};
+    const timeIso = getDateTimeFromProperty(properties[locationProp.time]);
+    if (!timeIso) {
+      dataQualityNotes.push(`time_missing:${row.id ?? "unknown"}`);
+      continue;
+    }
+    const timeMs = Date.parse(timeIso);
+    if (!Number.isFinite(timeMs)) {
+      dataQualityNotes.push(`time_invalid:${row.id ?? "unknown"}`);
+      continue;
+    }
+    normalized.push({
+      timeIso,
+      timeMs,
+      place: getStringFromProperty(properties[locationProp.place]).trim(),
+      lat: getNumberLikeFromProperty(properties[locationProp.lat]),
+      lon: getNumberLikeFromProperty(properties[locationProp.lon]),
+      source: getStringFromProperty(properties[locationProp.source]).trim(),
+    });
+  }
+
+  const { segments, moveCount } = segmentLocationLogs(normalized, roundDecimals, bucketMinutes);
+  const summary = await generateLocationSummaryWithGpt(
+    env,
+    diaryDate,
+    window.anchorStartIso,
+    window.anchorEndIso,
+    segments,
+    moveCount,
+    dataQualityNotes,
+  );
+
+  const dailyLogPages = await queryDatabaseAllWithBody(env, env.DAILY_LOG_DB_ID, {
+    filter: {
+      property: dailyLogDateProp,
+      date: { equals: diaryDate },
+    },
+    sorts: [{ timestamp: "last_edited_time", direction: "descending" }],
+  });
+
+  let pageId = dailyLogPages[0]?.id as string | undefined;
+  if (!pageId) {
+    const upsertResult = await upsertDailyLogByTargetDate(
+      env,
+      diaryDate,
+      { [dailyLogLocationSummaryProp]: createRichTextProperty(summary.location_summary_text) },
+      "handleDailyLogLocationIngest",
+    );
+    if ("error" in upsertResult) {
+      return upsertResult.error;
+    }
+    pageId = upsertResult.pageId;
+  }
+
+  if (parseBooleanEnvWithDefault(env.DRY_RUN, false)) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        dry_run: true,
+        target_date: diaryDate,
+        window_start: window.anchorStartIso,
+        window_end: window.anchorEndIso,
+        location_logs: normalized.length,
+        segment_count: segments.length,
+        move_count: moveCount,
+        page_id: pageId,
+        location_summary_text: summary.location_summary_text,
+        stats: summary.stats,
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const patchResponse = await notionFetch(env, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      properties: {
+        [dailyLogLocationSummaryProp]: createRichTextProperty(summary.location_summary_text),
+      },
+    }),
+  });
+  if (!patchResponse.ok) {
+    return notionErrorResponse(patchResponse, "handleDailyLogLocationIngest.patchDailyLog");
+  }
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      target_date: diaryDate,
+      window_start: window.anchorStartIso,
+      window_end: window.anchorEndIso,
+      location_logs: normalized.length,
+      segment_count: segments.length,
+      move_count: moveCount,
+      page_id: pageId,
+      stats: summary.stats,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleDailyLogIngest(
   request: Request,
   env: Env,
@@ -2246,11 +2669,18 @@ async function handleDailyLogIngest(
     headers: commonHeaders,
     body: JSON.stringify(ingestPayload),
   });
+  const locationRequest = new Request(request.url, {
+    method: "POST",
+    headers: commonHeaders,
+    body: JSON.stringify(ingestPayload),
+  });
 
   const healthResponse = await handleDailyLogHealthIngest(healthRequest, env);
   const photosResponse = await handleDailyLogPhotosIngest(photosRequest, env);
+  const locationResponse = await handleDailyLogLocationIngest(locationRequest, env);
   const health = await healthResponse.json();
   const photos = await photosResponse.json();
+  const location = await locationResponse.json();
 
   return new Response(
     JSON.stringify({
@@ -2258,6 +2688,7 @@ async function handleDailyLogIngest(
       target_date: targetDate,
       health,
       photos,
+      location,
     }),
     { headers: jsonHeaders },
   );
@@ -3031,6 +3462,9 @@ export default {
       }
       if (path === "/execute/api/daily_log/ingest_expenses") {
         return await handleDailyLogExpensesIngest(request, env);
+      }
+      if (path === "/execute/api/daily_log/ingest_location") {
+        return await handleDailyLogLocationIngest(request, env);
       }
       if (path === "/confirm/mood-notes") {
         return await handleMoodNotesConfirm(request, env);

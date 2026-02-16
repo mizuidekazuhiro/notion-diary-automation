@@ -593,3 +593,86 @@ python scripts/test_email_mime.py
 3. **実行**
    - Phase A (Ingest) が、前日分の `Done date` / `Drop date` を集計して当日の Daily Log に Relation をセットします。
    - `Done date` / `Drop date` が空のタスクは除外されます。
+
+## Location summary（日記風）自動生成（Notion Location_Log + GPT）
+
+Daily_Log の `Location summary` を、Notion の `Location_Log` DB と GPT API を使って毎朝自動更新できます。
+
+### 何をする機能か
+
+- 実行時刻（想定: 当日 06:00 JST）から、集計窓を **[前日05:00, 当日05:00)** で固定計算します。
+- `Location_Log` DB から上記窓のログを全件取得し、同一地点の連続ログをセグメント化します。
+- GPT に「推測禁止」の固定プロンプトで要約を作らせ、`Daily_Log` DB の `Location summary` に書き戻します。
+- 日記対象日は以下で決まります。
+  - API payload に `target_date` があればそれを優先
+  - なければ `anchor_end` 日付の前日（通常運用では昨日）
+
+### Notion 連携の設定手順（初心者向け）
+
+1. Notion Integration を作成
+   - Notion の **Settings & members → Integrations → New integration** で作成します。
+   - 発行された Internal Integration Token を控えます（`NOTION_TOKEN`）。
+2. DB を Integration に共有
+   - `Daily_Log` DB と `Location_Log` DB を開き、右上 **Share** から作成した Integration を招待します。
+3. DB ID を取得
+   - DBページ URL の `https://www.notion.so/<workspace>/<DB_ID>?v=...` の `<DB_ID>` 部分を使います。
+   - `DAILY_LOG_DB_ID` と `LOCATION_LOG_DB_ID` に設定します。
+
+### OpenAI API の設定手順（初心者向け）
+
+1. OpenAI ダッシュボードで API Key を作成
+   - `OPENAI_API_KEY` として保管します。
+2. 実行環境に Secret 登録
+   - GitHub Actions: **Settings → Secrets and variables → Actions** に登録
+   - Cloudflare Workers: **Workers → Settings → Variables and Secrets** に登録
+3. モデル指定（任意）
+   - 未指定時は `OPENAI_MODEL=gpt-4.1-mini` を使用します。
+
+### 追加で必要な環境変数
+
+#### 必須
+
+- `NOTION_TOKEN`
+- `DAILY_LOG_DB_ID`
+- `LOCATION_LOG_DB_ID`
+- `OPENAI_API_KEY`
+
+#### 任意（未設定時はデフォルト）
+
+- `TZ` (`Asia/Tokyo`)
+- `DAILY_LOG_DATE_PROP` (`Date`)
+- `DAILY_LOG_LOCATION_SUMMARY_PROP` (`Location summary`)
+- `LOCATION_LOG_TIME_PROP` (`Time`)
+- `LOCATION_LOG_PLACE_PROP` (`Place`)
+- `LOCATION_LOG_LAT_PROP` (`Latitude (raw)`)
+- `LOCATION_LOG_LON_PROP` (`Longitude (raw)`)
+- `LOCATION_LOG_SOURCE_PROP` (`Source`)
+- `OPENAI_MODEL` (`gpt-4.1-mini`)
+- `OPENAI_BASE_URL` (`https://api.openai.com/v1`)
+- `DRY_RUN` (`false`)
+- `LOCATION_ROUND_DECIMALS` (`4`)
+- `TIME_BUCKET_MINUTES` (`5`)
+- `WINDOW_START_HOUR` (`5`)
+
+### 実行方法
+
+- Location summary 単体実行（Workers endpoint）
+  - `POST /execute/api/daily_log/ingest_location`
+  - body 例: `{ "target_date": "2026-01-10" }`
+- 既存の Daily Log 一括 ingest でも実行
+  - `POST /execute/api/daily_log/ingest_daily_log`
+  - Health / Photos に加えて Location summary も更新されます。
+- Python の日次ジョブ（`scripts/daily_job.py --phase ingest`）にも Location ingest が組み込まれています。
+
+### 時間窓と対象日の対応
+
+- 集計窓: `anchor_start <= log_time < anchor_end`
+- `anchor_end`: 実行時点から見た直近の `05:00 JST`
+- `anchor_start`: `anchor_end - 24時間`
+- 日記対象日:
+  - payload の `target_date` があればそれを使用
+  - 無ければ `anchor_end` の前日
+
+例: 2026-01-11 06:00 JST 実行時
+- 窓: 2026-01-10 05:00:00 ～ 2026-01-11 05:00:00（end は排他）
+- 日記対象日: 2026-01-10
