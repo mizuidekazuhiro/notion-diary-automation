@@ -2,7 +2,9 @@ name: Location Summary Writer
 
 on:
   schedule:
-    - cron: "0 21 * * *"
+    # Avoid minute 0 because scheduled workflows can be delayed/dropped more often
+    # around the top of the hour on GitHub Actions.
+    - cron: "17 21 * * *"
   workflow_dispatch:
 
 jobs:
