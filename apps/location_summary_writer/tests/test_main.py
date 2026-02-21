@@ -16,6 +16,7 @@ from main import (
     load_config,
     match_tasks,
     merge_sessions,
+    parse_tasks,
 )
 
 
@@ -49,29 +50,30 @@ class MainTests(unittest.TestCase):
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].duration_min, 120)
 
-    def test_match_tasks_prefers_work(self):
+    def test_match_tasks_prefers_in_range_even_if_lower_category(self):
         sessions = [
             StaySession(
-                start=datetime.fromisoformat("2026-02-15T18:00:00+09:00"),
-                end=datetime.fromisoformat("2026-02-15T20:00:00+09:00"),
-                display_name="自宅",
-                category="home",
-                duration_min=120,
-            ),
-            StaySession(
-                start=datetime.fromisoformat("2026-02-15T18:30:00+09:00"),
-                end=datetime.fromisoformat("2026-02-15T19:30:00+09:00"),
+                start=datetime.fromisoformat("2026-02-15T17:00:00+09:00"),
+                end=datetime.fromisoformat("2026-02-15T18:00:00+09:00"),
                 display_name="勤務先",
                 category="work",
                 duration_min=60,
             ),
+            StaySession(
+                start=datetime.fromisoformat("2026-02-15T19:00:00+09:00"),
+                end=datetime.fromisoformat("2026-02-15T20:00:00+09:00"),
+                display_name="自宅",
+                category="home",
+                duration_min=60,
+            ),
         ]
-        tasks = [TaskEvent(title="レビュー", event_time=datetime.fromisoformat("2026-02-15T19:00:00+09:00"))]
+        tasks = [TaskEvent(title="レビュー", event_time=datetime.fromisoformat("2026-02-15T19:10:00+09:00"))]
 
         matched = match_tasks(tasks, sessions)
-        self.assertEqual(matched[0].session.display_name, "勤務先")
+        self.assertEqual(matched[0].session.display_name, "自宅")
 
-    def test_generate_location_summary_contains_required_sections(self):
+    @patch("main.generate_diary_from_gpt", return_value="朝に自宅で過ごし、夜に予定があった。")
+    def test_generate_location_summary_returns_diary_only(self, _mock_gpt):
         window_start = datetime.fromisoformat("2026-02-15T05:00:00+09:00")
         window_end = datetime.fromisoformat("2026-02-16T05:00:00+09:00")
         sessions = [
@@ -85,11 +87,30 @@ class MainTests(unittest.TestCase):
         ]
         tasks = [TaskEvent(title="買い物", event_time=datetime.fromisoformat("2026-02-15T19:00:00+09:00"))]
 
-        text = generate_location_summary(window_start, window_end, sessions, tasks)
-        self.assertIn("要約", text)
-        self.assertIn("タイムライン（事実）", text)
-        self.assertIn("日記本文", text)
-        self.assertIn("『買い物』", text)
+        text = generate_location_summary(
+            window_start, window_end, "Asia/Tokyo", sessions, tasks, "dummy-key", "gpt-4o-mini"
+        )
+        self.assertEqual(text, "朝に自宅で過ごし、夜に予定があった。")
+
+    def test_parse_tasks_finds_dynamic_title_property(self):
+        pages = [
+            {
+                "properties": {
+                    "名前": {
+                        "type": "title",
+                        "title": [{"plain_text": "定例ミーティング"}],
+                    },
+                    "Event Date": {
+                        "type": "date",
+                        "date": {"start": "2026-02-15T12:00:00+09:00"},
+                    },
+                }
+            }
+        ]
+        window_start = datetime.fromisoformat("2026-02-15T05:00:00+09:00")
+        window_end = datetime.fromisoformat("2026-02-16T05:00:00+09:00")
+        tasks = parse_tasks(pages, window_start, window_end)
+        self.assertEqual(tasks[0].title, "定例ミーティング")
 
     @patch.dict(
         os.environ,
