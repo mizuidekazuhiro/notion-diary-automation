@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -26,6 +27,8 @@ class Config:
 
     daily_log_date_prop: str = "Date"
     daily_log_location_summary_prop: str = "Location summary"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
 
     dry_run: bool = False
 
@@ -49,6 +52,13 @@ class TaskEvent:
 class MatchedTask:
     task: TaskEvent
     session: StaySession | None
+
+
+@dataclass
+class MovementSegment:
+    start: datetime
+    end: datetime
+    display_name: str
 
 
 class NotionClient:
@@ -103,6 +113,8 @@ def load_config() -> Config:
         daily_log_location_summary_prop=get_env_str(
             "DAILY_LOG_LOCATION_SUMMARY_PROP", default="Location summary"
         ),
+        openai_api_key=get_env_str("OPENAI_API_KEY", default=""),
+        openai_model=get_env_str("OPENAI_MODEL", default="gpt-4o-mini"),
         dry_run=get_env_bool("DRY_RUN", default=False),
     )
 
@@ -279,7 +291,7 @@ def parse_tasks(pages: list[dict[str, Any]], window_start: datetime, window_end:
         event_time = parse_datetime(date_obj["start"])
         if not (window_start <= event_time <= window_end):
             continue
-        title = rich_text_plain(props.get("Name")).strip() or "名称未設定"
+        title = extract_task_title(props)
         tasks.append(TaskEvent(title=title, event_time=event_time))
 
     tasks.sort(key=lambda x: x.event_time)
@@ -289,133 +301,198 @@ def parse_tasks(pages: list[dict[str, Any]], window_start: datetime, window_end:
 def session_priority(category: str) -> int:
     if category == "work":
         return 0
-    if category not in {"unknown", "home"}:
-        return 1
     if category == "home":
+        return 1
+    if category == "other":
+        return 2
+    if category not in {"unknown", "home", "other"}:
         return 2
     return 3
 
 
 def match_tasks(tasks: list[TaskEvent], sessions: list[StaySession]) -> list[MatchedTask]:
     matched: list[MatchedTask] = []
-    tolerance = timedelta(minutes=30)
+    tolerance = timedelta(hours=1)
     for task in tasks:
         candidates = [
             s
             for s in sessions
             if s.start - tolerance <= task.event_time <= s.end + tolerance
         ]
+
+        def in_range(session: StaySession) -> int:
+            return 0 if session.start <= task.event_time <= session.end else 1
+
+        def distance_to_session(session: StaySession) -> float:
+            if session.start <= task.event_time <= session.end:
+                return 0
+            return min(
+                abs((task.event_time - session.start).total_seconds()),
+                abs((session.end - task.event_time).total_seconds()),
+            )
+
         candidates.sort(
             key=lambda s: (
+                in_range(s),
+                distance_to_session(s),
                 session_priority(s.category),
-                min(abs((task.event_time - s.start).total_seconds()), abs((s.end - task.event_time).total_seconds())),
-                -s.duration_min,
             )
         )
         matched.append(MatchedTask(task=task, session=candidates[0] if candidates else None))
     return matched
 
 
+def extract_task_title(props: dict[str, Any]) -> str:
+    for value in props.values():
+        if isinstance(value, dict) and value.get("type") == "title":
+            title = rich_text_plain(value).strip()
+            if title:
+                return title
+    return "名称未設定"
+
+
 def _fmt_time(dt: datetime) -> str:
     return dt.strftime("%H:%M")
 
+def partition_sessions(sessions: list[StaySession], min_duration_min: int = 30) -> tuple[list[StaySession], list[StaySession]]:
+    main_sessions = [s for s in sessions if s.duration_min >= min_duration_min]
+    short_sessions = [s for s in sessions if s.duration_min < min_duration_min]
+    return main_sessions, short_sessions
 
-def build_summary_lines(sessions: list[StaySession], tasks: list[TaskEvent]) -> str:
-    if not sessions:
-        task_text = "予定はなし" if not tasks else f"予定は{len(tasks)}件"
-        return f"滞在セッションは確認できませんでした。{task_text}でした。"
+def is_unknown_label(label: str) -> bool:
+    return label.strip().lower() in UNKNOWN_WORDS
 
-    totals = {"home": 0, "work": 0, "other": 0, "unknown": 0}
-    for s in sessions:
-        key = s.category if s.category in totals else "other"
-        totals[key] += s.duration_min
+def classify_movement_segments(short_sessions: list[StaySession], main_sessions: list[StaySession]) -> list[MovementSegment]:
+    movement_segments: list[MovementSegment] = []
+    for idx, session in enumerate(short_sessions):
+        has_station = "駅" in session.display_name or "station" in session.display_name.lower()
+        unknown_chain = False
+        if is_unknown_label(session.display_name):
+            prev_unknown = idx > 0 and is_unknown_label(short_sessions[idx - 1].display_name)
+            next_unknown = idx + 1 < len(short_sessions) and is_unknown_label(short_sessions[idx + 1].display_name)
+            unknown_chain = prev_unknown or next_unknown
+        between_main = any(
+            left.end <= session.start and session.end <= right.start
+            for left, right in zip(main_sessions, main_sessions[1:])
+            if left.duration_min >= 30 and right.duration_min >= 30
+        )
+        if has_station or unknown_chain or between_main:
+            movement_segments.append(
+                MovementSegment(start=session.start, end=session.end, display_name=session.display_name)
+            )
+    return movement_segments
 
-    total_min = sum(totals.values()) or 1
+def _window_label(window_start: datetime, window_end: datetime, tz_name: str) -> str:
+    tz = ZoneInfo(tz_name)
+    ws = window_start.astimezone(tz)
+    we = window_end.astimezone(tz)
+    return f"{ws.strftime('%Y-%m-%d %H:%M')} - {we.strftime('%Y-%m-%d %H:%M')} JST"
 
-    def ratio(v: int) -> int:
-        return round(v * 100 / total_min)
 
-    task_text = "予定なし" if not tasks else f"予定{len(tasks)}件あり"
-    return (
-        f"滞在比率は自宅{ratio(totals['home'])}%・勤務先{ratio(totals['work'])}%・"
-        f"その他{ratio(totals['other'])}%・不明{ratio(totals['unknown'])}%でした。{task_text}。"
+def build_gpt_payload(
+    window_start: datetime,
+    window_end: datetime,
+    tz_name: str,
+    main_sessions: list[StaySession],
+    movement_segments: list[MovementSegment],
+    matched_tasks: list[MatchedTask],
+) -> dict[str, Any]:
+    return {
+        "date_window": _window_label(window_start, window_end, tz_name),
+        "main_sessions": [
+            {
+                "start": _fmt_time(s.start),
+                "end": _fmt_time(s.end),
+                "location": s.display_name,
+                "category": s.category,
+                "duration_min": s.duration_min,
+            }
+            for s in main_sessions
+        ],
+        "movement_segments": [
+            {
+                "time": f"{_fmt_time(m.start)}-{_fmt_time(m.end)}",
+                "location": m.display_name,
+            }
+            for m in movement_segments
+        ],
+        "events": [
+            {
+                "time": _fmt_time(m.task.event_time),
+                "title": m.task.title,
+                "nearby_location": m.session.display_name if m.session else None,
+            }
+            for m in matched_tasks
+        ],
+    }
+
+def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -> str:
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for GPT diary generation")
+
+    system_prompt = (
+        "あなたは客観的な行動ログから自然な日記文を生成するアシスタントです。"
+        "推測で行動内容を断定しないでください。"
+        "予定は存在事実として記述してよいが、実施断定は禁止です。"
+        "出力は日本語の自然な日記本文のみ。見出し・箇条書きは禁止。"
+    )
+    user_prompt = (
+        "以下の行動データをもとに、自然な一日の記録文を生成してください。\n\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n\n"
+        "出力要件:\n"
+        "- 日記本文のみ（サマリ・タイムライン禁止）\n"
+        "- 朝→日中→夜の流れ\n"
+        "- 短時間移動は自然文として織り込む\n"
+        "- 予定は「◯◯の予定があった」と表現\n"
+        "- 断定禁止（会食等は書かない）"
     )
 
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        },
+        timeout=60,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"OpenAI request failed ({resp.status_code}): {resp.text}")
 
-def build_timeline(sessions: list[StaySession], matched_tasks: list[MatchedTask]) -> str:
-    events: list[tuple[datetime, str]] = []
-    for s in sessions:
-        cat = {"home": "home", "work": "work", "unknown": "unknown"}.get(s.category, "other")
-        events.append(
-            (
-                s.start,
-                f"- {_fmt_time(s.start)}–{_fmt_time(s.end)} {s.display_name}（{cat}） 滞在: {s.duration_min}分",
-            )
-        )
-
-    for m in matched_tasks:
-        events.append((m.task.event_time, f"- {_fmt_time(m.task.event_time)} 予定: 『{m.task.title}』"))
-
-    events.sort(key=lambda x: x[0])
-    return "\n".join(e[1] for e in events)
-
-
-def _period_name(dt: datetime) -> str:
-    h = dt.hour
-    if 5 <= h < 11:
-        return "朝"
-    if 11 <= h < 18:
-        return "日中"
-    return "夜"
-
-
-def build_diary_text(sessions: list[StaySession], matched_tasks: list[MatchedTask]) -> str:
-    if not sessions and not matched_tasks:
-        return "この時間帯は記録が少なく、滞在情報と予定の確認ができませんでした。"
-
-    period_facts: dict[str, list[str]] = {"朝": [], "日中": [], "夜": []}
-    for s in sessions:
-        fact = f"{_fmt_time(s.start)}から{_fmt_time(s.end)}までは{s.display_name}に滞在"
-        if s.category == "unknown":
-            fact += "（不明な短時間滞在を含む）"
-        period_facts[_period_name(s.start)].append(fact)
-
-    for m in matched_tasks:
-        t = _fmt_time(m.task.event_time)
-        if m.session:
-            fact = (
-                f"{t}に『{m.task.title}』の予定があり、"
-                f"その時間帯は{m.session.display_name}に滞在していた"
-            )
-        else:
-            fact = f"{t}に『{m.task.title}』の予定が入っていた"
-        period_facts[_period_name(m.task.event_time)].append(fact)
-
-    lines: list[str] = []
-    for period in ["朝", "日中", "夜"]:
-        if period_facts[period]:
-            lines.append(f"{period}は、" + "。".join(period_facts[period]) + "。")
-
-    return "\n".join(lines)
+    content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    if not content:
+        raise RuntimeError("OpenAI response did not include diary text")
+    return content
 
 
 def generate_location_summary(
     window_start: datetime,
     window_end: datetime,
+    tz_name: str,
     sessions: list[StaySession],
     tasks: list[TaskEvent],
+    openai_api_key: str,
+    openai_model: str,
 ) -> str:
-    matched_tasks = match_tasks(tasks, sessions)
-    summary = build_summary_lines(sessions, tasks)
-    timeline = build_timeline(sessions, matched_tasks)
-    diary = build_diary_text(sessions, matched_tasks)
-
-    parts = [
-        f"要約\n{summary}",
-        "タイムライン（事実）\n" + (timeline if timeline else "- 記録なし"),
-        "日記本文\n" + diary,
-    ]
-    return "\n\n".join(parts)
+    main_sessions, short_sessions = partition_sessions(sessions, min_duration_min=30)
+    movement_segments = classify_movement_segments(short_sessions, main_sessions)
+    matched_tasks = match_tasks(tasks, main_sessions)
+    payload = build_gpt_payload(
+        window_start=window_start,
+        window_end=window_end,
+        tz_name=tz_name,
+        main_sessions=main_sessions,
+        movement_segments=movement_segments,
+        matched_tasks=matched_tasks,
+    )
+    return generate_diary_from_gpt(payload, openai_api_key, openai_model)
 
 
 def find_daily_log_page(notion: NotionClient, cfg: Config, diary_date: str) -> dict[str, Any] | None:
@@ -483,7 +560,15 @@ def run() -> None:
 
     sessions = merge_sessions(parse_stay_sessions(session_pages, window_start, window_end))
     tasks = parse_tasks(task_pages, window_start, window_end)
-    summary_text = generate_location_summary(window_start, window_end, sessions, tasks)
+    summary_text = generate_location_summary(
+        window_start,
+        window_end,
+        cfg.tz,
+        sessions,
+        tasks,
+        cfg.openai_api_key,
+        cfg.openai_model,
+    )
     print(f"Fetched sessions={len(sessions)} tasks={len(tasks)}")
 
     page = find_daily_log_page(notion, cfg, diary_date)
