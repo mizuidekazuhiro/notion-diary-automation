@@ -2,8 +2,6 @@ name: Location Summary Writer
 
 on:
   schedule:
-    # Avoid minute 0 because scheduled workflows can be delayed/dropped more often
-    # around the top of the hour on GitHub Actions.
     - cron: "17 21 * * *"
   workflow_dispatch:
 
@@ -30,7 +28,16 @@ jobs:
       - name: Run Location Summary Writer
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+
+          # 互換のため残す（Writer側が参照している可能性がある）
           LOCATION_LOG_DB_ID: ${{ secrets.LOCATION_LOG_DB_ID }}
+
+          # ✅ 新しい参照先（今回追加）
+          STAY_SESSIONS_DB_ID: ${{ secrets.STAY_SESSIONS_DB_ID }}
+
+          # ✅ 既存のタスク管理DB（今回「予定」も読む）
+          TASK_DB_ID: ${{ secrets.TASK_DB_ID }}
+
           DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
