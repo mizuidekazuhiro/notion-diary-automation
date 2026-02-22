@@ -1,12 +1,12 @@
-import { getJstDateString, getJstRangeForTargetDate } from "./date_utils";
+import { getJstDateString, getJstRangeForTargetDate } from "../utils/date_utils";
 import {
-  getNotionErrorDetails,
-  NotionApiError,
-  notionFetch,
+  create_page,
+  query_database,
   queryDatabaseAll,
-} from "./notion_client";
-import { getTaskPropertyNames, TaskPropertyNameEnv } from "./task_property_names";
-import { TITLE_PROPERTIES } from "./title_properties";
+  update_page_property,
+} from "../infrastructure/notion/client";
+import { getTaskPropertyNames, TaskPropertyNameEnv } from "../config/task_property_names";
+import { TITLE_PROPERTIES } from "../config/title_properties";
 
 export type DailyLogTaskRelationEnv = {
   NOTION_TOKEN: string;
@@ -132,50 +132,23 @@ async function findOrCreateDailyLogPage(
   env: DailyLogTaskRelationEnv,
   targetDate: string,
 ): Promise<{ pageId: string; created: boolean }> {
-  const queryResponse = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Date",
-          date: { equals: targetDate },
-        },
-      }),
+  const queryData = await query_database(env, env.DAILY_LOG_DB_ID, {
+    page_size: 1,
+    filter: {
+      property: "Date",
+      date: { equals: targetDate },
     },
-  );
-
-  if (!queryResponse.ok) {
-    const details = await getNotionErrorDetails(queryResponse);
-    throw new NotionApiError(details);
-  }
-
-  const queryData = await queryResponse.json();
+  });
   const existingPage = (queryData.results ?? [])[0];
   if (existingPage) {
     return { pageId: existingPage.id, created: false };
   }
 
   const title = `${targetDate} Daily Log`;
-  const createResponse = await notionFetch(env, "/pages", {
-    method: "POST",
-    body: JSON.stringify({
-      parent: { database_id: env.DAILY_LOG_DB_ID },
-      properties: {
-        [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
-        Date: createDateProperty(targetDate),
-      },
-    }),
+  const createdPage = await create_page(env, env.DAILY_LOG_DB_ID, {
+    [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
+    Date: createDateProperty(targetDate),
   });
-
-  if (!createResponse.ok) {
-    const details = await getNotionErrorDetails(createResponse);
-    throw new NotionApiError(details);
-  }
-
-  const createdPage = await createResponse.json();
   return { pageId: createdPage.id, created: true };
 }
 
@@ -215,20 +188,10 @@ export async function updateDailyLogTaskRelations(
   }
 
   const { pageId, created } = await findOrCreateDailyLogPage(env, targetDate);
-  const updateResponse = await notionFetch(env, `/pages/${pageId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      properties: {
-        "Done Tasks": createRelationProperty(doneTaskIds),
-        "Drop Tasks": createRelationProperty(dropTaskIds),
-      },
-    }),
+  await update_page_property(env, pageId, {
+    "Done Tasks": createRelationProperty(doneTaskIds),
+    "Drop Tasks": createRelationProperty(dropTaskIds),
   });
-
-  if (!updateResponse.ok) {
-    const details = await getNotionErrorDetails(updateResponse);
-    throw new NotionApiError(details);
-  }
 
   console.log(
     `DailyLog relations updated: page=${pageId} created=${created} done=${doneTaskIds.length} drop=${dropTaskIds.length}`,

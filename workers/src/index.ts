@@ -5,15 +5,15 @@ import {
   getJstDateStringFromDateTime,
   isValidDateString,
   formatJstDateTime,
-} from "./date_utils";
-import { updateDailyLogTaskRelations } from "./daily_log_task_relations";
+} from "./utils/date_utils";
+import { updateDailyLogTaskRelations } from "./application/daily_log_task_relations";
 import {
   getNotionErrorDetails,
   NotionApiError,
   notionFetch,
   queryDatabaseAll,
-} from "./notion_client";
-import { formatMealSummary } from "./meal_summary";
+} from "./infrastructure/notion/client";
+import { formatMealSummary } from "./domain/meal_summary";
 import {
   buildFallbackLocationSummary,
   resolveLocationWindow,
@@ -21,17 +21,17 @@ import {
   type LocationSegment,
   type LocationSummaryResult,
   type NormalizedLocationLog,
-} from "./location_summary";
+} from "./domain/location_summary";
 import {
   buildPhotoOnlyUpdateProperties,
   collectMealPhotosFromHealthPages,
   resolveIngestTargetDate,
-} from "./daily_log_ingest";
+} from "./domain/daily_log_ingest";
 import {
   getTaskPropertyNames,
   TaskPropertyNameEnv,
-} from "./task_property_names";
-import { TITLE_PROPERTIES } from "./title_properties";
+} from "./config/task_property_names";
+import { TITLE_PROPERTIES } from "./config/title_properties";
 
 interface Env {
   NOTION_TOKEN: string;

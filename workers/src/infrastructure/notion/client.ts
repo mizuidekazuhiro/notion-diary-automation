@@ -155,6 +155,58 @@ export async function queryDatabaseAll(
   return results;
 }
 
+
+
+export async function query_database(
+  env: NotionEnv,
+  dbId: string,
+  body: Record<string, any>,
+): Promise<Record<string, any>> {
+  const response = await notionFetch(env, `/databases/${dbId}/query`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const details = await getNotionErrorDetails(response);
+    throw new NotionApiError(details);
+  }
+  return response.json();
+}
+
+export async function update_page_property(
+  env: NotionEnv,
+  pageId: string,
+  properties: Record<string, any>,
+): Promise<Record<string, any>> {
+  const response = await notionFetch(env, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  });
+  if (!response.ok) {
+    const details = await getNotionErrorDetails(response);
+    throw new NotionApiError(details);
+  }
+  return response.json();
+}
+
+export async function create_page(
+  env: NotionEnv,
+  parentDatabaseId: string,
+  properties: Record<string, any>,
+): Promise<Record<string, any>> {
+  const response = await notionFetch(env, "/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { database_id: parentDatabaseId },
+      properties,
+    }),
+  });
+  if (!response.ok) {
+    const details = await getNotionErrorDetails(response);
+    throw new NotionApiError(details);
+  }
+  return response.json();
+}
 export async function formatNotionError(response: Response): Promise<string> {
   const status = response.status;
   const rawText = await response.text();
