@@ -1,4 +1,4 @@
-import { getJstYesterdayString, isValidDateString } from "./date_utils";
+import { getJstYesterdayString, isValidDateString } from "../utils/date_utils";
 
 export type TargetDateResolution =
   | { ok: true; targetDate: string }

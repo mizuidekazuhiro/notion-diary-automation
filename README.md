@@ -1,682 +1,112 @@
 # notion-diary-automation
 
-Notion中心の「日記自動化MVP」を Cloudflare Workers + Python + GitHub Actions で構築するためのリポジトリです。
+既存の Notion 連携挙動を変更せず、構造を理解しやすく整理したリポジトリです。
 
-## 構成
+## 1. システム全体像
 
-- **Cloudflare Workers (TypeScript)**: Notion APIの問い合わせ、DBスキーマ検証、Daily_Logのensure/upsert/read。
-- **Python**: Phase A/B を分離して実行（Ingest → Publish）。
-- **GitHub Actions**: Phase A/B を別ワークフローで実行。
+- 実行基盤: Cloudflare Workers (TypeScript) + Python 補助スクリプト
+- 中核フロー: Notion 各DBを読み取り、`Daily Log DB` に日次集約結果を書き戻す
+- 重要方針: **DB ID・環境変数名・APIリクエスト/レスポンス構造・日付計算・レート制限・出力フォーマットは変更しない**
 
-## システム全体像（Phase A/B）
+## 2. 新ディレクトリ構造
 
-- **Phase A (Ingest)**: `target_date = JSTの昨日`
-  - **A-0** `ensure_daily_log_page(target_date)`  
-    Daily_Logのページを「存在保証」するだけ。Tasks取得などは一切しない。
-  - **A-1** `ingest_sources(target_date, daily_log_page_id)`  
-    コネクタ群（Tasks / Health）を順に実行し、Daily_Logへ追記/更新する。
-- **Phase B (Publish)**: `target_date = JSTの昨日`
-  - Daily_Logを読み取り、メールを生成・送信する。
-  - Tasks/Inbox等は再取得しない（Daily_Logのみが情報源）。
+```text
+workers/src/
+  domain/                # 純粋ロジック（Notion依存なし）
+    daily_log_ingest.ts
+    location_summary.ts
+    meal_summary.ts
+  application/           # ユースケース（フロー制御）
+    daily_log_task_relations.ts
+  infrastructure/
+    notion/
+      client.ts          # Notion APIアクセス共通化
+  config/
+    task_property_names.ts
+    title_properties.ts
+  utils/
+    date_utils.ts
+  index.ts               # エントリーポイント
 
-## スケジュール（JST/UTC）
+tests/
+  domain/
+    daily_log_ingest.test.ts
+    location_summary.test.ts
+    meal_summary.test.ts
+  application/
+  infrastructure/
 
-- **Phase A (Ingest)**: 05:00 JST = 20:00 UTC（前日）
-- **Phase B (Publish)**: 07:00 JST = 22:00 UTC（前日）
+docs/
+  notion-dataflow.md
+```
 
-## メール仕様（昨日の成果に集中）
+## 3. データフロー図
 
-- メールには **昨日 Done / 昨日 Drop** のみを含めます。
-- 表示は「タスク名 + Priority」のみ（日時など詳細は表示しない）。
-- Tasks DB の `Done date` / `Drop date` を使って集計します（プロパティ名は環境変数で変更可）。
-- JST基準で「昨日の0:00〜翌日0:00」の範囲で集計します（`start <= date < end`）。
-- `Done date` / `Drop date` は**時刻つき**で保存されるため、`target_date` のJSTレンジで判定します。
-  - `start = ${target_date}T00:00:00+09:00`
-  - `end = ${next_date}T00:00:00+09:00`（`end`は排他）
-- `before end` を使う理由は、`24:00` 表記を作らずに「翌日0:00」を排他境界として扱うためです。
-- `toISOString()` / `new Date("YYYY-MM-DD")` のUTC変換は**1日ズレる**ので使いません。
-- `Done date` / `Drop date` が空のタスクは除外されます（Tasks DBの当該Dateのみが根拠）。
-- `TASK_STATUS_DONE` / `TASK_STATUS_DROP_VALUE` で Done/Drop の判定値を調整できます。
-- Mood/メモはDaily_Logのプロパティではなく、`/ingest/mood-notes` でページ本文（子ブロック）へ追記します。
-- 追加で「Expenses (昨日の支出)」セクションを表示します（合計 + 上位3件 + 残り件数）。
-  - 合計は `Total: ¥{expenses_total}` を表示します。
-  - 明細は `• {title_or_merchant} — ¥{amount} (link)` を最大3件表示します。
-  - 4件以上ある場合は `…and {remaining} more` を追加します。
-  - 0件の場合は `—` を表示します。
-  - Expenses集計は `target_date` を基準に、`EXPENSES_DAY_START_HOUR` で日付開始時刻を調整します（未設定は `0`）。
-    - `start = ${target_date}T{HH}:00:00+09:00`（含む）
-    - `end = ${next_date}T{HH}:00:00+09:00`（排他）
-    - 例: `EXPENSES_DAY_START_HOUR=5` の場合は「05:00〜翌日05:00（排他）」が1日分になります。
+```text
+Tasks / Health / Expenses / Location Log (Notion DB)
+  ↓ query
+Workers application flow
+  ↓ domain集約処理
+Daily Log DB へ update/create
+```
 
-## Notion DBの必須プロパティ
+詳細なDB別・プロパティ別マッピングは `docs/notion-dataflow.md` を参照してください。
 
-> **各DBのTitleプロパティ名が異なる**ため、プロパティ名は完全一致で管理します。
+## 4. Notion DB構成説明
 
-### Tasks DB (`TASK_DB_ID`)
-
-- `Status` (select) : 値 `Do` / `Done` / `Drop` が存在すること（名称は環境変数で変更可）
-- `Since Do` (date)
-- `Priority` (select)
-- `名前` (title)
-- `Done date` (date)
-- `Drop date` (date)
-
-> **Status / Done date / Drop date のプロパティ名はNotion側と完全一致である必要があります。**  
-> 変更する場合は `TASK_STATUS_PROPERTY_NAME` / `TASK_DONE_DATE_PROPERTY_NAME` / `TASK_DROP_DATE_PROPERTY_NAME` を設定してください。  
-> `Someday` (checkbox) と `DoneAt` は現在のDBに無いため、コード側でも参照/更新しません（Someday状態は `Status` の値で表現します）。
-
-### Inbox DB (`INBOX_DB_ID`)
-
-- `Name` (title)
-
-> 現在のPhase A/BではInbox DBは未使用（将来拡張用のため保持）。
-
-### Daily_Log DB (`DAILY_LOG_DB_ID`)
-
-- `名前` (title)
-- `Date` (date) : その日のページの日付
-- `Target Date` (date) ← **Upsert判定キー**
-- `Activity Summary` (rich_text)
-- `Diary` (rich_text)
-- `Expenses total` (number)
-- `Expenses` (relation -> Expenses DB)
-- `Location summary` (rich_text)
-- `Meal summary` (rich_text)
-- `Mail ID` (rich_text)
-- `Mood` (select)
-- `Source` (select)
-- `Weight` (number)
-- `Protein` (number)
-- `Fat` (number)
-- `Carb` (number)
-- `Kcal` (number)
-- `Meal Photos` (files)
-- `Done Tasks` (relation -> Tasks DB)
-- `Drop Tasks` (relation -> Tasks DB)
-- `Done Count` (rollup: Done Tasks の `名前` を Count all)
-- `Drop Count` (rollup: Drop Tasks の `名前` を Count all)
-
-MVPでは最低限 `Target Date` / `Activity Summary` / `Mail ID` / `Source` を埋めればOKです。
-Mood/メモはDaily_Logのプロパティではなく、`/ingest/mood-notes` でページ本文（子ブロック）へ追記します。
-
-> **Health転記用の `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos` は任意**です。  
-> 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
-
-> **Expenses転記用の `Expenses total` / `Expenses` relation は追加してください。**  
-> 存在しない場合は **ログに警告を出してスキップ** します（Phase A全体は継続）。
-
-### Health condition DB (`HEALTH_DB_ID`)
-
-- `Date` (date) : 対象日付（JSTで YYYY-MM-DD と一致させる）
-- `Protein` (number)
-- `Fat` (number)
-- `Carb` (number)
-- `Kcal` (number)
-- `Weight` (number)
-- `Meal Photos` (files)
-- `Source` (select) : `healthkit` を想定
-
-> プロパティ名が違う場合は `HEALTH_*_PROPERTY_NAME` 環境変数で変更できます。
-
-### Expenses DB (`EXPENSES_DB_ID`)
-
-- `Date` (date) : JSTで前日分を抽出する対象日付
-- `Amount` (number)
-- `Name` (title)
-- `Merchant` (rich_text) ※任意。無ければ Name を表示に使う
-
-> プロパティ名が違う場合は `EXPENSES_*_PROPERTY_NAME` 環境変数で変更できます。
-
-### Daily_Logの保存内容（推奨）
-
-- **SummaryText**: `Activity Summary` に保存（メール本文テキスト）
-- **SummaryHtml**: `Diary` に保存（メールHTML本文）
-- **Sources**: `Source` に保存（現時点は `automation`）
-- **Raw**: `data_json` をDaily_Logページの子ブロックに分割保存
-
-> Notionの `rich_text` は1ブロック2000文字制限があるため、コード側で自動分割します。  
-> Mood/メモはページ本文の子ブロックに保存し、巨大テキストやJSONをプロパティに載せません。
-
-## セキュリティ設計（2段階更新）
-
-- **GET `/confirm/...`**: 確認のみ（更新禁止）
-- **POST `/execute/...`**: 更新実行のみ
-
-メールのリンクが自動踏みされる可能性があるため、更新は必ずPOSTでのみ実行します。
-
-## Cloudflare Workers
-
-### デプロイ（GitHub Actions・ブラウザのみ）
-
-このリポジトリは `workers/` にCloudflare Workersプロジェクトを配置しています。ローカルCLIは不要で、GitHub Actionsから `wrangler` を実行して自動デプロイします。
-
-1. **Cloudflare API Token を作成**
-   - Cloudflare Dashboard → **My Profile** → **API Tokens** → **Create Token**。
-   - テンプレートは **Custom Token** を選択し、以下を許可します。
-     - Account: `Account Settings` = Read
-     - Workers: `Workers Scripts` = Edit
-   - 作成したトークンを控える（後で `CF_API_TOKEN` に使います）。
-2. **GitHub Secrets に追加**
-   - GitHub → Settings → Secrets and variables → Actions → New repository secret。
-   - `CF_API_TOKEN` と `CF_ACCOUNT_ID` を追加（Account IDはCloudflare Dashboardの右側に表示）。
-3. **GitHub Actionsでデプロイ**
-   - GitHub → Actions → **Deploy Cloudflare Workers** → Run workflow。
-   - `workers/wrangler.toml` を参照して、`workers/src/index.ts` をビルド＆デプロイします。
-4. **WorkersのSecrets/Variablesを設定**
-   - Cloudflare Dashboard → Workers & Pages → 対象Workers → **Settings** → **Variables and Secrets**。
-   - `NOTION_TOKEN` / `INBOX_DB_ID` / `TASK_DB_ID` / `DAILY_LOG_DB_ID` などを**ここにのみ**設定します。
-
-### Secrets
-
-Workers環境変数（Secrets）に以下を設定します。
-
-- `NOTION_TOKEN`
-- `INBOX_DB_ID`
+主要DB:
 - `TASK_DB_ID`
 - `DAILY_LOG_DB_ID`
-- `HEALTH_DB_ID` (Health condition DB)
-- `EXPENSES_DB_ID` (Expenses DB)
-- `MAIL_LINK_SECRET` (メールのMood/Notesリンク署名用)
-- `WORKERS_BEARER_TOKEN` (任意: Bearer認証用)
-- `TASK_STATUS_DO` (任意: `Do` がデフォルト)
-- `TASK_STATUS_DONE` (任意: `Done` がデフォルト)
-- `TASK_STATUS_DROPPED` (任意: `Drop` がデフォルト)
-- `TASK_STATUS_DROP_VALUE` (任意: `Drop` がデフォルト、`TASK_STATUS_DROPPED` の代替)
-- `TASK_STATUS_SOMEDAY` (任意: Someday判定に使うStatus値がある場合に設定)
-- `REQUIRE_STATUS_EXTRA_OPTIONS` (任意: `true` の場合は Status の `Drop` / `Someday` も必須オプションとして検証)
-- `TASK_STATUS_PROPERTY_NAME` (任意: `Status` がデフォルト)
-- `TASK_DONE_DATE_PROPERTY_NAME` (任意: `Done date` がデフォルト)
-- `TASK_DROP_DATE_PROPERTY_NAME` (任意: `Drop date` がデフォルト)
-- `HEALTH_DATE_PROPERTY_NAME` (任意: `Date` がデフォルト)
-- `HEALTH_PROTEIN_PROPERTY_NAME` (任意: `Protein` がデフォルト)
-- `HEALTH_FAT_PROPERTY_NAME` (任意: `Fat` がデフォルト)
-- `HEALTH_CARB_PROPERTY_NAME` (任意: `Carb` がデフォルト)
-- `HEALTH_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
-- `HEALTH_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
-- `HEALTH_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photos` がデフォルト)
-- `HEALTH_SOURCE_PROPERTY_NAME` (任意: `Source` がデフォルト)
-- `HEALTH_SOURCE_VALUE` (任意: `healthkit` がデフォルト)
-- `DAILY_LOG_PROTEIN_PROPERTY_NAME` (任意: `Protein` がデフォルト)
-- `DAILY_LOG_FAT_PROPERTY_NAME` (任意: `Fat` がデフォルト)
-- `DAILY_LOG_CARB_PROPERTY_NAME` (任意: `Carb` がデフォルト)
-- `DAILY_LOG_KCAL_PROPERTY_NAME` (任意: `Kcal` がデフォルト)
-- `DAILY_LOG_WEIGHT_PROPERTY_NAME` (任意: `Weight` がデフォルト)
-- `DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME` (任意: `Meal Photos` がデフォルト)
-- `DAILY_LOG_EXPENSES_TOTAL_PROPERTY_NAME` (任意: `Expenses total` がデフォルト)
-- `DAILY_LOG_EXPENSES_RELATION_PROPERTY_NAME` (任意: `Expenses` がデフォルト)
-- `EXPENSES_DATE_PROPERTY_NAME` (任意: `Date` がデフォルト)
-- `EXPENSES_AMOUNT_PROPERTY_NAME` (任意: `Amount` がデフォルト)
-- `EXPENSES_NAME_PROPERTY_NAME` (任意: `Name` がデフォルト)
-- `EXPENSES_MERCHANT_PROPERTY_NAME` (任意: `Merchant` がデフォルト)
-- `EXPENSES_DAY_START_HOUR` (任意: Expenses集計の開始時刻。`0`〜`23` の整数、未設定は `0`)
-
-> **NotionトークンとDB IDはWorkers側のSecretsのみ**に置き、GitHub Actionsには置きません。
-
-### エンドポイント
-
-| Method | Path | 説明 |
-| --- | --- | --- |
-| GET | `/health` | 簡易ヘルスチェック（JSONで `{ "status": "ok" }`） |
-| GET | `/api/inbox` | Inbox DB の一覧取得 |
-| GET | `/api/tasks` | Tasks DB の Status = "Do" と Status = "Someday" を取得 |
-|  |  | ※Status = "Someday" のタスクは `confirm_promote_url` 付きで返却 |
-| GET | `/api/tasks/closed?date=YYYY-MM-DD` | Tasks DB から「昨日Done/Drop」を取得（date未指定ならJSTの昨日） |
-| GET | `/api/daily_log?date=YYYY-MM-DD` | Daily_Log のSummary取得（メール生成に利用） |
-| GET | `/confirm/daily_log/upsert` | Daily_Log Upsert 確認ページ |
-| GET | `/confirm/mood-notes` | Mood / Notes 入力の確認ページ（更新はしない） |
-| POST | `/execute/api/daily_log/ensure` | Daily_Log ページ作成（存在保証） |
-| POST | `/execute/api/daily_log/upsert` | Daily_Log Upsert 実行 |
-| POST | `/execute/api/daily_log/ingest_health` | Health condition → Daily_Log 転記 |
-| POST | `/execute/api/daily_log/ingest_expenses` | Expenses → Daily_Log 転記 |
-| POST | `/execute/mood-notes` | Mood / Notes 更新（署名トークン必須） |
-| POST | `/ingest/mood-notes` | メール本文/リンク経由で Mood / メモをページ本文へ追記 |
-| GET | `/confirm/tasks/promote?id=...` | Someday → Do 昇格の確認 |
-| POST | `/execute/tasks/promote` | Someday → Do 昇格 実行 |
-
-### GitHub Actions用URLの対応表
-
-- `INBOX_JSON_URL`: `/api/inbox`
-- `TASKS_JSON_URL`: `/api/tasks`
-- `TASKS_CLOSED_URL`: `/api/tasks/closed`
-- `DAILY_LOG_UPSERT_URL`: `/execute/api/daily_log/upsert`
-  - `DAILY_LOG_UPSERT_URL` の同一ホストを使って以下も派生します:
-    - `/execute/api/daily_log/ensure`
-    - `/execute/api/daily_log/ingest_health`
-    - `/execute/api/daily_log/ingest_expenses`
-    - `/api/daily_log`
-
-### ルーティング簡易チェック
-
-`/health` または `/api/tasks` が返ることを確認すると、**NotFound回避の確認**ができます。
-
-```bash
-curl "https://<worker>.workers.dev/health"
-```
-
-```bash
-curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
-  "https://<worker>.workers.dev/api/tasks"
-```
-
-> `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
-
-> `WORKERS_BEARER_TOKEN` を有効化する場合は、**GitHub ActionsのSecretsとWorkersの環境変数に同じ値**を設定してください。
-
-### 404/401/500/Notionエラー の切り分け（よくある原因）
-
-| ステータス | 主な原因 | 確認ポイント |
-| --- | --- | --- |
-| 404 Not Found | ルートのパス誤り / デプロイ先のURL誤り | `/health` のURLが正しいか |
-| 401 Unauthorized | `WORKERS_BEARER_TOKEN` が設定済みなのにヘッダ未指定 | `Authorization: Bearer ...` を付ける |
-| 500 Internal Server Error | 予期せぬ内部エラー | Workersログのスタックトレース |
-| 4xx/5xx (Notion) | Notion APIエラー | 返却されたJSONの `status` / `code` / `message` / `request_id` を確認 |
-
-### 401/405/4xx/5xx が出たときの診断手順（会社PCで手動POSTできない前提）
-
-1. **GitHub Actionsログを確認**し、HTTPステータスとレスポンスJSONを把握する。
-2. **Cloudflare Workersログ（Tail）を確認**し、`Notion API error` や `WORKERS_BEARER_TOKEN is not set; auth is disabled` などの警告を確認する。
-3. ステータス別の切り分け:
-   - `401`: `WORKERS_BEARER_TOKEN` の値が Actions と Workers で一致しているか。
-   - `405`: URLが `/execute/api/daily_log/upsert` になっているか、POSTで送信しているか。
-   - `4xx/5xx`: Notion APIエラー。レスポンスJSONの `status` / `code` / `message` / `request_id` を確認する。
-
-#### Bearer認証の例
-
-```bash
-curl -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
-  "https://xxxx.workers.dev/api/tasks/closed?date=2024-01-01"
-```
-
-> `TASK_DB_ID` を再利用するため、Secrets追加は不要です。
-
-### Daily_Log Upsert
-
-- **検索条件**: `Target Date` が `YYYY-MM-DD` で一致するページを検索
-- 存在すれば更新 / 無ければ作成
-- `Date` も `Target Date` と同じ日付で更新されます
-- Mood/メモは `/ingest/mood-notes` 専用の更新対象とし、Daily_Log Upsertでは更新しません
-- 先に `POST /execute/api/daily_log/ensure` でページだけ作成する運用を推奨
-
-Workersへのリクエスト例（Pythonから送信）:
-
-```json
-{
-  "target_date": "YYYY-MM-DD",
-  "title": "Daily Log｜YYYY-MM-DD",
-  "summary_text": "string",
-  "summary_html": "string(任意)",
-  "mail_id": "string",
-  "source": "automation",
-  "data_json": "string(任意)"
-}
-```
-
-#### curlでの再現例
-
-```bash
-curl -X POST "https://<worker>.workers.dev/execute/api/daily_log/upsert" \
-  -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "target_date": "2024-01-01",
-    "title": "Daily Log｜2024-01-01",
-    "summary_text": "summary text",
-    "summary_html": "<p>summary html</p>",
-    "mail_id": "mail-id-123",
-    "source": "automation",
-    "data_json": "{\"example\":true}",
-    "update_task_relations": true
-  }'
-```
-
-> `WORKERS_BEARER_TOKEN` を設定していない場合は `Authorization` ヘッダ無しでも動作します。
-
-### Mood / メモ更新（メールリンク対応）
-
-- **エンドポイント**: `POST /ingest/mood-notes`
-- **用途**: メール受信側（Pythonなど）から本文/リンク情報を渡して、当日ページの `Mood` とページ本文（子ブロック）にメモを追記します。
-- **認証**: `Authorization: Bearer <WORKERS_BEARER_TOKEN>`
-- **date** 未指定時はJSTの今日が使われます。
-- **mode** は `append` (デフォルト) / `replace`。
-- メモはDaily_Logページの子ブロックに 📝 アイコンのCalloutとして保存されます。
-- `source_url` がある場合はメモ末尾に `参照: <url>` 形式で追記します。
-
-リクエスト例（Pythonメール受信側がHTTP POSTする想定）:
-
-```json
-{
-  "date": "YYYY-MM-DD",
-  "mood": "★★★",
-  "notes": "メール本文の抜粋",
-  "mode": "append",
-  "source_url": "https://example.com/mail-link"
-}
-```
-
-#### curlでの再現例
-
-```bash
-curl -X POST "https://<worker>.workers.dev/ingest/mood-notes" \
-  -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mood": "★★★",
-    "notes": "test",
-    "mode": "append",
-    "source_url": "https://example.com/mail-link"
-  }'
-```
-
-### Mood / Notes メールリンク（confirm → execute）
-
-- **confirm**: `GET /confirm/mood-notes?date=YYYY-MM-DD&token=...`
-  - 確認ページのみ表示（更新はしない）
-- **execute**: `POST /execute/mood-notes`
-  - `date` / `token` / `mood(1..5)` / `notes` / `mode` を受け取り、Notion更新
-  - 署名トークンの `exp` が切れていれば拒否
-
-#### 動作確認手順
-
-1. `confirm_url` をブラウザで開き、更新されないことを確認する。
-2. Moodボタン or Notes送信を実行し、Notionが更新されることを確認する。
-3. `exp` を過ぎたトークンでアクセスし、拒否されることを確認する。
-
-> ターミナルを使わない場合は Postman / Hoppscotch で `POST` を選び、`Authorization` ヘッダと上記JSONを設定して送信してください。
-
-### Health condition → Daily_Log 転記
-
-- **検索条件**: Health condition の `Date` が `target_date (YYYY-MM-DD, JST)` と一致するページ
-  - `Source` が `healthkit` の場合のみ対象（`HEALTH_SOURCE_VALUE` で変更可）
-- **0件ならスキップ**（`ok: true` を返し、Phase A 全体は継続）
-- **2件以上なら `created_time` が最新の1件を採用**
-- **Daily_Logへの更新は栄養/体重/食事写真のみ**
-  - `Protein` / `Fat` / `Carb` / `Kcal` / `Weight` / `Meal Photos`
-  - **`Source` は既存値を維持**（`automation` 判定を壊さないため上書きしない）
-  - メモはページ本文（子ブロック）へ追記し、Daily_Logのプロパティは更新しない
-
-> Daily_Log側に対象プロパティが無い場合は **警告ログを出してスキップ** します。
-
-## Python
-
-- Phase A (Ingest):
-  - `/execute/api/daily_log/ensure` で Daily_Log ページを先に用意（Tasks取得とは完全分離）
-  - `/api/tasks/closed` で昨日のDone/Dropを取得し、SummaryText/Htmlを生成
-  - `/execute/api/daily_log/upsert` にPOSTしてDaily_Logへ保存
-  - `/execute/api/daily_log/ingest_health` でHealth conditionをDaily_Logに転記
-- Phase B (Publish):
-  - `/api/daily_log` でDaily_LogのSummaryを読み取り、メール送信
-  - Tasks/Inboxなどは再取得しない（Daily_Logのみが情報源）
-- メール受信（任意）:
-  - 受信側プロセスから `/ingest/mood-notes` にPOSTして Mood / メモをページ本文へ追記
-- HTMLメール（multipart/alternative）で text/plain と text/html を送信
-- `MAIL_TO` はカンマ区切りで複数対応
-- SMTP送信に失敗しても処理は継続（ログにエラーを出力）
-- HTML本文はインラインCSS中心でレンダリング（Gmail/iPhoneの崩れ対策）
-- Notionに `Diary` / `Expenses total` / `Location summary` / `Mood` / `Weight` を追加すると、
-  Daily Logの値がメールのSummaryセクションに自動反映されます（未入力は “—” 表示）
-
-## GitHub Actions
-
-- 実行タイミング:
-  - Phase A: JST 01:00（UTC 16:00）に `ingest_daily_log.yml` を直接スケジュール実行
-  - Phase B: JST 07:00（UTC 22:00）に `publish_daily_mail.yml` を直接スケジュール実行
-  - 手動実行: Phase A / Phase B それぞれのワークフローを `workflow_dispatch` で実行
-- ワークフロー:
-  - `Daily Notion Diary - Phase A (Ingest)` → `.github/workflows/ingest_daily_log.yml`
-  - `Daily Notion Diary - Phase B (Publish)` → `.github/workflows/publish_daily_mail.yml`
-  - `Deploy Cloudflare Workers` → `.github/workflows/deploy_workers.yml`
-- Schedulerを廃止して **run増殖が発生しない** 構成にしています（毎日2回の定期実行のみ）。
-- Secrets:
-  - `MAIL_FROM`
-  - `MAIL_TO`
-  - `GMAIL_APP_PASSWORD`
-  - `INBOX_JSON_URL`
-  - `TASKS_JSON_URL`
-  - `TASKS_CLOSED_URL`
-  - `DAILY_LOG_UPSERT_URL`
-  - `WORKERS_BEARER_TOKEN` (任意)
-  - `PUBLIC_BASE_URL` (メール用confirmリンク)
-  - `MAIL_LINK_SECRET` (メールリンク署名用)
-  - `CF_API_TOKEN` (Workersデプロイ用)
-  - `CF_ACCOUNT_ID` (Workersデプロイ用)
-
-`INBOX_JSON_URL`/`TASKS_JSON_URL`/`TASKS_CLOSED_URL`/`DAILY_LOG_UPSERT_URL` はWorkersのURLをセットしてください。
-`PUBLIC_BASE_URL` は `https://<worker>.workers.dev` のように公開URLのベースを指定します。
-`MAIL_LINK_SECRET` はWorkers側の `MAIL_LINK_SECRET` と同じ値を使います。
-Notionトークン/DB IDは**GitHub Secretsに入れず**、Cloudflare側のSecretsのみを使用します。
-
-### GitHub Actionsで使うWorkers URLの例
-
-- `INBOX_JSON_URL = https://<worker>.workers.dev/api/inbox`
-- `TASKS_JSON_URL = https://<worker>.workers.dev/api/tasks`
-- `TASKS_CLOSED_URL = https://<worker>.workers.dev/api/tasks/closed`
-- `DAILY_LOG_UPSERT_URL = https://<worker>.workers.dev/execute/api/daily_log/upsert`
-- `DAILY_LOG_UPSERT_URL` と同じホストで以下を使用します:
-  - `/execute/api/daily_log/ensure`
-  - `/execute/api/daily_log/ingest_health`
-  - `/api/daily_log`
-- `WORKERS_BEARER_TOKEN` は任意ですが、有効化する場合は **Cloudflare側のVariables/Secretsにも同じ値** を入れてください。
-
-## 手動実行
-
-### GitHub Actions から実行する場合
-
-1. GitHub → Actions を開く
-2. `Daily Notion Diary - Phase A (Ingest)` または `Daily Notion Diary - Phase B (Publish)` を選択
-3. **Run workflow** から `workflow_dispatch` を実行
-
-### ローカルで実行する場合
-
-```bash
-python scripts/daily_job.py --phase ingest
-python scripts/daily_job.py --phase publish
-python scripts/daily_job.py --phase all
-```
-
-## ファイル間の連関（どのファイルが何を呼ぶか）
-
-- `.github/workflows/ingest_daily_log.yml` → `scripts/daily_job.py --phase ingest`
-- `scripts/daily_job.py` → `ingest/ensure_daily_log_page.py`
-- `scripts/daily_job.py` → `ingest/ingest_sources.py` → `connectors/tasks.py`
-- `scripts/daily_job.py` → `ingest/ingest_sources.py` → `connectors/health.py`
-- `.github/workflows/publish_daily_mail.yml` → `scripts/daily_job.py --phase publish`
-- `scripts/daily_job.py` → `publish/read_daily_log.py` → `publish/render_mail.py` → `publish/send_mail.py`
-
-## コネクタ追加手順
-
-1. `connectors/` に新しいファイルを追加する（例: `connectors/weather.py`）。
-2. そのコネクタに以下のIFを実装する:
-   - `id: str`
-   - `fetch(target_date) -> result`
-   - `render(result) -> { summary_blocks, raw_payload }`
-3. `ingest/ingest_sources.py` の `connectors = [...]` に追加するだけでOK。
-
-## トラブルシュート
-
-- **Notion rich_text 2000文字制限**  
-  long textは自動で分割保存します。巨大JSONはプロパティではなくページ本文に保存してください。
-- **PublishがDaily_Logを見つけられない**  
-  対象日のDaily_Logが無い場合は送信をスキップし、ログに理由を残して正常終了します。
-
-## メール送信の設定（初心者向け）
-
-必要な環境変数（GitHub Actions Secrets）:
-
-- `MAIL_FROM`: 送信元メールアドレス（Gmail）
-- `MAIL_TO`: 送信先（カンマ区切りで複数可）
-- `GMAIL_APP_PASSWORD`: Gmailのアプリパスワード
-- `INBOX_JSON_URL`
-- `TASKS_JSON_URL`
-- `TASKS_CLOSED_URL`
-- `DAILY_LOG_UPSERT_URL`
-- `WORKERS_BEARER_TOKEN`（任意）
-- `PUBLIC_BASE_URL`（メール用のconfirmリンク生成に使用）
-- `MAIL_LINK_SECRET`（メールリンク署名用）
-
-## HTMLメールの崩れを防ぐチェックリスト
-
-1. **multipart/alternative になっているか**
-   - `text/plain` と `text/html` の両方が含まれていること
-2. **HTMLがエスケープされていないか**
-   - `&lt;div&gt;` のような表示になっている場合はエスケープされている可能性
-3. **charsetがUTF-8か**
-   - `Content-Type: text/html; charset=utf-8` になっているか
-4. **CSSはインラインのみか**
-   - Gmail/iPhoneメールで崩れないために `style=""` を使用
-5. **styleタグやflexに依存していないか**
-   - Gmailは `<style>` を削ることがあるためインライン推奨
-   - flexは最小限にしてtableレイアウト併用
-
-## MIME出力の簡易テスト
-
-multipart/alternative になっているか確認できます:
-
-```bash
-python scripts/test_email_mime.py
-```
-
-## まず最初に必ずやる設定（初心者向け）
-
-> **この項目を終えてから** 次の「セットアップ手順（概要）」に進んでください。
-
-1. **Notionの統合（Integration）を作成**
-   - Notionの「設定とメンバー」→「インテグレーション」→「新規作成」。
-   - 生成された **Internal Integration Token** を控える（後で `NOTION_TOKEN` として使います）。
-2. **Notionデータベースを共有**
-   - `Inbox / Tasks / Daily_Log` の各DBを開き、右上の「共有」から **作成したIntegrationを招待**。
-   - これをしないとNotion APIがDBを読めません。
-3. **Notion DB ID を取得**
-   - 各DBのURLを開き、URL内の長いIDを控える（`INBOX_DB_ID` / `TASK_DB_ID` / `DAILY_LOG_DB_ID`）。
-4. **メール送信に使うGmailアプリパスワードを作成**
-   - Googleアカウントで **2段階認証を有効化** → アプリパスワードを生成。
-   - 生成したパスワードを控える（後で `GMAIL_APP_PASSWORD` として使います）。
-5. **Cloudflare WorkersのURLを確認**
-   - Workersをデプロイ後、 `/api/tasks/closed` などにアクセスできるURLを控える。
-   - 後で `INBOX_JSON_URL` / `TASKS_JSON_URL` / `TASKS_CLOSED_URL` / `DAILY_LOG_UPSERT_URL` に使います。
-
-## セットアップ手順（概要）
-
-1. **Workersデプロイ**
-   - GitHub Actionsの **Deploy Cloudflare Workers** を実行
-   - Cloudflare WorkersのVariables/Secretsを設定
-2. **Notion DBプロパティ確認**
-   - 上記の必須プロパティが完全一致で存在することを確認
-3. **GitHub Actions Secrets設定**
-   - メール/WorkersのURLをSecretsに登録
-4. **テスト**
-   - `workflow_dispatch` で手動実行（Phase A / Phase B をそれぞれ実行）
-   - `/confirm/...` で確認 → `/execute/...` で更新が実行されることを確認
-
-## 動作確認手順（昨日Done/Drop）
-
-1. Notionで「昨日」の日付を `Done date` に入れたタスクを1件作る
-2. GitHub Actionsの `workflow_dispatch` で手動実行
-3. Phase A 実行後に `GET /api/daily_log?date=YYYY-MM-DD` が返ることを確認
-4. Phase B 実行でメールに「昨日完了したこと」が出ることを確認
-
-## 動作確認手順（Health condition → Daily_Log）
-
-1. Health condition DB に `Date = 昨日` のレコードを1件作成（`Source = healthkit`）
-2. GitHub Actions の `workflow_dispatch` で Phase A (Ingest) を実行
-3. Workersログで `Health ingest: ...` が出ることを確認
-4. Daily_Log の同日ページに `Protein/Fat/Carb/Kcal/Weight/Meal Photos` が転記されることを確認
-
-## Daily Log に Done/Drop タスクを Relation で記録する設定
-
-1. **Tasks DB の設定**
-   - `Status` に `Do` / `Done` / `Drop` を用意（名称を変える場合は Workers の `TASK_STATUS_DO` / `TASK_STATUS_DONE` / `TASK_STATUS_DROPPED` を変更）。
-   - `Done date` / `Drop date` (date) を追加し、完了日/取り下げ日を入れる。
-2. **Daily_Log DB の設定**
-   - `Date` (date) を作成し、日付を保存する。
-   - `Done Tasks` / `Drop Tasks` を Tasks DB への Relation で作成。
-   - `Done Count` / `Drop Count` を Rollup で作成（`名前` を Count all）。
-3. **実行**
-   - Phase A (Ingest) が、前日分の `Done date` / `Drop date` を集計して当日の Daily Log に Relation をセットします。
-   - `Done date` / `Drop date` が空のタスクは除外されます。
-
-## Location summary（日記風）自動生成（Notion Location_Log + GPT）
-
-Daily_Log の `Location summary` を、Notion の `Location_Log` DB と GPT API を使って毎朝自動更新できます。
-
-### 何をする機能か
-
-- 実行時刻（想定: 当日 06:00 JST）から、集計窓を **[前日05:00, 当日05:00)** で固定計算します。
-- `Location_Log` DB から上記窓のログを全件取得し、同一地点の連続ログをセグメント化します。
-- GPT に「推測禁止」の固定プロンプトで要約を作らせ、`Daily_Log` DB の `Location summary` に書き戻します。
-- 日記対象日は以下で決まります。
-  - API payload に `target_date` があればそれを優先
-  - なければ `anchor_end` 日付の前日（通常運用では昨日）
-
-### Notion 連携の設定手順（初心者向け）
-
-1. Notion Integration を作成
-   - Notion の **Settings & members → Integrations → New integration** で作成します。
-   - 発行された Internal Integration Token を控えます（`NOTION_TOKEN`）。
-2. DB を Integration に共有
-   - `Daily_Log` DB と `Location_Log` DB を開き、右上 **Share** から作成した Integration を招待します。
-3. DB ID を取得
-   - DBページ URL の `https://www.notion.so/<workspace>/<DB_ID>?v=...` の `<DB_ID>` 部分を使います。
-   - `DAILY_LOG_DB_ID` と `LOCATION_LOG_DB_ID` に設定します。
-
-### OpenAI API の設定手順（初心者向け）
-
-1. OpenAI ダッシュボードで API Key を作成
-   - `OPENAI_API_KEY` として保管します。
-2. 実行環境に Secret 登録
-   - GitHub Actions: **Settings → Secrets and variables → Actions** に登録
-   - Cloudflare Workers: **Workers → Settings → Variables and Secrets** に登録
-3. モデル指定（任意）
-   - 未指定時は `OPENAI_MODEL=gpt-4.1-mini` を使用します。
-
-### 追加で必要な環境変数
-
-#### 必須
-
-- `NOTION_TOKEN`
-- `DAILY_LOG_DB_ID`
+- `INBOX_DB_ID`
+- `HEALTH_DB_ID`
+- `EXPENSES_DB_ID`
 - `LOCATION_LOG_DB_ID`
-- `OPENAI_API_KEY`
 
-#### 任意（未設定時はデフォルト）
+既存のプロパティ名（`Date`, `Target Date`, `Activity Summary`, `Done Tasks`, `Drop Tasks` など）をそのまま利用します。
 
-- 空文字（`""`）または空白のみの値は、未設定として扱われます。
+## 5. 環境変数一覧
 
-- `TZ` (`Asia/Tokyo`)
-- `DAILY_LOG_DATE_PROP` (`Date`)
-- `DAILY_LOG_LOCATION_SUMMARY_PROP` (`Location summary`)
-- `LOCATION_LOG_TIME_PROP` (`Time`)
-- `LOCATION_LOG_PLACE_PROP` (`Place`)
-- `LOCATION_LOG_LAT_PROP` (`Latitude (raw)`)
-- `LOCATION_LOG_LON_PROP` (`Longitude (raw)`)
-- `LOCATION_LOG_SOURCE_PROP` (`Source`)
-- `OPENAI_MODEL` (`gpt-4.1-mini`)
-- `OPENAI_BASE_URL` (`https://api.openai.com/v1`)
-- `DRY_RUN` (`false`)
-- `LOCATION_ROUND_DECIMALS` (`4`)
-- `TIME_BUCKET_MINUTES` (`30`)
-- `WINDOW_START_HOUR` (`5`)
+既存設定をそのまま利用します。代表例:
+- 認証/接続: `NOTION_TOKEN`
+- DB: `INBOX_DB_ID`, `TASK_DB_ID`, `DAILY_LOG_DB_ID`, `HEALTH_DB_ID`, `EXPENSES_DB_ID`, `LOCATION_LOG_DB_ID`
+- Tasks関連: `TASK_STATUS_PROPERTY_NAME`, `TASK_DONE_DATE_PROPERTY_NAME`, `TASK_DROP_DATE_PROPERTY_NAME`
+- Health関連: `HEALTH_*_PROPERTY_NAME`
+- Daily Log関連: `DAILY_LOG_*_PROPERTY_NAME`
+- Expenses関連: `EXPENSES_*_PROPERTY_NAME`, `EXPENSES_DAY_START_HOUR`
 
-`NOTION_TOKEN` / `LOCATION_LOG_DB_ID` / `DAILY_LOG_DB_ID` / `OPENAI_API_KEY` は必須です。空文字の場合も未設定扱いとなり、`ConfigError` で失敗します。
+## 6. 拡張手順
 
-### 実行方法
+1. 純粋計算ロジックは `domain/` へ追加
+2. ユースケースは `application/` へ追加
+3. Notion連携は `infrastructure/notion/client.ts` のラッパー経由で利用
+4. `index.ts` はルーティングとユースケース呼び出しのみに保つ
 
-- Location summary 単体実行（Workers endpoint）
-  - `POST /execute/api/daily_log/ingest_location`
-  - body 例: `{ "target_date": "2026-01-10" }`
-- 既存の Daily Log 一括 ingest でも実行
-  - `POST /execute/api/daily_log/ingest_daily_log`
-  - Health / Photos に加えて Location summary も更新されます。
-- Python の日次ジョブ（`scripts/daily_job.py --phase ingest`）にも Location ingest が組み込まれています。
+## 7. よく壊れるポイント
 
-### 時間窓と対象日の対応
+- Notionプロパティ名の不一致
+- JST境界（`start <= date < end`）
+- `YYYY-MM-DD` をUTC変換してしまう日付ズレ
+- relation型更新時のID配列フォーマット崩れ
 
-- 集計窓: `anchor_start <= log_time < anchor_end`
-- `anchor_end`: 実行時点から見た直近の `05:00 JST`
-- `anchor_start`: `anchor_end - 24時間`
-- 日記対象日:
-  - payload の `target_date` があればそれを使用
-  - 無ければ `anchor_end` の前日
+## 8. 実行フロー図
 
-例: 2026-01-11 06:00 JST 実行時
-- 窓: 2026-01-10 05:00:00 ～ 2026-01-11 05:00:00（end は排他）
-- 日記対象日: 2026-01-10
+```text
+HTTP endpoint
+  ↓
+index.ts
+  ↓
+application/*
+  ↓
+domain/*
+  ↓
+infrastructure/notion/client.ts
+  ↓
+Notion API
+```
+
+## テスト
+
+```bash
+cd workers
+npm test
+```

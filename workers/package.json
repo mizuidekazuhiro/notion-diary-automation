@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
-    "test": "node --experimental-specifier-resolution=node --loader ts-node/esm src/meal_summary.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/daily_log_ingest.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/location_summary.test.ts"
+    "test": "node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/meal_summary.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/daily_log_ingest.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/location_summary.test.ts"
   },
   "devDependencies": {
     "ts-node": "^10.9.2",
