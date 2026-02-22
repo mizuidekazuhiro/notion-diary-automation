@@ -1349,7 +1349,7 @@ function getPlainTextFromTitle(property: Record<string, any> | undefined): strin
 }
 
 function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
-  const trimmedNotes = notes.trim();
+  const trimmedNotes = stripTimePrefix(notes).trim();
   const timestamp = getJstTimeString();
   let entry = "";
   if (trimmedNotes) {
@@ -1364,12 +1364,16 @@ function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
   return entry;
 }
 
+function stripTimePrefix(text: string): string {
+  return text.replace(/^\[\d{2}:\d{2}\]\s*/, "");
+}
+
 function shouldSkipMoodNotesAppend(
   existingText: string,
   notes: string,
   sourceUrl?: string,
 ): boolean {
-  const trimmedNotes = notes.trim();
+  const trimmedNotes = stripTimePrefix(notes).trim();
   if (!existingText) {
     return false;
   }
