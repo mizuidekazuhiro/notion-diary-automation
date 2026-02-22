@@ -1232,16 +1232,6 @@ function getPageTitleFromProperty(
   return titleProp.map((item: { plain_text: string }) => item.plain_text).join("");
 }
 
-function getJstTimeString(date = new Date()): string {
-  const formatter = new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return formatter.format(date);
-}
-
 function createTitleProperty(title: string) {
   return {
     title: [
@@ -1349,13 +1339,10 @@ function getPlainTextFromTitle(property: Record<string, any> | undefined): strin
 }
 
 function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
-  const trimmedNotes = stripTimePrefix(notes).trim();
-  const timestamp = getJstTimeString();
+  const trimmedNotes = notes.trim();
   let entry = "";
   if (trimmedNotes) {
-    entry = `[${timestamp}] ${trimmedNotes}`;
-  } else if (sourceUrl) {
-    entry = `[${timestamp}]`;
+    entry = trimmedNotes;
   }
   if (sourceUrl) {
     const referenceLine = `参照: ${sourceUrl}`;
@@ -1364,16 +1351,12 @@ function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
   return entry;
 }
 
-function stripTimePrefix(text: string): string {
-  return text.replace(/^\[\d{2}:\d{2}\]\s*/, "");
-}
-
 function shouldSkipMoodNotesAppend(
   existingText: string,
   notes: string,
   sourceUrl?: string,
 ): boolean {
-  const trimmedNotes = stripTimePrefix(notes).trim();
+  const trimmedNotes = notes.trim();
   if (!existingText) {
     return false;
   }
