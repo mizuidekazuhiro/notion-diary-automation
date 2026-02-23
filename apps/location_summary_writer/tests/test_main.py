@@ -13,6 +13,7 @@ from main import (
     MovementSegment,
     StaySession,
     TaskEvent,
+    build_prompt_db_query,
     build_gpt_payload,
     compute_window,
     generate_location_summary,
@@ -209,6 +210,28 @@ class MainTests(unittest.TestCase):
         self.assertEqual(len(expenses), 2)
         self.assertEqual(expenses[0].display_time, "19:30")
         self.assertEqual(expenses[1].display_time, "（時刻不明）")
+
+    def test_build_prompt_db_query_does_not_filter_variant(self):
+        cfg = Config(
+            notion_token="n",
+            stay_sessions_db_id="s",
+            task_db_id="t",
+            daily_log_db_id="d",
+            prompt_target="location_summary_writer",
+            prompt_variant="experimental",
+            prompt_language="ja",
+            prompt_time_style="24h",
+        )
+
+        query = build_prompt_db_query(cfg, "system")
+        filters = query["filter"]["and"]
+        filter_props = {item["property"] for item in filters}
+
+        self.assertIn("Target", filter_props)
+        self.assertIn("Prompt Type", filter_props)
+        self.assertIn("Approved", filter_props)
+        self.assertIn("Is Active", filter_props)
+        self.assertNotIn("Variant", filter_props)
 
     @patch.dict(
         os.environ,
