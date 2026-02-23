@@ -47,6 +47,11 @@ class Config:
     daily_log_gpt_location_summary_prop: str = "Location summary (GPT)"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    prompt_db_id: str = ""
+    prompt_target: str = "location_summary_writer"
+    prompt_variant: str = "default"
+    prompt_language: str = "ja"
+    prompt_time_style: str = ""
 
     dry_run: bool = False
 
@@ -165,6 +170,11 @@ def load_config() -> Config:
         ),
         openai_api_key=get_env_str("OPENAI_API_KEY", default=""),
         openai_model=get_env_str("OPENAI_MODEL", default="gpt-4o-mini"),
+        prompt_db_id=get_env_str("PROMPT_DB_ID", default=""),
+        prompt_target=get_env_str("PROMPT_TARGET", default="location_summary_writer"),
+        prompt_variant=get_env_str("PROMPT_VARIANT", default="default"),
+        prompt_language=get_env_str("PROMPT_LANGUAGE", default="ja"),
+        prompt_time_style=get_env_str("PROMPT_TIME_STYLE", default=""),
         dry_run=get_env_bool("DRY_RUN", default=False),
     )
 
@@ -593,7 +603,65 @@ def build_gpt_payload(
         ],
     }
 
-def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -> str:
+
+def build_prompt_db_query(cfg: Config, prompt_type: str) -> dict[str, Any]:
+    filters: list[dict[str, Any]] = [
+        {"property": "Target", "select": {"equals": cfg.prompt_target}},
+        {"property": "Prompt Type", "select": {"equals": prompt_type}},
+        {"property": "Approved", "checkbox": {"equals": True}},
+        {"property": "Is Active", "checkbox": {"equals": True}},
+    ]
+    if cfg.prompt_language:
+        filters.append({"property": "Language", "select": {"equals": cfg.prompt_language}})
+    if cfg.prompt_variant:
+        filters.append({"property": "Variant", "select": {"equals": cfg.prompt_variant}})
+    if cfg.prompt_time_style:
+        filters.append({"property": "Time Style", "select": {"equals": cfg.prompt_time_style}})
+
+    return {
+        "filter": {"and": filters},
+        "sorts": [
+            {"property": "Priority", "direction": "descending"},
+            {"timestamp": "last_edited_time", "direction": "descending"},
+        ],
+        "page_size": 10,
+    }
+
+
+def fetch_prompt_from_notion(notion: NotionClient, cfg: Config, prompt_type: str) -> str | None:
+    if not cfg.prompt_db_id:
+        return None
+
+    try:
+        query = build_prompt_db_query(cfg, prompt_type)
+        pages = notion.query_database(cfg.prompt_db_id, query)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.info("prompt_fetch: type=%s source=fallback reason=notion_error error=%s", prompt_type, type(exc).__name__)
+        return None
+
+    LOGGER.info(
+        "prompt_fetch: type=%s candidates=%s target=%s variant=%s language=%s time_style=%s",
+        prompt_type,
+        len(pages),
+        cfg.prompt_target,
+        cfg.prompt_variant,
+        cfg.prompt_language,
+        cfg.prompt_time_style or "(none)",
+    )
+    if len(pages) > 1:
+        LOGGER.info("prompt_fetch: type=%s selection_rule=highest_priority_then_latest_edited", prompt_type)
+
+    for idx, page in enumerate(pages):
+        text = rich_text_plain(page.get("properties", {}).get("Content"))
+        if text.strip():
+            LOGGER.info("prompt_fetch: type=%s source=notion selected_index=%s", prompt_type, idx)
+            return text
+
+    LOGGER.info("prompt_fetch: type=%s source=fallback reason=no_content", prompt_type)
+    return None
+
+
+def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str, notion: NotionClient, cfg: Config) -> str:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for GPT diary generation")
 
@@ -620,6 +688,26 @@ def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -
         "30分未満の滞在は原則記載しない（移動として自然にまとめる場合のみ可）。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
+
+    LOGGER.info(
+        "prompt_db: enabled=%s target=%s variant=%s time_style=%s",
+        bool(cfg.prompt_db_id),
+        cfg.prompt_target,
+        cfg.prompt_variant,
+        cfg.prompt_time_style or "(none)",
+    )
+    notion_system_prompt = fetch_prompt_from_notion(notion, cfg, "system") if cfg.prompt_db_id else None
+    notion_user_prompt = fetch_prompt_from_notion(notion, cfg, "user") if cfg.prompt_db_id else None
+    if notion_system_prompt:
+        system_prompt = notion_system_prompt
+    if notion_user_prompt:
+        user_prompt = notion_user_prompt
+        if "{payload_json}" in user_prompt:
+            user_prompt = user_prompt.replace("{payload_json}", json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            user_prompt = f"{user_prompt}\n\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    LOGGER.info("prompt_source: type=system source=%s", "notion" if notion_system_prompt else "fallback")
+    LOGGER.info("prompt_source: type=user source=%s", "notion" if notion_user_prompt else "fallback")
 
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -682,6 +770,8 @@ def generate_location_summary(
     expenses: list[ExpenseEvent],
     openai_api_key: str,
     openai_model: str,
+    notion: NotionClient,
+    cfg: Config,
 ) -> str:
     main_sessions, short_sessions = partition_sessions(sessions, min_duration_min=30)
     movement_segments = classify_movement_segments(short_sessions, main_sessions)
@@ -695,7 +785,7 @@ def generate_location_summary(
         matched_tasks=matched_tasks,
         expenses=expenses,
     )
-    return generate_diary_from_gpt(payload, openai_api_key, openai_model)
+    return generate_diary_from_gpt(payload, openai_api_key, openai_model, notion, cfg)
 
 
 def find_daily_log_page(notion: NotionClient, cfg: Config, diary_date: str) -> dict[str, Any] | None:
@@ -806,6 +896,8 @@ def run() -> None:
         expenses,
         cfg.openai_api_key,
         cfg.openai_model,
+        notion,
+        cfg,
     )
     LOGGER.info("fetched sessions=%s tasks=%s expenses=%s", len(sessions), len(tasks), len(expenses))
 
