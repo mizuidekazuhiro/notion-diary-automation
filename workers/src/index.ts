@@ -122,7 +122,6 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Activity Summary", type: "rich_text" },
     { name: "Diary", type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
-    { name: "Location summary", type: "rich_text" },
     { name: "Meal summary", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: "Mood", type: "select" },
@@ -1181,10 +1180,6 @@ type LocationPropertyNames = {
 
 function getDailyLogDatePropertyName(env: Env): string {
   return env.DAILY_LOG_DATE_PROP || "Date";
-}
-
-function getDailyLogLocationSummaryPropertyName(env: Env): string {
-  return env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary";
 }
 
 function getLocationPropertyNames(env: Env): LocationPropertyNames {
@@ -2501,7 +2496,6 @@ async function handleDailyLogLocationIngest(
   const bucketMinutes = parseIntEnv(env.TIME_BUCKET_MINUTES, 5);
   const locationProp = getLocationPropertyNames(env);
   const dailyLogDateProp = getDailyLogDatePropertyName(env);
-  const dailyLogLocationSummaryProp = getDailyLogLocationSummaryPropertyName(env);
 
   const dataQualityNotes: string[] = [];
   const locationRows = await queryDatabaseAllWithBody(env, env.LOCATION_LOG_DB_ID, {
@@ -2561,7 +2555,7 @@ async function handleDailyLogLocationIngest(
     const upsertResult = await upsertDailyLogByTargetDate(
       env,
       diaryDate,
-      { [dailyLogLocationSummaryProp]: createRichTextProperty(summary.location_summary_text) },
+      {},
       "handleDailyLogLocationIngest",
     );
     if ("error" in upsertResult) {
@@ -2587,18 +2581,6 @@ async function handleDailyLogLocationIngest(
       }),
       { headers: jsonHeaders },
     );
-  }
-
-  const patchResponse = await notionFetch(env, `/pages/${pageId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      properties: {
-        [dailyLogLocationSummaryProp]: createRichTextProperty(summary.location_summary_text),
-      },
-    }),
-  });
-  if (!patchResponse.ok) {
-    return notionErrorResponse(patchResponse, "handleDailyLogLocationIngest.patchDailyLog");
   }
 
   return new Response(

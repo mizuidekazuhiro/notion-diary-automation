@@ -64,6 +64,9 @@ Daily Log DB へ update/create
 
 既存のプロパティ名（`Date`, `Target Date`, `Activity Summary`, `Done Tasks`, `Drop Tasks` など）をそのまま利用します。
 
+> 補足: `Location summary` は別システムが更新する項目です。本リポジトリの ingest/ensure/upsert では
+> `Location summary` を必須プロパティとして要求せず、値の更新もしません。
+
 ## 5. 環境変数一覧
 
 既存設定をそのまま利用します。代表例:

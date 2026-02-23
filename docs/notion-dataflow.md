@@ -45,7 +45,7 @@ Daily Log DB
 | Daily Log | `Diary` | - | ✅ | `workers/src/index.ts` |
 | Daily Log | `Done Tasks` | - | ✅ | `workers/src/application/daily_log_task_relations.ts` |
 | Daily Log | `Drop Tasks` | - | ✅ | `workers/src/application/daily_log_task_relations.ts` |
-| Daily Log | `Location summary` | - | ✅ | `workers/src/index.ts` |
+| Daily Log | `Location summary` | - | - | 別システム担当（本リポジトリでは更新しない） |
 | Daily Log | `Meal summary` | - | ✅ | `workers/src/index.ts` |
 | Daily Log | `Expenses total` | - | ✅ | `workers/src/index.ts` |
 | Daily Log | `Expenses` | - | ✅ | `workers/src/index.ts` |
