@@ -23,6 +23,21 @@ class Config:
     stay_sessions_db_id: str
     task_db_id: str
     daily_log_db_id: str
+    expenses_db_id: str = ""
+
+    task_event_date_prop: str = "Event Date"
+    task_status_prop: str = "Status"
+    task_title_prop: str = ""
+
+    expense_date_prop: str = "Date"
+    expense_received_at_prop: str = "Received At"
+    expense_merchant_prop: str = "Merchant"
+    expense_amount_prop: str = "Amount"
+    expense_currency_prop: str = "Currency"
+    expense_card_prop: str = "Card"
+    expense_source_prop: str = "Source"
+    expense_status_prop: str = "Status"
+    expense_include_keywords: str = "焼肉,レストラン,居酒屋,カフェ,バー,食,ANA Pay"
 
     tz: str = "Asia/Tokyo"
     window_start_hour: int = 5
@@ -49,6 +64,7 @@ class StaySession:
 class TaskEvent:
     title: str
     event_time: datetime
+    status: str = ""
 
 
 @dataclass
@@ -62,6 +78,19 @@ class MovementSegment:
     start: datetime
     end: datetime
     display_name: str
+
+
+@dataclass
+class ExpenseEvent:
+    merchant: str
+    event_time: datetime | None
+    display_time: str
+    amount: float | None
+    currency: str
+    card: str
+    source: str
+    status: str
+    is_keyword_match: bool
 
 
 class NotionClient:
@@ -110,6 +139,21 @@ def load_config() -> Config:
         stay_sessions_db_id=get_env_str("STAY_SESSIONS_DB_ID", required=True),
         task_db_id=get_env_str("TASK_DB_ID", required=True),
         daily_log_db_id=get_env_str("DAILY_LOG_DB_ID", required=True),
+        expenses_db_id=get_env_str("EXPENSES_DB_ID", default=""),
+        task_event_date_prop=get_env_str("TASK_EVENT_DATE_PROP", default="Event Date"),
+        task_status_prop=get_env_str("TASK_STATUS_PROP", default="Status"),
+        task_title_prop=get_env_str("TASK_TITLE_PROP", default=""),
+        expense_date_prop=get_env_str("EXPENSE_DATE_PROP", default="Date"),
+        expense_received_at_prop=get_env_str("EXPENSE_RECEIVED_AT_PROP", default="Received At"),
+        expense_merchant_prop=get_env_str("EXPENSE_MERCHANT_PROP", default="Merchant"),
+        expense_amount_prop=get_env_str("EXPENSE_AMOUNT_PROP", default="Amount"),
+        expense_currency_prop=get_env_str("EXPENSE_CURRENCY_PROP", default="Currency"),
+        expense_card_prop=get_env_str("EXPENSE_CARD_PROP", default="Card"),
+        expense_source_prop=get_env_str("EXPENSE_SOURCE_PROP", default="Source"),
+        expense_status_prop=get_env_str("EXPENSE_STATUS_PROP", default="Status"),
+        expense_include_keywords=get_env_str(
+            "EXPENSE_INCLUDE_KEYWORDS", default="焼肉,レストラン,居酒屋,カフェ,バー,食,ANA Pay"
+        ),
         tz=get_env_str("TZ", default="Asia/Tokyo"),
         window_start_hour=get_env_int("WINDOW_START_HOUR", default=5, min=0, max=23),
         daily_log_date_prop=get_env_str("DAILY_LOG_DATE_PROP", default="Date"),
@@ -288,18 +332,37 @@ def merge_sessions(sessions: list[StaySession], gap_minutes: int = 10) -> list[S
 
 
 def parse_tasks(pages: list[dict[str, Any]], window_start: datetime, window_end: datetime) -> list[TaskEvent]:
+    return parse_tasks_with_props(
+        pages,
+        window_start,
+        window_end,
+        event_date_prop="Event Date",
+        status_prop="Status",
+        title_prop="",
+    )
+
+
+def parse_tasks_with_props(
+    pages: list[dict[str, Any]],
+    window_start: datetime,
+    window_end: datetime,
+    event_date_prop: str,
+    status_prop: str,
+    title_prop: str,
+) -> list[TaskEvent]:
     tasks: list[TaskEvent] = []
     for page in pages:
         props = page.get("properties", {})
-        date_prop = props.get("Event Date", {})
+        date_prop = props.get(event_date_prop, {})
         date_obj = date_prop.get("date") if date_prop.get("type") == "date" else None
         if not date_obj or not date_obj.get("start"):
             continue
         event_time = parse_datetime(date_obj["start"])
-        if not (window_start <= event_time <= window_end):
+        if not (window_start <= event_time < window_end):
             continue
-        title = extract_task_title(props)
-        tasks.append(TaskEvent(title=title, event_time=event_time))
+        title = extract_task_title(props, title_prop)
+        status = rich_text_plain(props.get(status_prop, {}))
+        tasks.append(TaskEvent(title=title, event_time=event_time, status=status))
 
     tasks.sort(key=lambda x: x.event_time)
     return tasks
@@ -349,7 +412,11 @@ def match_tasks(tasks: list[TaskEvent], sessions: list[StaySession]) -> list[Mat
     return matched
 
 
-def extract_task_title(props: dict[str, Any]) -> str:
+def extract_task_title(props: dict[str, Any], title_prop: str = "") -> str:
+    if title_prop:
+        title = rich_text_plain(props.get(title_prop, {})).strip()
+        if title:
+            return title
     for value in props.values():
         if isinstance(value, dict) and value.get("type") == "title":
             title = rich_text_plain(value).strip()
@@ -360,6 +427,64 @@ def extract_task_title(props: dict[str, Any]) -> str:
 
 def _fmt_time(dt: datetime) -> str:
     return dt.strftime("%H:%M")
+
+def parse_expenses(
+    pages: list[dict[str, Any]],
+    cfg: Config,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[ExpenseEvent]:
+    keywords = [kw.strip().lower() for kw in cfg.expense_include_keywords.split(",") if kw.strip()]
+    items: list[ExpenseEvent] = []
+    for page in pages:
+        props = page.get("properties", {})
+        received_at_prop = props.get(cfg.expense_received_at_prop, {})
+        date_prop = props.get(cfg.expense_date_prop, {})
+
+        event_time: datetime | None = None
+        display_time = "（時刻不明）"
+
+        received_at_obj = received_at_prop.get("date") if received_at_prop.get("type") == "date" else None
+        date_obj = date_prop.get("date") if date_prop.get("type") == "date" else None
+
+        if received_at_obj and received_at_obj.get("start"):
+            event_time = parse_datetime(received_at_obj["start"])
+            if not (window_start <= event_time < window_end):
+                continue
+            display_time = _fmt_time(event_time)
+        elif date_obj and date_obj.get("start"):
+            expense_date = date_obj["start"][:10]
+            start_date = window_start.astimezone(ZoneInfo(cfg.tz)).date().isoformat()
+            end_date = window_end.astimezone(ZoneInfo(cfg.tz)).date().isoformat()
+            if not (start_date <= expense_date < end_date):
+                continue
+        else:
+            continue
+
+        merchant = rich_text_plain(props.get(cfg.expense_merchant_prop, {})).strip() or extract_task_title(props)
+        amount = parse_number(props.get(cfg.expense_amount_prop, {}))
+        currency = rich_text_plain(props.get(cfg.expense_currency_prop, {})).strip()
+        card = rich_text_plain(props.get(cfg.expense_card_prop, {})).strip()
+        source = rich_text_plain(props.get(cfg.expense_source_prop, {})).strip()
+        status = rich_text_plain(props.get(cfg.expense_status_prop, {})).strip()
+        searchable = " ".join([merchant, extract_task_title(props)]).lower()
+        items.append(
+            ExpenseEvent(
+                merchant=merchant or "名称未設定",
+                event_time=event_time,
+                display_time=display_time,
+                amount=amount,
+                currency=currency,
+                card=card,
+                source=source,
+                status=status,
+                is_keyword_match=any(kw in searchable for kw in keywords),
+            )
+        )
+
+    items.sort(key=lambda x: (0 if x.is_keyword_match else 1, x.event_time or datetime.max.replace(tzinfo=timezone.utc)))
+    return items
+
 
 def partition_sessions(sessions: list[StaySession], min_duration_min: int = 30) -> tuple[list[StaySession], list[StaySession]]:
     main_sessions = [s for s in sessions if s.duration_min >= min_duration_min]
@@ -405,6 +530,7 @@ def build_gpt_payload(
     main_sessions: list[StaySession],
     movement_segments: list[MovementSegment],
     matched_tasks: list[MatchedTask],
+    expenses: list[ExpenseEvent],
 ) -> dict[str, Any]:
     return {
         "date_window": _window_label(window_start, window_end, tz_name),
@@ -430,9 +556,23 @@ def build_gpt_payload(
             {
                 "time": _fmt_time(m.task.event_time),
                 "title": m.task.title,
+                "status": m.task.status,
                 "nearby_location": m.session.display_name if m.session else None,
             }
             for m in matched_tasks
+        ],
+        "expenses": [
+            {
+                "time": e.display_time,
+                "merchant": e.merchant,
+                "amount": e.amount,
+                "currency": e.currency,
+                "card": e.card,
+                "source": e.source,
+                "status": e.status,
+                "keyword_match": e.is_keyword_match,
+            }
+            for e in expenses
         ],
     }
 
@@ -448,7 +588,10 @@ def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -
         "3. 行頭に '-', '•', '・' を使わない。\n"
         "4. 感情・推測・断定を避け、観測可能な事実のみ記述する。\n"
         "5. 最大6文以内に収める。\n"
-        "6. 予定は『◯◯の予定があった』の表現のみ許可する。"
+        "6. 予定は『◯◯の予定があった』の表現のみ許可する。\n"
+        "7. 支出は『◯◯の支出記録がある』の表現のみ許可する。\n"
+        "8. 滞在(main_sessions)を主軸に、events/expensesは根拠としてのみ添える。\n"
+        "9. 住所や場所が細かく揺れる場合は、近接エリアとして簡略化してよい。"
     )
     user_prompt = (
         "以下の行動データをもとに、客観的な記録文を作成してください。\n\n"
@@ -516,6 +659,7 @@ def generate_location_summary(
     tz_name: str,
     sessions: list[StaySession],
     tasks: list[TaskEvent],
+    expenses: list[ExpenseEvent],
     openai_api_key: str,
     openai_model: str,
 ) -> str:
@@ -529,6 +673,7 @@ def generate_location_summary(
         main_sessions=main_sessions,
         movement_segments=movement_segments,
         matched_tasks=matched_tasks,
+        expenses=expenses,
     )
     return generate_diary_from_gpt(payload, openai_api_key, openai_model)
 
@@ -567,8 +712,8 @@ def run() -> None:
     now = datetime.now(timezone.utc)
     window_start, window_end, diary_date = compute_window(now, cfg.tz, cfg.window_start_hour)
 
-    print(f"Window: [{window_start.isoformat()}, {window_end.isoformat()})")
-    print(f"Target diary_date: {diary_date}")
+    LOGGER.info("window=[%s, %s)", window_start.isoformat(), window_end.isoformat())
+    LOGGER.info("target diary_date=%s", diary_date)
 
     notion = NotionClient(cfg.notion_token)
 
@@ -585,38 +730,71 @@ def run() -> None:
     task_query = {
         "filter": {
             "and": [
-                {"property": "Event Date", "date": {"on_or_after": window_start.isoformat()}},
-                {"property": "Event Date", "date": {"on_or_before": window_end.isoformat()}},
+                {"property": cfg.task_event_date_prop, "date": {"on_or_after": window_start.isoformat()}},
+                {"property": cfg.task_event_date_prop, "date": {"before": window_end.isoformat()}},
             ]
         },
-        "sorts": [{"property": "Event Date", "direction": "ascending"}],
+        "sorts": [{"property": cfg.task_event_date_prop, "direction": "ascending"}],
         "page_size": 100,
     }
 
     session_pages = notion.query_database(cfg.stay_sessions_db_id, sessions_query)
     task_pages = notion.query_database(cfg.task_db_id, task_query)
+    expense_pages: list[dict[str, Any]] = []
+    if cfg.expenses_db_id:
+        expense_query = {
+            "filter": {
+                "or": [
+                    {
+                        "and": [
+                            {"property": cfg.expense_received_at_prop, "date": {"on_or_after": window_start.isoformat()}},
+                            {"property": cfg.expense_received_at_prop, "date": {"before": window_end.isoformat()}},
+                        ]
+                    },
+                    {
+                        "and": [
+                            {"property": cfg.expense_received_at_prop, "date": {"is_empty": True}},
+                            {"property": cfg.expense_date_prop, "date": {"on_or_after": window_start.date().isoformat()}},
+                            {"property": cfg.expense_date_prop, "date": {"before": window_end.date().isoformat()}},
+                        ]
+                    },
+                ]
+            },
+            "sorts": [{"property": cfg.expense_received_at_prop, "direction": "ascending"}],
+            "page_size": 100,
+        }
+        expense_pages = notion.query_database(cfg.expenses_db_id, expense_query)
 
     sessions = merge_sessions(parse_stay_sessions(session_pages, window_start, window_end))
-    tasks = parse_tasks(task_pages, window_start, window_end)
+    tasks = parse_tasks_with_props(
+        task_pages,
+        window_start,
+        window_end,
+        event_date_prop=cfg.task_event_date_prop,
+        status_prop=cfg.task_status_prop,
+        title_prop=cfg.task_title_prop,
+    )
+    expenses = parse_expenses(expense_pages, cfg, window_start, window_end) if cfg.expenses_db_id else []
+    main_sessions, _ = partition_sessions(sessions, min_duration_min=30)
+    LOGGER.info("payload_counts: main_sessions=%s events=%s expenses=%s", len(main_sessions), len(tasks), len(expenses))
     summary_text = generate_location_summary(
         window_start,
         window_end,
         cfg.tz,
         sessions,
         tasks,
+        expenses,
         cfg.openai_api_key,
         cfg.openai_model,
     )
-    print(f"Fetched sessions={len(sessions)} tasks={len(tasks)}")
+    LOGGER.info("fetched sessions=%s tasks=%s expenses=%s", len(sessions), len(tasks), len(expenses))
 
     page = find_daily_log_page(notion, cfg, diary_date)
     if not page:
         raise RuntimeError(f"Daily Log page not found for date={diary_date}")
 
     if cfg.dry_run:
-        print("DRY_RUN=true: Notion page update skipped")
-        print("Generated summary preview:")
-        print(summary_text)
+        LOGGER.info("DRY_RUN=true: Notion page update skipped")
         return
 
     target_prop = (
@@ -626,7 +804,13 @@ def run() -> None:
     )
     patch = build_summary_property(page, target_prop, summary_text)
     notion.update_page_properties(page["id"], patch)
-    print(f"Daily Log {target_prop} updated successfully")
+    LOGGER.info(
+        "daily_log_updated: diary_date=%s page_id=%s property=%s chars=%s",
+        diary_date,
+        page["id"],
+        target_prop,
+        len(summary_text),
+    )
 
 
 if __name__ == "__main__":
