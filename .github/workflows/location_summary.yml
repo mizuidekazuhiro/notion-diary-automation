@@ -39,6 +39,7 @@ jobs:
           TASK_DB_ID: ${{ secrets.TASK_DB_ID }}
 
           DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
+          DAILY_LOG_GPT_LOCATION_SUMMARY_PROP: "Location summary (GPT)"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
           TZ: "Asia/Tokyo"

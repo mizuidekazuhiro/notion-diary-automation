@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,6 +14,7 @@ from env import ConfigError, get_env_bool, get_env_int, get_env_str
 NOTION_VERSION = "2022-06-28"
 LOGGER = logging.getLogger(__name__)
 UNKNOWN_WORDS = {"", "unknown", "不明"}
+MIN_MOVEMENT_DURATION_MIN = 5
 
 
 @dataclass
@@ -27,6 +29,7 @@ class Config:
 
     daily_log_date_prop: str = "Date"
     daily_log_location_summary_prop: str = "Location summary"
+    daily_log_gpt_location_summary_prop: str = "Location summary (GPT)"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
@@ -113,6 +116,9 @@ def load_config() -> Config:
         daily_log_location_summary_prop=get_env_str(
             "DAILY_LOG_LOCATION_SUMMARY_PROP", default="Location summary"
         ),
+        daily_log_gpt_location_summary_prop=get_env_str(
+            "DAILY_LOG_GPT_LOCATION_SUMMARY_PROP", default="Location summary (GPT)"
+        ),
         openai_api_key=get_env_str("OPENAI_API_KEY", default=""),
         openai_model=get_env_str("OPENAI_MODEL", default="gpt-4o-mini"),
         dry_run=get_env_bool("DRY_RUN", default=False),
@@ -127,9 +133,10 @@ def log_effective_config(cfg: Config) -> None:
         cfg.dry_run,
     )
     LOGGER.info(
-        "config: daily_log_date_prop=%s daily_log_location_summary_prop=%s",
+        "config: daily_log_date_prop=%s daily_log_location_summary_prop=%s daily_log_gpt_location_summary_prop=%s",
         cfg.daily_log_date_prop,
         cfg.daily_log_location_summary_prop,
+        cfg.daily_log_gpt_location_summary_prop,
     )
 
 
@@ -365,6 +372,8 @@ def is_unknown_label(label: str) -> bool:
 def classify_movement_segments(short_sessions: list[StaySession], main_sessions: list[StaySession]) -> list[MovementSegment]:
     movement_segments: list[MovementSegment] = []
     for idx, session in enumerate(short_sessions):
+        if session.duration_min < MIN_MOVEMENT_DURATION_MIN:
+            continue
         has_station = "駅" in session.display_name or "station" in session.display_name.lower()
         unknown_chain = False
         if is_unknown_label(session.display_name):
@@ -415,6 +424,7 @@ def build_gpt_payload(
                 "location": m.display_name,
             }
             for m in movement_segments
+            if int((m.end - m.start).total_seconds() // 60) >= MIN_MOVEMENT_DURATION_MIN
         ],
         "events": [
             {
@@ -432,27 +442,19 @@ def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -
 
     system_prompt = (
         "あなたは行動ログを客観的に文章化するアシスタントです。\n"
-        "以下を厳守してください：\n\n"
-        "- 感情・心情・主観を一切書かない\n"
-        "- 推測や想像をしない\n"
-        "- 行動内容を断定しない（例：「楽しんだ」「会食した」などは禁止）\n"
-        "- 比喩や形容詞を使わない\n"
-        "- 冗長な表現を避ける\n"
-        "- 出力は日本語の自然文のみ\n"
-        "- 箇条書きは禁止\n"
-        "- 日付を先頭に入れる\n"
-        "- 最大6文以内で出力する\n"
-        "- 1文はできるだけ簡潔にする"
+        "以下を厳守してください：\n"
+        "1. 1行目の先頭は必ず YYYY-MM-DD で始める。\n"
+        "2. 出力は日本語の自然文のみで、箇条書きは禁止。\n"
+        "3. 行頭に '-', '•', '・' を使わない。\n"
+        "4. 感情・推測・断定を避け、観測可能な事実のみ記述する。\n"
+        "5. 最大6文以内に収める。\n"
+        "6. 予定は『◯◯の予定があった』の表現のみ許可する。"
     )
     user_prompt = (
         "以下の行動データをもとに、客観的な記録文を作成してください。\n\n"
         "{{JSONデータ}}\n\n"
-        "記述ルール：\n"
-        "- 場所と時間を中心に述べる\n"
-        "- 予定は「◯◯の予定があった」とのみ記載する\n"
-        "- 予定の実施を断定しない\n"
-        "- 30分未満の滞在は原則記載しない（移動として自然にまとめてもよい）\n"
-        "- 主観的表現は禁止\n\n"
+        "記述ルール：場所と時間を中心に述べ、主観的表現は使わない。\n"
+        "30分未満の滞在は原則記載しない（移動として自然にまとめる場合のみ可）。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -476,9 +478,36 @@ def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -
         raise RuntimeError(f"OpenAI request failed ({resp.status_code}): {resp.text}")
 
     content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    content = normalize_diary_output(content)
     if not content:
         raise RuntimeError("OpenAI response did not include diary text")
     return content
+
+
+def normalize_diary_output(content: str) -> str:
+    raw = (content or "").strip()
+    if not raw:
+        return ""
+
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    converted_lines: list[str] = []
+    for line in lines:
+        if line.startswith(("- ", "•", "・")):
+            normalized = line[1:].strip() if line[0] in {"•", "・"} else line[2:].strip()
+            if normalized:
+                converted_lines.append(normalized)
+            continue
+        converted_lines.append(line)
+
+    merged = " ".join(converted_lines)
+    merged = re.sub(r"\s+", " ", merged).strip()
+    merged = re.sub(r"([。！？!?])\s+", r"\1", merged)
+    if not merged:
+        return ""
+
+    sentence_chunks = re.findall(r".*?[。！？!?]|.+$", merged)
+    trimmed = "".join(sentence_chunks[:6]).strip()
+    return trimmed
 
 
 def generate_location_summary(
@@ -590,9 +619,14 @@ def run() -> None:
         print(summary_text)
         return
 
-    patch = build_summary_property(page, cfg.daily_log_location_summary_prop, summary_text)
+    target_prop = (
+        cfg.daily_log_gpt_location_summary_prop
+        if os.getenv("DAILY_LOG_GPT_LOCATION_SUMMARY_PROP")
+        else cfg.daily_log_location_summary_prop
+    )
+    patch = build_summary_property(page, target_prop, summary_text)
     notion.update_page_properties(page["id"], patch)
-    print("Daily Log Location summary updated successfully")
+    print(f"Daily Log {target_prop} updated successfully")
 
 
 if __name__ == "__main__":
