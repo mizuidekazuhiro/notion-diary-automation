@@ -4,3 +4,4 @@ compatibility_date = "2026-01-22"
 
 [vars]
 EXPENSES_DAY_START_HOUR = "5"
+LOCATION_LOG_DB_ID = "301dec27c9aa8077879af6795e027407"
