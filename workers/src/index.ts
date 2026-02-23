@@ -2982,7 +2982,15 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
     return authError;
   }
 
-  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
+  try {
+    await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
+  } catch (error) {
+    if (isOptionalLocationSummaryValidationError(error)) {
+      console.info("Location summary is optional; skip validation");
+    } else {
+      throw error;
+    }
+  }
 
   const payload = await parseJsonBody(request);
   if (!payload) {
@@ -3052,6 +3060,29 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
   return new Response(JSON.stringify({ ok: true, page_id: pageId }), {
     headers: jsonHeaders,
   });
+}
+
+function isOptionalLocationSummaryValidationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message;
+  if (!message.includes("Database schema validation failed")) {
+    return false;
+  }
+
+  const missingMatch = message.match(/Missing: ([^;]+)/);
+  if (!missingMatch) {
+    return false;
+  }
+
+  const missingProperties = missingMatch[1]
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  return missingProperties.length === 1 && missingProperties[0] === "Location summary";
 }
 
 async function handleDailyLogRead(request: Request, env: Env): Promise<Response> {
