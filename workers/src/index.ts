@@ -855,12 +855,18 @@ async function updateMoodNotes(env: Env, data: {
     const existingText = existingPage
       ? getPlainTextFromRichText(existingPage.properties?.[notesPropertyName])
       : "";
-    if (mode === "replace") {
-      if (entry && entry !== existingText) {
+    if (entry && shouldSkipAppend(existingText, entry)) {
+      console.info("duplicate skip: mood-notes", {
+        targetDate,
+        mode,
+        reason: "same_or_already_appended",
+      });
+    } else if (mode === "replace") {
+      if (entry && normalizeNote(entry) !== normalizeNote(existingText)) {
         updatedNotesText = entry;
         notesUpdated = true;
       }
-    } else if (entry && !shouldSkipMoodNotesAppend(existingText, notesValue, sourceUrl)) {
+    } else if (entry) {
       updatedNotesText = existingText ? `${existingText}\n\n${entry}` : entry;
       notesUpdated = true;
     }
@@ -1308,17 +1314,27 @@ function splitRichText(text: string, limit = NOTES_RICH_TEXT_LIMIT) {
   }));
 }
 
-function getPlainTextFromRichText(property: Record<string, any> | undefined): string {
-  if (!property) {
+function getPlainTextFromRichText(richTextOrProperty: any): string {
+  if (!richTextOrProperty) {
     return "";
   }
-  const richText = property.rich_text;
+  const richText = Array.isArray(richTextOrProperty)
+    ? richTextOrProperty
+    : richTextOrProperty.rich_text;
   if (!Array.isArray(richText)) {
     return "";
   }
   return richText
     .map((item: { plain_text?: string }) => item.plain_text ?? "")
     .join("");
+}
+
+function normalizeNote(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\t\f\v ]+/g, " ")
+    .replace(/\n+/g, "\n")
+    .trim();
 }
 
 function getPlainTextFromTitle(property: Record<string, any> | undefined): string {
@@ -1347,25 +1363,16 @@ function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
   return entry;
 }
 
-function shouldSkipMoodNotesAppend(
-  existingText: string,
-  notes: string,
-  sourceUrl?: string,
-): boolean {
-  const trimmedNotes = notes.trim();
-  if (!existingText) {
-    return false;
+function shouldSkipAppend(existingNotes: string, incoming: string): boolean {
+  const normalizedExisting = normalizeNote(existingNotes);
+  const normalizedIncoming = normalizeNote(incoming);
+  if (!normalizedIncoming) {
+    return true;
   }
-  if (trimmedNotes && sourceUrl) {
-    return existingText.includes(trimmedNotes) && existingText.includes(sourceUrl);
-  }
-  if (trimmedNotes) {
-    return existingText.includes(trimmedNotes);
-  }
-  if (sourceUrl) {
-    return existingText.includes(sourceUrl);
-  }
-  return false;
+  return (
+    normalizedExisting === normalizedIncoming ||
+    normalizedExisting.endsWith(normalizedIncoming)
+  );
 }
 
 function getNumberFromProperty(
