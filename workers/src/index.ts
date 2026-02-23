@@ -2428,43 +2428,70 @@ location_summary_text の書式ルール:
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    console.warn(`Location summary GPT failed status=${response.status} body=${body.slice(0, 500)}`);
+    const body = await response.text().catch(() => "");
+    console.warn(
+      `Location summary GPT failed status=${response.status} body=${body.slice(0, 500)}`,
+    );
     return fallback;
   }
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") {
-    return fallback;
-  }
-
+  // OpenAIの返却はJSONのはずだが、念のため text でも受けられるようにする
+  let data: any;
   try {
-    const parsed = JSON.parse(content) as LocationGptOutput;
-    const text = typeof parsed.location_summary_text === "string" ? parsed.location_summary_text.trim() : "";
-    if (!text) {
-      return fallback;
-    }
-    const primary =
-      typeof parsed.primary_place_label === "string" && parsed.primary_place_label.trim()
-        ? parsed.primary_place_label.trim()
-        : fallback.primary_place_label;
-    const stats = typeof parsed.stats === "object" && parsed.stats ? parsed.stats : fallback.stats;
-    return {
-      location_summary_text: text,
-      primary_place_label: primary,
-      stats: {
-        ...fallback.stats,
-        ...stats,
-        data_quality_notes: dataQualityNotes,
-      },
-    } as LocationSummaryResult;
+    data = await response.json();
   } catch (error) {
-    console.warn("Location summary: failed to parse GPT JSON, using fallback.", error);
+    const body = await response.text().catch(() => "");
+    console.warn(
+      `Location summary GPT returned non-JSON response. body=${body.slice(0, 500)}`,
+      error,
+    );
     return fallback;
   }
-}
 
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    console.warn("Location summary GPT response missing message.content");
+    return fallback;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    console.warn(
+      `Location summary: failed to parse GPT JSON content. content=${content.slice(0, 500)}`,
+      error,
+    );
+    return fallback;
+  }
+
+  const textRaw = parsed?.location_summary_text;
+  const text = typeof textRaw === "string" ? textRaw.trim() : "";
+  if (!text) {
+    console.warn("Location summary: parsed JSON missing location_summary_text");
+    return fallback;
+  }
+
+  const primaryRaw = parsed?.primary_place_label;
+  const primary =
+    typeof primaryRaw === "string" && primaryRaw.trim()
+      ? primaryRaw.trim()
+      : fallback.primary_place_label;
+
+  const statsRaw = parsed?.stats;
+  const stats =
+    statsRaw && typeof statsRaw === "object" ? statsRaw : fallback.stats;
+
+  return {
+    location_summary_text: text,
+    primary_place_label: primary,
+    stats: {
+      ...fallback.stats,
+      ...stats,
+      data_quality_notes: dataQualityNotes,
+    },
+  } as LocationSummaryResult;
+}
 async function handleDailyLogLocationIngest(
   request: Request,
   env: Env,
