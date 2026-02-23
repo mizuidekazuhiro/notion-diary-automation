@@ -3,7 +3,7 @@
 `Location Summary Writer` は、**既存の日記生成/Notion更新システムから独立**して動く小さなバッチです。  
 このディレクトリ配下だけで依存関係・実行ロジックが完結しており、他コードを import しません。
 
-- 入力: Notion `Stay Sessions` DB + `Tasks` DB（前日05:00〜当日05:00 JST）
+- 入力: Notion `Stay Sessions` DB + `Tasks` DB + （任意）`Expenses` DB（前日05:00〜当日05:00 JST）
 - 処理: 滞在セッションと予定を事実ベースで整形し「日記風」要約を生成（推測禁止）
 - 出力: Notion `Daily Log` DB の対象日ページへ要約を書き込み（`DAILY_LOG_GPT_LOCATION_SUMMARY_PROP` が設定されていれば優先）
 
@@ -32,11 +32,24 @@
 
 ### 任意（未設定時デフォルトあり）
 - 空文字（`""`）や空白のみの値は **未設定と同じ扱い** になります。
+- `EXPENSES_DB_ID`（未設定なら expenses 連携をスキップ）
 - `TZ`（default: `Asia/Tokyo`）
 - `WINDOW_START_HOUR`（default: `5`）
 - `DAILY_LOG_DATE_PROP`（default: `Date`）
 - `DAILY_LOG_LOCATION_SUMMARY_PROP`（default: `Location summary`）
 - `DAILY_LOG_GPT_LOCATION_SUMMARY_PROP`（default: `Location summary (GPT)`）
+- `TASK_EVENT_DATE_PROP`（default: `Event Date`）
+- `TASK_STATUS_PROP`（default: `Status`）
+- `TASK_TITLE_PROP`（default: auto detect title property）
+- `EXPENSE_DATE_PROP`（default: `Date`）
+- `EXPENSE_RECEIVED_AT_PROP`（default: `Received At`）
+- `EXPENSE_MERCHANT_PROP`（default: `Merchant`）
+- `EXPENSE_AMOUNT_PROP`（default: `Amount`）
+- `EXPENSE_CURRENCY_PROP`（default: `Currency`）
+- `EXPENSE_CARD_PROP`（default: `Card`）
+- `EXPENSE_SOURCE_PROP`（default: `Source`）
+- `EXPENSE_STATUS_PROP`（default: `Status`）
+- `EXPENSE_INCLUDE_KEYWORDS`（default: `焼肉,レストラン,居酒屋,カフェ,バー,食,ANA Pay`）
 - `DRY_RUN`（default: `false`）
 
 > `DRY_RUN=true` にすると Notion 更新をスキップし、生成結果のみログ出力します。
@@ -65,6 +78,7 @@ export NOTION_TOKEN=...
 export STAY_SESSIONS_DB_ID=...
 export TASK_DB_ID=...
 export DAILY_LOG_DB_ID=...
+export EXPENSES_DB_ID=...
 export DAILY_LOG_GPT_LOCATION_SUMMARY_PROP="Location summary (GPT)"
 export DRY_RUN=true
 
@@ -80,7 +94,8 @@ python src/main.py
 - `diary_date` は `window_end - 1日`
 - Stay Sessions は `SessionStart <= window_end AND SessionEnd >= window_start` で取得し、窓外はクリップ
 - `DurationMin <= 0` は除外し、同一表示名かつ10分以内の分断はマージ
-- TASK_DB_ID（タスク管理DB）から `Event Date` が対象窓内のものだけ反映
+- TASK DB は `TASK_EVENT_DATE_PROP` が対象窓内のものだけ反映（タイトルは auto detect か `TASK_TITLE_PROP`）
+- Expenses DB は `Received At` 優先、未設定行は `Date` で判定して統合
 - 文章は推測禁止（滞在事実・予定の存在のみ記述）
 
 ---

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from env import ConfigError
 from main import (
+    Config,
     MovementSegment,
     StaySession,
     TaskEvent,
@@ -20,6 +21,7 @@ from main import (
     merge_sessions,
     normalize_diary_output,
     parse_tasks,
+    parse_expenses,
 )
 
 
@@ -91,7 +93,14 @@ class MainTests(unittest.TestCase):
         tasks = [TaskEvent(title="買い物", event_time=datetime.fromisoformat("2026-02-15T19:00:00+09:00"))]
 
         text = generate_location_summary(
-            window_start, window_end, "Asia/Tokyo", sessions, tasks, "dummy-key", "gpt-4o-mini"
+            window_start,
+            window_end,
+            "Asia/Tokyo",
+            sessions,
+            tasks,
+            expenses=[],
+            openai_api_key="dummy-key",
+            openai_model="gpt-4o-mini",
         )
         self.assertEqual(text, "朝に自宅で過ごし、夜に予定があった。")
 
@@ -141,6 +150,7 @@ class MainTests(unittest.TestCase):
             main_sessions,
             movement_segments,
             matched_tasks=[],
+            expenses=[],
         )
         self.assertEqual(len(payload["main_sessions"]), 1)
         self.assertEqual(payload["main_sessions"][0]["duration_min"], 60)
@@ -167,6 +177,39 @@ class MainTests(unittest.TestCase):
         tasks = parse_tasks(pages, window_start, window_end)
         self.assertEqual(tasks[0].title, "定例ミーティング")
 
+    def test_parse_expenses_uses_received_at_then_date(self):
+        cfg = Config(
+            notion_token="n",
+            stay_sessions_db_id="s",
+            task_db_id="t",
+            daily_log_db_id="d",
+            expenses_db_id="e",
+        )
+        pages = [
+            {
+                "properties": {
+                    "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "ANA Pay 加盟店"}]},
+                    "Amount": {"type": "number", "number": 1200},
+                    "Received At": {"type": "date", "date": {"start": "2026-02-15T19:30:00+09:00"}},
+                    "Date": {"type": "date", "date": {"start": "2026-02-15"}},
+                }
+            },
+            {
+                "properties": {
+                    "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "定期券"}]},
+                    "Amount": {"type": "number", "number": 500},
+                    "Received At": {"type": "date", "date": None},
+                    "Date": {"type": "date", "date": {"start": "2026-02-15"}},
+                }
+            },
+        ]
+        window_start = datetime.fromisoformat("2026-02-15T05:00:00+09:00")
+        window_end = datetime.fromisoformat("2026-02-16T05:00:00+09:00")
+        expenses = parse_expenses(pages, cfg, window_start, window_end)
+        self.assertEqual(len(expenses), 2)
+        self.assertEqual(expenses[0].display_time, "19:30")
+        self.assertEqual(expenses[1].display_time, "（時刻不明）")
+
     @patch.dict(
         os.environ,
         {
@@ -190,6 +233,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(cfg.daily_log_location_summary_prop, "Location summary")
         self.assertEqual(cfg.daily_log_gpt_location_summary_prop, "Location summary (GPT)")
         self.assertFalse(cfg.dry_run)
+        self.assertEqual(cfg.expense_merchant_prop, "Merchant")
 
     @patch.dict(
         os.environ,
