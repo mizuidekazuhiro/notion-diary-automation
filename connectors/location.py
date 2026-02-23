@@ -24,6 +24,11 @@ class LocationConnector:
 
     def fetch(self, target_date: str) -> LocationIngestResult:
         payload = {"target_date": target_date}
+        logging.info(
+            "Location ingest request: method=POST url=%s auth_scheme=%s",
+            self.ingest_url,
+            "Bearer" if self.bearer_token else "None",
+        )
         try:
             response = post_json(self.ingest_url, payload, self.bearer_token)
             ok = bool(response.get("ok", False))
@@ -33,7 +38,9 @@ class LocationConnector:
                 payload=response,
             )
         except Exception as exc:  # noqa: BLE001 - keep ingest pipeline running
-            logging.warning("Location ingest connector failed: %s", exc)
+            # GitHub Actions log example:
+            # WARNING: Location ingest connector failed: HTTP request failed: method=POST ...
+            logging.warning("Location ingest connector failed: %s", exc, exc_info=True)
             return LocationIngestResult(
                 target_date=target_date,
                 ok=False,

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -39,9 +39,20 @@ class Config:
     bearer_token: Optional[str]
 
 
-def build_worker_url(base_url: str, path: str) -> str:
+WORKER_EXECUTE_BASE_PATH = "/execute/api/daily_log"
+WORKER_ENDPOINTS = {
+    "ensure": f"{WORKER_EXECUTE_BASE_PATH}/ensure",
+    "ingest_health": f"{WORKER_EXECUTE_BASE_PATH}/ingest_health",
+    "ingest_expenses": f"{WORKER_EXECUTE_BASE_PATH}/ingest_expenses",
+    "ingest_location": f"{WORKER_EXECUTE_BASE_PATH}/ingest_location",
+    "read": "/api/daily_log",
+}
+
+
+def build_worker_url(base_url: str, endpoint_path: str) -> str:
     parsed = urlparse(base_url)
-    return f"{parsed.scheme}://{parsed.netloc}{path}"
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return urljoin(origin, endpoint_path)
 
 
 def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
@@ -63,18 +74,18 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
         tasks_closed_url=read_env("TASKS_CLOSED_URL", need_tasks),
         daily_log_upsert_url=daily_log_upsert_url,
         daily_log_ensure_url=build_worker_url(
-            daily_log_upsert_url, "/execute/api/daily_log/ensure"
+            daily_log_upsert_url, WORKER_ENDPOINTS["ensure"]
         ),
         health_ingest_url=build_worker_url(
-            daily_log_upsert_url, "/execute/api/daily_log/ingest_health"
+            daily_log_upsert_url, WORKER_ENDPOINTS["ingest_health"]
         ),
         expenses_ingest_url=build_worker_url(
-            daily_log_upsert_url, "/execute/api/daily_log/ingest_expenses"
+            daily_log_upsert_url, WORKER_ENDPOINTS["ingest_expenses"]
         ),
         location_ingest_url=build_worker_url(
-            daily_log_upsert_url, "/execute/api/daily_log/ingest_location"
+            daily_log_upsert_url, WORKER_ENDPOINTS["ingest_location"]
         ),
-        daily_log_read_url=build_worker_url(daily_log_upsert_url, "/api/daily_log"),
+        daily_log_read_url=build_worker_url(daily_log_upsert_url, WORKER_ENDPOINTS["read"]),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
     )
 
@@ -87,6 +98,11 @@ def get_target_date(now: Optional[datetime] = None) -> str:
 
 def run_ingest(config: Config, target_date: str, run_id: str) -> None:
     title = f"Daily Log｜{target_date}"
+    logging.info(
+        "Worker endpoint config: daily_log_upsert_url=%s location_ingest_url=%s",
+        config.daily_log_upsert_url,
+        config.location_ingest_url,
+    )
     ensure_result = ensure_daily_log_page(
         ensure_url=config.daily_log_ensure_url,
         target_date=target_date,
