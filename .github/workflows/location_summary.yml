@@ -37,7 +37,7 @@ jobs:
 
           # ✅ 既存のタスク管理DB（今回「予定」も読む）
           TASK_DB_ID: ${{ secrets.TASK_DB_ID }}
-
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}   # ← これを追加
           DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
           DAILY_LOG_GPT_LOCATION_SUMMARY_PROP: "Location summary (GPT)"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
