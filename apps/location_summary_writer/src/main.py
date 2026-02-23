@@ -613,8 +613,6 @@ def build_prompt_db_query(cfg: Config, prompt_type: str) -> dict[str, Any]:
     ]
     if cfg.prompt_language:
         filters.append({"property": "Language", "select": {"equals": cfg.prompt_language}})
-    if cfg.prompt_variant:
-        filters.append({"property": "Variant", "select": {"equals": cfg.prompt_variant}})
     if cfg.prompt_time_style:
         filters.append({"property": "Time Style", "select": {"equals": cfg.prompt_time_style}})
 
@@ -640,16 +638,16 @@ def fetch_prompt_from_notion(notion: NotionClient, cfg: Config, prompt_type: str
         return None
 
     LOGGER.info(
-        "prompt_fetch: type=%s candidates=%s target=%s variant=%s language=%s time_style=%s",
+        "prompt_fetch: type=%s candidates=%s target=%s selection=approved_and_active priority_desc"
+        " variant_filter_used=false language=%s time_style=%s",
         prompt_type,
         len(pages),
         cfg.prompt_target,
-        cfg.prompt_variant,
         cfg.prompt_language,
         cfg.prompt_time_style or "(none)",
     )
     if len(pages) > 1:
-        LOGGER.info("prompt_fetch: type=%s selection_rule=highest_priority_then_latest_edited", prompt_type)
+        LOGGER.info("prompt_fetch: type=%s selection_rule=highest_priority_then_query_order", prompt_type)
 
     for idx, page in enumerate(pages):
         text = rich_text_plain(page.get("properties", {}).get("Content"))
