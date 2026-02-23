@@ -2541,6 +2541,17 @@ async function handleDailyLogLocationIngest(
     moveCount,
     dataQualityNotes,
   );
+        location_summary_text: summary.location_summary_text,
+        stats: summary.stats,
+      stats: summary.stats,
+      skipped: "location_summary_not_written_by_daily_phase_a",
+    diaryDate,
+    window.anchorStartIso,
+    window.anchorEndIso,
+    segments,
+    moveCount,
+    dataQualityNotes,
+  );
 
   const dailyLogPages = await queryDatabaseAllWithBody(env, env.DAILY_LOG_DB_ID, {
     filter: {
