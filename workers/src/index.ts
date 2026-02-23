@@ -123,6 +123,7 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Diary", type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
     { name: "Meal summary", type: "rich_text" },
+    { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: "Mood", type: "select" },
     { name: "Source", type: "select" },
@@ -3082,7 +3083,7 @@ function isOptionalLocationSummaryValidationError(error: unknown): boolean {
     .map((name) => name.trim())
     .filter(Boolean);
 
-  return missingProperties.length === 1 && missingProperties[0] === "Location summary";
+  return missingProperties.length === 1 && missingProperties[0] === "Location summary (GPT)";
 }
 
 async function handleDailyLogRead(request: Request, env: Env): Promise<Response> {
@@ -3143,7 +3144,8 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     typeof properties[dailyLogExpensesPropertyNames.total]?.number === "number"
       ? properties[dailyLogExpensesPropertyNames.total].number
       : null;
-  const locationSummary = getPlainTextFromRichText(properties["Location summary"]) || null;
+  const locationSummaryProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
+  const locationSummary = getPlainTextFromRichText(properties[locationSummaryProp]) || null;
   const mood = properties.Mood?.select?.name ?? null;
   const weight =
     typeof properties.Weight?.number === "number" ? properties.Weight.number : null;
