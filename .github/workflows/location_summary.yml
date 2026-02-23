@@ -41,6 +41,11 @@ jobs:
           DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
           DAILY_LOG_GPT_LOCATION_SUMMARY_PROP: "Location summary (GPT)"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PROMPT_DB_ID: ${{ secrets.PROMPT_DB_ID }}
+          PROMPT_TARGET: "location_summary_writer"
+          PROMPT_VARIANT: "default"
+          PROMPT_LANGUAGE: "ja"
+          PROMPT_TIME_STYLE: ""
 
           TZ: "Asia/Tokyo"
           WINDOW_START_HOUR: "5"
