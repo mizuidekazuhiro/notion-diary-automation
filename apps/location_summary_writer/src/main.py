@@ -428,6 +428,25 @@ def extract_task_title(props: dict[str, Any], title_prop: str = "") -> str:
 def _fmt_time(dt: datetime) -> str:
     return dt.strftime("%H:%M")
 
+
+def is_location_informative_merchant(merchant: str) -> bool:
+    m = (merchant or "").strip().lower()
+    if not m:
+        return False
+
+    # 場所推定に使いにくいオンライン/課金系
+    blocked_keywords = [
+        "apple.com", "apple com", "bill",
+        "google", "amazon", "rakuten",
+        "netflix", "spotify",
+        "paypal", "stripe",
+        "subscription", "subscrip",
+    ]
+    if any(kw in m for kw in blocked_keywords):
+        return False
+
+    return True
+
 def parse_expenses(
     pages: list[dict[str, Any]],
     cfg: Config,
@@ -462,6 +481,9 @@ def parse_expenses(
             continue
 
         merchant = rich_text_plain(props.get(cfg.expense_merchant_prop, {})).strip() or extract_task_title(props)
+        # 場所推定に使えない加盟店は除外
+        if not is_location_informative_merchant(merchant):
+            continue
         amount = parse_number(props.get(cfg.expense_amount_prop, {}))
         currency = rich_text_plain(props.get(cfg.expense_currency_prop, {})).strip()
         card = rich_text_plain(props.get(cfg.expense_card_prop, {})).strip()
@@ -565,11 +587,6 @@ def build_gpt_payload(
             {
                 "time": e.display_time,
                 "merchant": e.merchant,
-                "amount": e.amount,
-                "currency": e.currency,
-                "card": e.card,
-                "source": e.source,
-                "status": e.status,
                 "keyword_match": e.is_keyword_match,
             }
             for e in expenses
@@ -581,22 +598,25 @@ def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str) -
         raise RuntimeError("OPENAI_API_KEY is required for GPT diary generation")
 
     system_prompt = (
-        "あなたは行動ログを客観的に文章化するアシスタントです。\n"
+        "あなたは行動ログを自然な日本語の日記文に整えるアシスタントです。\n"
         "以下を厳守してください：\n"
         "1. 1行目の先頭は必ず YYYY-MM-DD で始める。\n"
         "2. 出力は日本語の自然文のみで、箇条書きは禁止。\n"
         "3. 行頭に '-', '•', '・' を使わない。\n"
-        "4. 感情・推測・断定を避け、観測可能な事実のみ記述する。\n"
+        "4. 滞在(main_sessions)を主軸に、場所と時間を中心に記述する。\n"
         "5. 最大6文以内に収める。\n"
         "6. 予定は『◯◯の予定があった』の表現のみ許可する。\n"
-        "7. 支出は『◯◯の支出記録がある』の表現のみ許可する。\n"
-        "8. 滞在(main_sessions)を主軸に、events/expensesは根拠としてのみ添える。\n"
-        "9. 住所や場所が細かく揺れる場合は、近接エリアとして簡略化してよい。"
+        "7. expenses は場所推定の補助情報としてのみ使い、金額には触れない。\n"
+        "8. expenses を文に入れる場合は、『◯◯に立ち寄った可能性がある』『◯◯で過ごしていたことがうかがえる』『◯◯にいたとみられる』など、自然な推定表現を使う。\n"
+        "9. 『支出記録』『記録がある』『補助情報として確認できる』のような説明調の表現は使わない。\n"
+        "10. オンライン決済・サブスク等の場所と関係ない情報は無理に書かない。\n"
+        "11. 住所や場所が細かく揺れる場合は、近接エリアとして簡略化してよい。"
     )
     user_prompt = (
         "以下の行動データをもとに、客観的な記録文を作成してください。\n\n"
         "{{JSONデータ}}\n\n"
         "記述ルール：場所と時間を中心に述べ、主観的表現は使わない。\n"
+        "expenses は場所推定に使えるものだけ自然に織り込み、説明調にはしない。\n"
         "30分未満の滞在は原則記載しない（移動として自然にまとめる場合のみ可）。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
