@@ -2515,13 +2515,14 @@ async function handleDailyLogLocationIngest(
   const diaryDate = targetDateResult.ok ? targetDateResult.targetDate : window.diaryDate;
   const dailyLogDateProp = getDailyLogDatePropertyName(env);
 
-        skipped: "location_summary_skipped_ingest_phase_a",
-  console.info("location summary skipped (ingest)", { target_date: diaryDate, page_id: pageId });
-
-      skipped: "location_summary_skipped_ingest_phase_a",
+  // Daily Log ページを対象日で取得（存在しなければ後段で upsert）
+  const dailyLogPages = await queryDatabaseAllWithBody(env, env.DAILY_LOG_DB_ID, {
+    filter: {
+      property: dailyLogDateProp,
       date: { equals: diaryDate },
     },
     sorts: [{ timestamp: "last_edited_time", direction: "descending" }],
+    page_size: 1,
   });
 
   let pageId = dailyLogPages[0]?.id as string | undefined;
