@@ -34,7 +34,6 @@ class Config:
     daily_log_ensure_url: str
     health_ingest_url: str
     expenses_ingest_url: str
-    location_ingest_url: str
     daily_log_read_url: str
     bearer_token: Optional[str]
 
@@ -44,7 +43,6 @@ WORKER_ENDPOINTS = {
     "ensure": f"{WORKER_EXECUTE_BASE_PATH}/ensure",
     "ingest_health": f"{WORKER_EXECUTE_BASE_PATH}/ingest_health",
     "ingest_expenses": f"{WORKER_EXECUTE_BASE_PATH}/ingest_expenses",
-    "ingest_location": f"{WORKER_EXECUTE_BASE_PATH}/ingest_location",
     "read": "/api/daily_log",
 }
 
@@ -82,9 +80,6 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
         expenses_ingest_url=build_worker_url(
             daily_log_upsert_url, WORKER_ENDPOINTS["ingest_expenses"]
         ),
-        location_ingest_url=build_worker_url(
-            daily_log_upsert_url, WORKER_ENDPOINTS["ingest_location"]
-        ),
         daily_log_read_url=build_worker_url(daily_log_upsert_url, WORKER_ENDPOINTS["read"]),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
     )
@@ -99,9 +94,8 @@ def get_target_date(now: Optional[datetime] = None) -> str:
 def run_ingest(config: Config, target_date: str, run_id: str) -> None:
     title = f"Daily Log｜{target_date}"
     logging.info(
-        "Worker endpoint config: daily_log_upsert_url=%s location_ingest_url=%s",
+        "Worker endpoint config: daily_log_upsert_url=%s",
         config.daily_log_upsert_url,
-        config.location_ingest_url,
     )
     ensure_result = ensure_daily_log_page(
         ensure_url=config.daily_log_ensure_url,
@@ -119,7 +113,6 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         health_ingest_url=config.health_ingest_url,
         expenses_ingest_url=config.expenses_ingest_url,
         daily_log_upsert_url=config.daily_log_upsert_url,
-        location_ingest_url=config.location_ingest_url,
         bearer_token=config.bearer_token,
         run_id=run_id,
         source_label="automation",

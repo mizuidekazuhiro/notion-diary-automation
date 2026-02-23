@@ -122,7 +122,6 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Activity Summary", type: "rich_text" },
     { name: "Diary", type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
-    { name: "Location summary", type: "rich_text" },
     { name: "Meal summary", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: "Mood", type: "select" },
@@ -1181,10 +1180,6 @@ type LocationPropertyNames = {
 
 function getDailyLogDatePropertyName(env: Env): string {
   return env.DAILY_LOG_DATE_PROP || "Date";
-}
-
-function getDailyLogLocationSummaryPropertyName(env: Env): string {
-  return env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary";
 }
 
 function getLocationPropertyNames(env: Env): LocationPropertyNames {
@@ -2481,13 +2476,6 @@ async function handleDailyLogLocationIngest(
     return authError;
   }
 
-  if (!env.LOCATION_LOG_DB_ID) {
-    return new Response(JSON.stringify({ error: "missing LOCATION_LOG_DB_ID" }), {
-      status: 500,
-      headers: jsonHeaders,
-    });
-  }
-
   const payload = await parseJsonBody(request);
   if (!payload) {
     return badRequest("invalid json body");
@@ -2497,60 +2485,12 @@ async function handleDailyLogLocationIngest(
   const windowStartHour = parseIntEnv(env.WINDOW_START_HOUR, 5);
   const window = resolveLocationWindow(new Date(), windowStartHour);
   const diaryDate = targetDateResult.ok ? targetDateResult.targetDate : window.diaryDate;
-  const roundDecimals = parseIntEnv(env.LOCATION_ROUND_DECIMALS, 4);
-  const bucketMinutes = parseIntEnv(env.TIME_BUCKET_MINUTES, 5);
-  const locationProp = getLocationPropertyNames(env);
   const dailyLogDateProp = getDailyLogDatePropertyName(env);
-  const dailyLogLocationSummaryProp = getDailyLogLocationSummaryPropertyName(env);
 
-  const dataQualityNotes: string[] = [];
-  const locationRows = await queryDatabaseAllWithBody(env, env.LOCATION_LOG_DB_ID, {
-    filter: {
-      and: [
-        { property: locationProp.time, date: { on_or_after: window.anchorStartIso } },
-        { property: locationProp.time, date: { before: window.anchorEndIso } },
-      ],
-    },
-    sorts: [{ property: locationProp.time, direction: "ascending" }],
-  });
+        skipped: "location_summary_skipped_ingest_phase_a",
+  console.info("location summary skipped (ingest)", { target_date: diaryDate, page_id: pageId });
 
-  const normalized: NormalizedLocationLog[] = [];
-  for (const row of locationRows) {
-    const properties = row.properties || {};
-    const timeIso = getDateTimeFromProperty(properties[locationProp.time]);
-    if (!timeIso) {
-      dataQualityNotes.push(`time_missing:${row.id ?? "unknown"}`);
-      continue;
-    }
-    const timeMs = Date.parse(timeIso);
-    if (!Number.isFinite(timeMs)) {
-      dataQualityNotes.push(`time_invalid:${row.id ?? "unknown"}`);
-      continue;
-    }
-    normalized.push({
-      timeIso,
-      timeMs,
-      place: getStringFromProperty(properties[locationProp.place]).trim(),
-      lat: getNumberLikeFromProperty(properties[locationProp.lat]),
-      lon: getNumberLikeFromProperty(properties[locationProp.lon]),
-      source: getStringFromProperty(properties[locationProp.source]).trim(),
-    });
-  }
-
-  const { segments, moveCount } = segmentLocationLogs(normalized, roundDecimals, bucketMinutes);
-  const summary = await generateLocationSummaryWithGpt(
-    env,
-    diaryDate,
-    window.anchorStartIso,
-    window.anchorEndIso,
-    segments,
-    moveCount,
-    dataQualityNotes,
-  );
-
-  const dailyLogPages = await queryDatabaseAllWithBody(env, env.DAILY_LOG_DB_ID, {
-    filter: {
-      property: dailyLogDateProp,
+      skipped: "location_summary_skipped_ingest_phase_a",
       date: { equals: diaryDate },
     },
     sorts: [{ timestamp: "last_edited_time", direction: "descending" }],
@@ -2561,7 +2501,7 @@ async function handleDailyLogLocationIngest(
     const upsertResult = await upsertDailyLogByTargetDate(
       env,
       diaryDate,
-      { [dailyLogLocationSummaryProp]: createRichTextProperty(summary.location_summary_text) },
+      {},
       "handleDailyLogLocationIngest",
     );
     if ("error" in upsertResult) {
@@ -2587,18 +2527,6 @@ async function handleDailyLogLocationIngest(
       }),
       { headers: jsonHeaders },
     );
-  }
-
-  const patchResponse = await notionFetch(env, `/pages/${pageId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      properties: {
-        [dailyLogLocationSummaryProp]: createRichTextProperty(summary.location_summary_text),
-      },
-    }),
-  });
-  if (!patchResponse.ok) {
-    return notionErrorResponse(patchResponse, "handleDailyLogLocationIngest.patchDailyLog");
   }
 
   return new Response(
