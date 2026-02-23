@@ -5,7 +5,7 @@
 
 - 入力: Notion `Stay Sessions` DB + `Tasks` DB（前日05:00〜当日05:00 JST）
 - 処理: 滞在セッションと予定を事実ベースで整形し「日記風」要約を生成（推測禁止）
-- 出力: Notion `Daily Log` DB の対象日ページへ `Location summary` を上書き
+- 出力: Notion `Daily Log` DB の対象日ページへ要約を書き込み（`DAILY_LOG_GPT_LOCATION_SUMMARY_PROP` が設定されていれば優先）
 
 ---
 
@@ -36,6 +36,7 @@
 - `WINDOW_START_HOUR`（default: `5`）
 - `DAILY_LOG_DATE_PROP`（default: `Date`）
 - `DAILY_LOG_LOCATION_SUMMARY_PROP`（default: `Location summary`）
+- `DAILY_LOG_GPT_LOCATION_SUMMARY_PROP`（default: `Location summary (GPT)`）
 - `DRY_RUN`（default: `false`）
 
 > `DRY_RUN=true` にすると Notion 更新をスキップし、生成結果のみログ出力します。
@@ -64,6 +65,7 @@ export NOTION_TOKEN=...
 export STAY_SESSIONS_DB_ID=...
 export TASK_DB_ID=...
 export DAILY_LOG_DB_ID=...
+export DAILY_LOG_GPT_LOCATION_SUMMARY_PROP="Location summary (GPT)"
 export DRY_RUN=true
 
 python src/main.py
@@ -90,6 +92,6 @@ python src/main.py
 - `403 Forbidden`（Notion）
   - Integration が DB に Share されていない
 - `Daily Log property not found`
-  - `DAILY_LOG_LOCATION_SUMMARY_PROP` などのプロパティ名が Notion 側と不一致
+  - `DAILY_LOG_GPT_LOCATION_SUMMARY_PROP` または `DAILY_LOG_LOCATION_SUMMARY_PROP` が Notion 側と不一致
 - `Daily Log page not found`
   - 対象日（前日）の `Date` プロパティが一致するページが無い
