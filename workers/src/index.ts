@@ -381,6 +381,14 @@ function parseExpenseCreatedTimeMs(page: Record<string, any>): number {
   return Number.isNaN(timestampMs) ? Number.NaN : timestampMs;
 }
 
+function isFamilyCardExpense(page: Record<string, any>): boolean {
+  const familyCardProperty = page.properties?.FamilyCard;
+  return (
+    familyCardProperty?.type === "checkbox"
+    && familyCardProperty.checkbox === true
+  );
+}
+
 function formatDebugJstDateTime(timestampMs: number): string {
   if (!Number.isFinite(timestampMs)) {
     return "invalid";
@@ -2712,6 +2720,9 @@ async function handleDailyLogExpensesIngest(
   const startMs = Date.parse(startJst);
   const endMs = Date.parse(endJst);
   const filteredExpensePages = expensePages.filter((page) => {
+    if (isFamilyCardExpense(page)) {
+      return false;
+    }
     const timestampMs = parseExpenseCreatedTimeMs(page);
     return Number.isFinite(timestampMs) && timestampMs >= startMs && timestampMs < endMs;
   });
