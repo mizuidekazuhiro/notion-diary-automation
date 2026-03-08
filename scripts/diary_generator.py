@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, Mapping
 
 import requests
 
@@ -10,30 +10,37 @@ OPENAI_TIMEOUT = (5, 60)
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 
 
-def _build_prompts(notes_text: str, target_date: str) -> tuple[str, str]:
+def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[str, str]:
+    input_lines = "\n".join(f"- {name}: {value}" for name, value in input_fields.items())
     system_prompt = (
-        "あなたは誠実な日記作成アシスタントです。"
-        "与えられたNotesの事実のみを使って、自然な日本語の日記文を作成してください。"
+        "あなたはDaily Logを要約する記録アシスタントです。"
+        "与えられた入力の事実だけを使い、第三者が観察・整理して記録したような客観文体で出力してください。"
     )
     user_prompt = (
         f"対象日: {target_date}\n"
-        "以下のNotesを元に、100〜250字程度の自然な日記文を日本語で作成してください。\n"
+        "以下のDaily Log関連プロパティを元に、100〜250字程度の日本語の日記文を作成してください。\n"
         "- 誇張しない\n"
-        "- Notesにない事実を追加しない\n"
-        "- 一人称で自然な日記調\n"
+        "- 入力にない事実を追加しない\n"
+        "- 本人の独白・感想・反省にしない\n"
+        "- 一人称を使わない\n"
+        "- 本人の感情や内心を断定しない\n"
+        "- 『〜してしまった』『〜と感じている』『〜と思った』『つい〜した』は使わない\n"
+        "- 『〜していた』『〜した』『〜が見られた』『〜がうかがえる』『〜という様子だった』を優先\n"
         "- 箇条書き禁止\n"
         "- 簡潔で自然な文章\n"
-        "- Notesが短い場合も無理に膨らませない\n"
+        "- 情報が少ない場合も無理に膨らませない\n"
         "- 事実関係を維持する\n\n"
-        f"Notes:\n{notes_text.strip()}"
+        f"入力プロパティ:\n{input_lines}"
     )
     return system_prompt, user_prompt
 
 
-def generate_diary_from_notes(notes_text: str, target_date: str) -> str:
-    notes = (notes_text or "").strip()
-    if not notes:
-        raise ValueError("notes_text is empty")
+def generate_diary_from_daily_log(input_fields: Mapping[str, str], target_date: str) -> str:
+    normalized_fields = {
+        name: value.strip() for name, value in input_fields.items() if value and value.strip()
+    }
+    if not normalized_fields:
+        raise ValueError("input_fields is empty")
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
@@ -45,7 +52,7 @@ def generate_diary_from_notes(notes_text: str, target_date: str) -> str:
         )
         raise RuntimeError("OPENAI_API_KEY is missing")
 
-    system_prompt, user_prompt = _build_prompts(notes, target_date)
+    system_prompt, user_prompt = _build_prompts(normalized_fields, target_date)
     payload: dict[str, Any] = {
         "model": model,
         "temperature": 0.2,
