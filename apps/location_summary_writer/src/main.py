@@ -37,6 +37,7 @@ class Config:
     expense_card_prop: str = "Card"
     expense_source_prop: str = "Source"
     expense_status_prop: str = "Status"
+    expense_family_card_prop: str = "FamilyCard"
     expense_include_keywords: str = "焼肉,レストラン,居酒屋,カフェ,バー,食,ANA Pay"
 
     tz: str = "Asia/Tokyo"
@@ -156,6 +157,7 @@ def load_config() -> Config:
         expense_card_prop=get_env_str("EXPENSE_CARD_PROP", default="Card"),
         expense_source_prop=get_env_str("EXPENSE_SOURCE_PROP", default="Source"),
         expense_status_prop=get_env_str("EXPENSE_STATUS_PROP", default="Status"),
+        expense_family_card_prop=get_env_str("EXPENSE_FAMILY_CARD_PROP", default="FamilyCard"),
         expense_include_keywords=get_env_str(
             "EXPENSE_INCLUDE_KEYWORDS", default="焼肉,レストラン,居酒屋,カフェ,バー,食,ANA Pay"
         ),
@@ -467,6 +469,10 @@ def parse_expenses(
     items: list[ExpenseEvent] = []
     for page in pages:
         props = page.get("properties", {})
+        family_card_prop = props.get(cfg.expense_family_card_prop, {})
+        if family_card_prop.get("type") == "checkbox" and family_card_prop.get("checkbox") is True:
+            continue
+
         received_at_prop = props.get(cfg.expense_received_at_prop, {})
         date_prop = props.get(cfg.expense_date_prop, {})
 
@@ -852,20 +858,25 @@ def run() -> None:
     if cfg.expenses_db_id:
         expense_query = {
             "filter": {
-                "or": [
+                "and": [
                     {
-                        "and": [
-                            {"property": cfg.expense_received_at_prop, "date": {"on_or_after": window_start.isoformat()}},
-                            {"property": cfg.expense_received_at_prop, "date": {"before": window_end.isoformat()}},
+                        "or": [
+                            {
+                                "and": [
+                                    {"property": cfg.expense_received_at_prop, "date": {"on_or_after": window_start.isoformat()}},
+                                    {"property": cfg.expense_received_at_prop, "date": {"before": window_end.isoformat()}},
+                                ]
+                            },
+                            {
+                                "and": [
+                                    {"property": cfg.expense_received_at_prop, "date": {"is_empty": True}},
+                                    {"property": cfg.expense_date_prop, "date": {"on_or_after": window_start.date().isoformat()}},
+                                    {"property": cfg.expense_date_prop, "date": {"before": window_end.date().isoformat()}},
+                                ]
+                            },
                         ]
                     },
-                    {
-                        "and": [
-                            {"property": cfg.expense_received_at_prop, "date": {"is_empty": True}},
-                            {"property": cfg.expense_date_prop, "date": {"on_or_after": window_start.date().isoformat()}},
-                            {"property": cfg.expense_date_prop, "date": {"before": window_end.date().isoformat()}},
-                        ]
-                    },
+                    {"property": cfg.expense_family_card_prop, "checkbox": {"equals": False}},
                 ]
             },
             "sorts": [{"property": cfg.expense_received_at_prop, "direction": "ascending"}],

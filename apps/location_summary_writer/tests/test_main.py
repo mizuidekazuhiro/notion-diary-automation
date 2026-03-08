@@ -211,6 +211,39 @@ class MainTests(unittest.TestCase):
         self.assertEqual(expenses[0].display_time, "19:30")
         self.assertEqual(expenses[1].display_time, "（時刻不明）")
 
+
+    def test_parse_expenses_excludes_family_card_checked(self):
+        cfg = Config(
+            notion_token="n",
+            stay_sessions_db_id="s",
+            task_db_id="t",
+            daily_log_db_id="d",
+            expenses_db_id="e",
+        )
+        pages = [
+            {
+                "properties": {
+                    "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "通常利用"}]},
+                    "Received At": {"type": "date", "date": {"start": "2026-02-15T12:00:00+09:00"}},
+                    "Date": {"type": "date", "date": {"start": "2026-02-15"}},
+                    "FamilyCard": {"type": "checkbox", "checkbox": False},
+                }
+            },
+            {
+                "properties": {
+                    "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "家族カード利用"}]},
+                    "Received At": {"type": "date", "date": {"start": "2026-02-15T13:00:00+09:00"}},
+                    "Date": {"type": "date", "date": {"start": "2026-02-15"}},
+                    "FamilyCard": {"type": "checkbox", "checkbox": True},
+                }
+            },
+        ]
+        window_start = datetime.fromisoformat("2026-02-15T05:00:00+09:00")
+        window_end = datetime.fromisoformat("2026-02-16T05:00:00+09:00")
+        expenses = parse_expenses(pages, cfg, window_start, window_end)
+        self.assertEqual(len(expenses), 1)
+        self.assertEqual(expenses[0].merchant, "通常利用")
+
     def test_build_prompt_db_query_does_not_filter_variant(self):
         cfg = Config(
             notion_token="n",
@@ -257,6 +290,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(cfg.daily_log_gpt_location_summary_prop, "Location summary (GPT)")
         self.assertFalse(cfg.dry_run)
         self.assertEqual(cfg.expense_merchant_prop, "Merchant")
+        self.assertEqual(cfg.expense_family_card_prop, "FamilyCard")
 
     @patch.dict(
         os.environ,
