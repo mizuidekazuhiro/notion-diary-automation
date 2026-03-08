@@ -38,7 +38,10 @@ class DailyLogSummary:
     expenses: ExpenseSummary
     location_summary: Optional[str]
     mood: Optional[str]
+    notes: Optional[str]
     weight: Optional[float]
+    page_url: Optional[str]
+    diary_notification_sent: Optional[bool]
 
 
 def read_daily_log(
@@ -84,5 +87,8 @@ def read_daily_log(
         expenses=expenses_summary,
         location_summary=payload.get("location_summary"),
         mood=payload.get("mood"),
+        notes=payload.get("notes"),
         weight=payload.get("weight"),
+        page_url=payload.get("page_url"),
+        diary_notification_sent=payload.get("diary_notification_sent"),
     )

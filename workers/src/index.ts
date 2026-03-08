@@ -90,6 +90,8 @@ interface Env {
   LOCATION_ROUND_DECIMALS?: string;
   TIME_BUCKET_MINUTES?: string;
   WINDOW_START_HOUR?: string;
+  DAILY_LOG_DIARY_NOTIFICATION_SENT_PROPERTY_NAME?: string;
+  DAILY_LOG_DIARY_GENERATED_AT_PROPERTY_NAME?: string;
 }
 
 type NotionPropertyType =
@@ -141,6 +143,9 @@ const MOOD_OPTIONS = ["★", "★★", "★★★", "★★★★", "★★★�
 
 const BODY_CHUNK_LENGTH = 1800;
 const NOTES_RICH_TEXT_LIMIT = 2000;
+const DIARY_RICH_TEXT_LIMIT = 4000;
+const DIARY_NOTIFICATION_SENT_PROPERTY_NAME = "Diary Notification Sent";
+const DIARY_GENERATED_AT_PROPERTY_NAME = "Diary Generated At";
 
 function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
   const { statusPropertyName, doneDatePropertyName, dropDatePropertyName } =
@@ -888,6 +893,26 @@ async function updateMoodNotes(env: Env, data: {
   }
 
   if (!Object.keys(updateProperties).length && !notesUpdated) {
+    let diaryGenerated = false;
+    let diaryGenerateReason = "skipped";
+    if (existingPage?.id) {
+      try {
+        const diaryResult = await tryGenerateDiaryAfterMoodNotes(
+          env,
+          targetDate,
+          existingPage.id,
+        );
+        diaryGenerated = diaryResult.generated;
+        diaryGenerateReason = diaryResult.reason;
+      } catch (error) {
+        console.warn("Diary generation after mood-notes no-change failed", {
+          targetDate,
+          pageId: existingPage.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        diaryGenerateReason = "error";
+      }
+    }
     return new Response(
       JSON.stringify({
         ok: true,
@@ -896,6 +921,8 @@ async function updateMoodNotes(env: Env, data: {
         target_date: targetDate,
         found: Boolean(existingPage),
         page_id: existingPage?.id ?? null,
+        diary_generated: diaryGenerated,
+        diary_generate_reason: diaryGenerateReason,
       }),
       { headers: jsonHeaders },
     );
@@ -962,12 +989,31 @@ async function updateMoodNotes(env: Env, data: {
     pageId = (await createResponse.json()).id;
   }
 
+  let diaryGenerated = false;
+  let diaryGenerateReason = "skipped";
+  if (pageId) {
+    try {
+      const diaryResult = await tryGenerateDiaryAfterMoodNotes(env, targetDate, pageId);
+      diaryGenerated = diaryResult.generated;
+      diaryGenerateReason = diaryResult.reason;
+    } catch (error) {
+      console.warn("Diary generation after mood-notes failed", {
+        targetDate,
+        pageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      diaryGenerateReason = "error";
+    }
+  }
+
   return new Response(
     JSON.stringify({
       ok: true,
       updated: true,
       target_date: targetDate,
       page_id: pageId,
+      diary_generated: diaryGenerated,
+      diary_generate_reason: diaryGenerateReason,
     }),
     { headers: jsonHeaders },
   );
@@ -1183,6 +1229,19 @@ function getDailyLogExpensesPropertyNames(env: Env): DailyLogExpensesPropertyNam
 
 function getDailyLogNotesPropertyName(env: Env): string {
   return env.DAILY_LOG_NOTES_PROPERTY_NAME || "Notes";
+}
+
+function getDiaryNotificationSentPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_DIARY_NOTIFICATION_SENT_PROPERTY_NAME ||
+    DIARY_NOTIFICATION_SENT_PROPERTY_NAME
+  );
+}
+
+function getDiaryGeneratedAtPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_DIARY_GENERATED_AT_PROPERTY_NAME || DIARY_GENERATED_AT_PROPERTY_NAME
+  );
 }
 
 type LocationPropertyNames = {
@@ -2873,6 +2932,341 @@ async function handleDailyLogExpensesIngest(
   );
 }
 
+function getDateStartFromProperty(property: Record<string, any> | undefined): string {
+  const start = property?.date?.start;
+  return typeof start === "string" ? start : "";
+}
+
+function getCheckboxFromProperty(property: Record<string, any> | undefined): boolean | null {
+  if (!property || typeof property.checkbox !== "boolean") {
+    return null;
+  }
+  return property.checkbox;
+}
+
+async function readTaskTitlesByRelationIds(
+  env: Env,
+  pageIds: string[],
+): Promise<string[]> {
+  if (!pageIds.length) {
+    return [];
+  }
+  const titles = await Promise.all(
+    pageIds.map(async (pageId) => {
+      const response = await notionFetch(env, `/pages/${pageId}`);
+      if (!response.ok) {
+        const details = await getNotionErrorDetails(response);
+        console.warn(
+          `Notion API error in readTaskTitlesByRelationIds: status=${details.status} page_id=${pageId} message=${details.message}`,
+        );
+        return "";
+      }
+      const page = await response.json();
+      return getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks);
+    }),
+  );
+
+  return titles.map((value) => value.trim()).filter(Boolean);
+}
+
+async function generateDiaryTextWithGpt(
+  env: Env,
+  input: Record<string, any>,
+): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) {
+    console.warn("Diary generation skipped: OPENAI_API_KEY is missing.");
+    return null;
+  }
+
+  const model = env.OPENAI_MODEL || "gpt-4.1-mini";
+  const baseUrl = env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  const systemPrompt =
+    "あなたはDaily Logの要約アシスタントです。与えられた事実だけを使って前日の総評を作成してください。";
+  const userPrompt = `Daily Log の事実データと Mood / Notes をもとに、その1日を簡潔に総評してください。\n未入力項目は推測しないでください。\n前日の評価のみを書き、今日へのアドバイスは書かないでください。\n日本語で自然に、80〜160字程度、1〜3文で返してください。\n\n入力データ:\n${JSON.stringify(
+    input,
+    null,
+    2,
+  )}`;
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.warn(
+      `Diary generation failed status=${response.status} body=${body.slice(0, 500)}`,
+    );
+    return null;
+  }
+
+  const data = await response.json().catch(() => null);
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    console.warn("Diary generation failed: missing message content");
+    return null;
+  }
+  return content.trim();
+}
+
+async function tryGenerateDiaryAfterMoodNotes(
+  env: Env,
+  targetDate: string,
+  pageId: string,
+): Promise<{ generated: boolean; reason: string }> {
+  const pageResponse = await notionFetch(env, `/pages/${pageId}`);
+  if (!pageResponse.ok) {
+    const details = await getNotionErrorDetails(pageResponse);
+    console.warn(
+      `Diary generation skipped: failed to load page. status=${details.status} page_id=${pageId} message=${details.message}`,
+    );
+    return { generated: false, reason: "page_fetch_failed" };
+  }
+
+  const page = await pageResponse.json();
+  const properties = page.properties ?? {};
+  const notesPropertyName = getDailyLogNotesPropertyName(env);
+
+  const diary = getPlainTextFromRichText(properties.Diary).trim();
+  if (diary) {
+    return { generated: false, reason: "diary_already_exists" };
+  }
+
+  const mood = (properties.Mood?.select?.name ?? "").trim();
+  if (!mood) {
+    return { generated: false, reason: "missing_mood" };
+  }
+
+  const notes = getPlainTextFromRichText(properties[notesPropertyName]).trim();
+  if (!notes) {
+    return { generated: false, reason: "missing_notes" };
+  }
+
+  const diaryDate = getDateStartFromProperty(properties.Date) || targetDate;
+  if (!diaryDate) {
+    return { generated: false, reason: "missing_date" };
+  }
+
+  const doneTaskIds = getRelationIdsFromProperty(properties["Done Tasks"]);
+  const dropTaskIds = getRelationIdsFromProperty(properties["Drop Tasks"]);
+  const doneTasks = await readTaskTitlesByRelationIds(env, doneTaskIds);
+  const dropTasks = await readTaskTitlesByRelationIds(env, dropTaskIds);
+  const healthNames = getDailyLogHealthPropertyNames(env);
+  const locationSummaryProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
+  const input = {
+    date: diaryDate,
+    mood,
+    notes,
+    location_summary: getPlainTextFromRichText(properties[locationSummaryProp]).trim() || null,
+    expenses: getNumberFromProperty(
+      properties[getDailyLogExpensesPropertyNames(env).total],
+    ),
+    done_count: doneTaskIds.length,
+    drop_count: dropTaskIds.length,
+    done_tasks: doneTasks,
+    drop_tasks: dropTasks,
+    activity_summary: getPlainTextFromRichText(properties["Activity Summary"]).trim() || null,
+    meal_summary: getPlainTextFromRichText(properties["Meal summary"]).trim() || null,
+    kcal: getNumberLikeFromProperty(properties[healthNames.kcal]),
+    protein: getNumberLikeFromProperty(properties[healthNames.protein]),
+    fat: getNumberLikeFromProperty(properties[healthNames.fat]),
+    carb: getNumberLikeFromProperty(properties[healthNames.carb]),
+    weight: getNumberLikeFromProperty(properties[healthNames.weight]),
+    page_url: typeof page.url === "string" ? page.url : buildNotionPageUrl(pageId),
+  };
+
+  const generatedDiary = await generateDiaryTextWithGpt(env, input);
+  if (!generatedDiary) {
+    return { generated: false, reason: "openai_failed" };
+  }
+
+  const updateProperties: Record<string, any> = {
+    Diary: createRichTextPropertyWithLimit(generatedDiary, DIARY_RICH_TEXT_LIMIT),
+  };
+
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  const generatedAtPropertyName = getDiaryGeneratedAtPropertyName(env);
+  if (hasPropertyType(dailyLogProperties, generatedAtPropertyName, "date")) {
+    updateProperties[generatedAtPropertyName] = createDateProperty(getJstDateString());
+  } else if (hasPropertyType(dailyLogProperties, generatedAtPropertyName, "rich_text")) {
+    updateProperties[generatedAtPropertyName] = createRichTextProperty(
+      formatJstDateTime(getJstDateString()),
+    );
+  }
+
+  const updateResponse = await notionFetch(env, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties: updateProperties }),
+  });
+  if (!updateResponse.ok) {
+    const details = await getNotionErrorDetails(updateResponse);
+    console.warn(
+      `Diary generation skipped: failed to update diary. status=${details.status} page_id=${pageId} message=${details.message}`,
+    );
+    return { generated: false, reason: "update_failed" };
+  }
+
+  return { generated: true, reason: "generated" };
+}
+
+async function handleDailyLogGenerateDiary(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/generate_diary");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+  const targetDate = typeof payload.target_date === "string" ? payload.target_date.trim() : "";
+  if (!targetDate || !isValidDateString(targetDate)) {
+    return badRequest("invalid target_date format");
+  }
+
+  const queryResponse = await notionFetch(env, `/databases/${env.DAILY_LOG_DB_ID}/query`, {
+    method: "POST",
+    body: JSON.stringify({
+      page_size: 1,
+      filter: {
+        property: "Target Date",
+        date: { equals: targetDate },
+      },
+    }),
+  });
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleDailyLogGenerateDiary.query");
+  }
+
+  const queryData = await queryResponse.json();
+  const page = (queryData.results ?? [])[0];
+  if (!page?.id) {
+    return new Response(
+      JSON.stringify({ ok: true, found: false, target_date: targetDate, generated: false }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const result = await tryGenerateDiaryAfterMoodNotes(env, targetDate, page.id);
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      found: true,
+      target_date: targetDate,
+      page_id: page.id,
+      generated: result.generated,
+      reason: result.reason,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
+async function handleDailyLogMarkDiaryNotified(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/mark_diary_notified");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  const payload = await parseJsonBody(request);
+  if (!payload) {
+    return badRequest("invalid json body");
+  }
+  const targetDate = typeof payload.target_date === "string" ? payload.target_date.trim() : "";
+  if (!targetDate || !isValidDateString(targetDate)) {
+    return badRequest("invalid target_date format");
+  }
+
+  const queryResponse = await notionFetch(env, `/databases/${env.DAILY_LOG_DB_ID}/query`, {
+    method: "POST",
+    body: JSON.stringify({
+      page_size: 1,
+      filter: {
+        property: "Target Date",
+        date: { equals: targetDate },
+      },
+    }),
+  });
+
+  if (!queryResponse.ok) {
+    return notionErrorResponse(queryResponse, "handleDailyLogMarkDiaryNotified.query");
+  }
+
+  const queryData = await queryResponse.json();
+  const page = (queryData.results ?? [])[0];
+  if (!page?.id) {
+    return new Response(
+      JSON.stringify({ ok: true, found: false, target_date: targetDate, updated: false }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const notificationSentPropertyName = getDiaryNotificationSentPropertyName(env);
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  if (!hasPropertyType(dailyLogProperties, notificationSentPropertyName, "checkbox")) {
+    console.warn(
+      `Diary notification mark skipped: property "${notificationSentPropertyName}" missing or invalid type.`,
+    );
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        found: true,
+        target_date: targetDate,
+        page_id: page.id,
+        updated: false,
+        reason: "property_unavailable",
+      }),
+      { headers: jsonHeaders },
+    );
+  }
+
+  const updateResponse = await notionFetch(env, `/pages/${page.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      properties: {
+        [notificationSentPropertyName]: createCheckboxProperty(true),
+      },
+    }),
+  });
+  if (!updateResponse.ok) {
+    return notionErrorResponse(updateResponse, "handleDailyLogMarkDiaryNotified.update");
+  }
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      found: true,
+      target_date: targetDate,
+      page_id: page.id,
+      updated: true,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleMoodNotesIngest(
   request: Request,
   env: Env,
@@ -3193,8 +3587,19 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const locationSummaryProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
   const locationSummary = getPlainTextFromRichText(properties[locationSummaryProp]) || null;
   const mood = properties.Mood?.select?.name ?? null;
+  const notesPropertyName = getDailyLogNotesPropertyName(env);
+  const notes = getPlainTextFromRichText(properties[notesPropertyName]) || null;
   const weight =
     typeof properties.Weight?.number === "number" ? properties.Weight.number : null;
+  const pageUrl =
+    typeof page.url === "string" && page.url ? page.url : buildNotionPageUrl(page.id);
+  const diaryNotificationSentPropertyName = getDiaryNotificationSentPropertyName(env);
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  let diaryNotificationSent: boolean | null = null;
+  if (hasPropertyType(dailyLogProperties, diaryNotificationSentPropertyName, "checkbox")) {
+    diaryNotificationSent =
+      getCheckboxFromProperty(properties[diaryNotificationSentPropertyName]) ?? false;
+  }
   const mailId = getPlainTextFromRichText(properties["Mail ID"]);
   const source = properties.Source?.select?.name ?? null;
 
@@ -3283,7 +3688,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       },
       location_summary: locationSummary,
       mood,
+      notes,
       weight,
+      page_url: pageUrl,
+      diary_notification_sent: diaryNotificationSent,
     }),
     { headers: jsonHeaders },
   );
@@ -3459,6 +3867,12 @@ export default {
       }
       if (path === "/execute/api/daily_log/ingest_location") {
         return await handleDailyLogLocationIngest(request, env);
+      }
+      if (path === "/execute/api/daily_log/generate_diary") {
+        return await handleDailyLogGenerateDiary(request, env);
+      }
+      if (path === "/execute/api/daily_log/mark_diary_notified") {
+        return await handleDailyLogMarkDiaryNotified(request, env);
       }
       if (path === "/confirm/mood-notes") {
         return await handleMoodNotesConfirm(request, env);
