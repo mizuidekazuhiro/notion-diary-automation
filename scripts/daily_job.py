@@ -16,8 +16,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ingest.ensure_daily_log_page import ensure_daily_log_page
+from ingest.http_client import post_json
 from ingest.ingest_sources import ingest_sources
 from publish.read_daily_log import read_daily_log
+from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 
@@ -35,6 +37,7 @@ class Config:
     health_ingest_url: str
     expenses_ingest_url: str
     daily_log_read_url: str
+    diary_mark_notified_url: str
     bearer_token: Optional[str]
 
 
@@ -43,6 +46,7 @@ WORKER_ENDPOINTS = {
     "ensure": f"{WORKER_EXECUTE_BASE_PATH}/ensure",
     "ingest_health": f"{WORKER_EXECUTE_BASE_PATH}/ingest_health",
     "ingest_expenses": f"{WORKER_EXECUTE_BASE_PATH}/ingest_expenses",
+    "mark_diary_notified": f"{WORKER_EXECUTE_BASE_PATH}/mark_diary_notified",
     "read": "/api/daily_log",
 }
 
@@ -81,6 +85,9 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
             daily_log_upsert_url, WORKER_ENDPOINTS["ingest_expenses"]
         ),
         daily_log_read_url=build_worker_url(daily_log_upsert_url, WORKER_ENDPOINTS["read"]),
+        diary_mark_notified_url=build_worker_url(
+            daily_log_upsert_url, WORKER_ENDPOINTS["mark_diary_notified"]
+        ),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
     )
 
@@ -148,11 +155,75 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
 
 
+def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
+    summary = read_daily_log(
+        daily_log_read_url=config.daily_log_read_url,
+        target_date=target_date,
+        bearer_token=config.bearer_token,
+    )
+    if not summary:
+        logging.info(
+            "Daily_Log not found; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
+
+    diary_text = (summary.diary or "").strip()
+    if not diary_text:
+        logging.info(
+            "Diary is empty; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
+
+    if summary.diary_notification_sent is True:
+        logging.info(
+            "Diary already notified; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
+
+    page_url = (summary.page_url or "").strip()
+    if not page_url:
+        logging.warning(
+            "Missing page_url; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
+
+    mail = render_diary_notification_mail(
+        target_date=summary.target_date,
+        diary=diary_text,
+        page_url=page_url,
+    )
+    mail_config = MailConfig(
+        mail_from=config.mail_from,
+        mail_to=config.mail_to,
+        gmail_app_password=config.gmail_app_password,
+    )
+    send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
+
+    post_json(
+        config.diary_mark_notified_url,
+        {"target_date": summary.target_date},
+        config.bearer_token,
+    )
+    logging.info(
+        "Diary notified and marked. target_date(JST)=%s run_id=%s",
+        summary.target_date,
+        run_id,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run daily diary automation.")
     parser.add_argument(
         "--phase",
-        choices=("ingest", "publish", "all"),
+        choices=("ingest", "publish", "notify_diary", "all"),
         default="all",
         help="Phase to run (default: all).",
     )
@@ -164,7 +235,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     need_ingest = args.phase in ("ingest", "all")
     need_publish = args.phase in ("publish", "all")
-    config = load_config(need_mail=need_publish, need_tasks=need_ingest)
+    need_notify_diary = args.phase in ("notify_diary", "all")
+    config = load_config(
+        need_mail=(need_publish or need_notify_diary),
+        need_tasks=need_ingest,
+    )
     run_id = os.getenv("GITHUB_RUN_ID", "local")
     target_date = get_target_date()
 
@@ -179,6 +254,8 @@ def main() -> None:
         run_ingest(config, target_date, run_id)
     if args.phase in ("publish", "all"):
         run_publish(config, target_date, run_id)
+    if args.phase in ("notify_diary", "all"):
+        run_notify_diary(config, target_date, run_id)
 
 
 if __name__ == "__main__":
