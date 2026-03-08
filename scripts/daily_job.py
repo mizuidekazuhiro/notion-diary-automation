@@ -22,7 +22,7 @@ from publish.read_daily_log import read_daily_log
 from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
-from scripts.diary_generator import generate_diary_from_notes
+from scripts.diary_generator import generate_diary_from_daily_log
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -163,6 +163,32 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
 
 
+def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str], list[str], str]:
+    candidates = [
+        ("Title", summary.title),
+        ("Mood", summary.mood),
+        ("Notes", summary.notes),
+        ("Meal summary", summary.meal_summary),
+        ("Location summary", summary.location_summary),
+    ]
+
+    used: dict[str, str] = {}
+    skipped: list[str] = []
+    overview_parts: list[str] = []
+
+    for name, raw in candidates:
+        value = (raw or "").strip()
+        if not value:
+            skipped.append(name)
+            continue
+        used[name] = value
+        preview = value.replace("\n", " ")
+        if len(preview) > 80:
+            preview = f"{preview[:80]}..."
+        overview_parts.append(f"{name}({len(value)} chars): {preview}")
+
+    return used, skipped, " | ".join(overview_parts)
+
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = read_daily_log(
         daily_log_read_url=config.daily_log_read_url,
@@ -177,10 +203,10 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         )
         return
 
-    notes_text = (summary.notes or "").strip()
-    if not notes_text:
+    diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
+    if not diary_input_fields:
         logging.info(
-            "Notes is empty; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            "No diary input fields available; skipping notify_diary. target_date(JST)=%s run_id=%s",
             target_date,
             run_id,
         )
@@ -189,16 +215,31 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     diary_text = (summary.diary or "").strip()
     if not diary_text:
         logging.info(
-            "Generating diary from Notes via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
+            "Diary generation input fields: %s",
+            list(diary_input_fields.keys()),
+        )
+        logging.info(
+            "Diary generation skipped empty fields: %s",
+            skipped_fields,
+        )
+        logging.info(
+            "Diary generation input overview: %s",
+            input_overview,
+        )
+        logging.info(
+            "Generating diary from Daily Log properties via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
             summary.target_date,
             run_id,
             config.openai_model,
         )
         try:
-            generated_diary = generate_diary_from_notes(summary.notes, summary.target_date)
+            generated_diary = generate_diary_from_daily_log(
+                diary_input_fields,
+                summary.target_date,
+            )
         except Exception:
             logging.exception(
-                "Failed to generate diary from Notes via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
+                "Failed to generate diary from Daily Log properties via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
                 summary.target_date,
                 run_id,
                 config.openai_model,
