@@ -189,6 +189,10 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
 
     return used, skipped, " | ".join(overview_parts)
 
+
+def has_meaningful_notes(notes: str | None) -> bool:
+    return isinstance(notes, str) and notes.strip() != ""
+
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = read_daily_log(
         daily_log_read_url=config.daily_log_read_url,
@@ -202,6 +206,20 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             run_id,
         )
         return
+
+    if not has_meaningful_notes(summary.notes):
+        logging.info(
+            "skip diary update: notes is empty. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
+
+    logging.info(
+        "diary update triggered by notes. target_date(JST)=%s run_id=%s",
+        target_date,
+        run_id,
+    )
 
     diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
     if not diary_input_fields:
