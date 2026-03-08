@@ -32,4 +32,6 @@ jobs:
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4.1-mini
         run: python scripts/daily_job.py --phase notify_diary
