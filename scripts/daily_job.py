@@ -22,6 +22,7 @@ from publish.read_daily_log import read_daily_log
 from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
+from scripts.diary_generator import generate_diary_from_notes
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -40,6 +41,7 @@ class Config:
     diary_generate_url: str
     diary_mark_notified_url: str
     bearer_token: Optional[str]
+    openai_model: str
 
 
 WORKER_EXECUTE_BASE_PATH = "/execute/api/daily_log"
@@ -94,6 +96,7 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
             daily_log_upsert_url, WORKER_ENDPOINTS["mark_diary_notified"]
         ),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
     )
 
 
@@ -185,17 +188,34 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
 
     diary_text = (summary.diary or "").strip()
     if not diary_text:
-        generate_result = post_json(
+        logging.info(
+            "Generating diary from Notes via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
+            summary.target_date,
+            run_id,
+            config.openai_model,
+        )
+        try:
+            generated_diary = generate_diary_from_notes(summary.notes, summary.target_date)
+        except Exception:
+            logging.exception(
+                "Failed to generate diary from Notes via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
+                summary.target_date,
+                run_id,
+                config.openai_model,
+            )
+            return
+
+        save_result = post_json(
             config.diary_generate_url,
-            {"target_date": summary.target_date},
+            {"target_date": summary.target_date, "diary": generated_diary},
             config.bearer_token,
         )
         logging.info(
-            "Requested diary generation from Notes. target_date(JST)=%s run_id=%s generated=%s reason=%s",
+            "Diary saved via worker endpoint... target_date(JST)=%s run_id=%s updated=%s reason=%s",
             summary.target_date,
             run_id,
-            generate_result.get("generated"),
-            generate_result.get("reason"),
+            save_result.get("updated"),
+            save_result.get("reason"),
         )
         refreshed_summary = read_daily_log(
             daily_log_read_url=config.daily_log_read_url,
@@ -208,7 +228,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
 
     if not diary_text:
         logging.warning(
-            "Diary is empty after generation; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            "Diary is empty after Python generation; skipping notify_diary... target_date(JST)=%s run_id=%s",
             target_date,
             run_id,
         )
