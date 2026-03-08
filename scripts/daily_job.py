@@ -37,6 +37,7 @@ class Config:
     health_ingest_url: str
     expenses_ingest_url: str
     daily_log_read_url: str
+    diary_generate_url: str
     diary_mark_notified_url: str
     bearer_token: Optional[str]
 
@@ -46,6 +47,7 @@ WORKER_ENDPOINTS = {
     "ensure": f"{WORKER_EXECUTE_BASE_PATH}/ensure",
     "ingest_health": f"{WORKER_EXECUTE_BASE_PATH}/ingest_health",
     "ingest_expenses": f"{WORKER_EXECUTE_BASE_PATH}/ingest_expenses",
+    "generate_diary": f"{WORKER_EXECUTE_BASE_PATH}/generate_diary",
     "mark_diary_notified": f"{WORKER_EXECUTE_BASE_PATH}/mark_diary_notified",
     "read": "/api/daily_log",
 }
@@ -85,6 +87,9 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
             daily_log_upsert_url, WORKER_ENDPOINTS["ingest_expenses"]
         ),
         daily_log_read_url=build_worker_url(daily_log_upsert_url, WORKER_ENDPOINTS["read"]),
+        diary_generate_url=build_worker_url(
+            daily_log_upsert_url, WORKER_ENDPOINTS["generate_diary"]
+        ),
         diary_mark_notified_url=build_worker_url(
             daily_log_upsert_url, WORKER_ENDPOINTS["mark_diary_notified"]
         ),
@@ -169,10 +174,41 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         )
         return
 
+    notes_text = (summary.notes or "").strip()
+    if not notes_text:
+        logging.info(
+            "Notes is empty; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
+
     diary_text = (summary.diary or "").strip()
     if not diary_text:
+        generate_result = post_json(
+            config.diary_generate_url,
+            {"target_date": summary.target_date},
+            config.bearer_token,
+        )
         logging.info(
-            "Diary is empty; skipping notify_diary. target_date(JST)=%s run_id=%s",
+            "Requested diary generation from Notes. target_date(JST)=%s run_id=%s generated=%s reason=%s",
+            summary.target_date,
+            run_id,
+            generate_result.get("generated"),
+            generate_result.get("reason"),
+        )
+        refreshed_summary = read_daily_log(
+            daily_log_read_url=config.daily_log_read_url,
+            target_date=target_date,
+            bearer_token=config.bearer_token,
+        )
+        if refreshed_summary:
+            summary = refreshed_summary
+            diary_text = (summary.diary or "").strip()
+
+    if not diary_text:
+        logging.warning(
+            "Diary is empty after generation; skipping notify_diary. target_date(JST)=%s run_id=%s",
             target_date,
             run_id,
         )
