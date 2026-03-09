@@ -915,11 +915,13 @@ def run() -> None:
     task_pages = notion.query_database(cfg.task_db_id, task_query)
     expense_pages: list[dict[str, Any]] = []
     if cfg.expenses_db_id:
+        family_card_filter = {"property": cfg.expense_family_card_prop, "checkbox": {"equals": False}}
         expense_or_candidates: list[dict[str, Any] | None] = [
             {
                 "and": [
                     {"property": cfg.expense_received_at_prop, "date": {"on_or_after": window_start.isoformat()}},
                     {"property": cfg.expense_received_at_prop, "date": {"before": window_end.isoformat()}},
+                    family_card_filter,
                 ]
             },
             {
@@ -927,18 +929,14 @@ def run() -> None:
                     {"property": cfg.expense_received_at_prop, "date": {"is_empty": True}},
                     {"property": cfg.expense_date_prop, "date": {"on_or_after": window_start.date().isoformat()}},
                     {"property": cfg.expense_date_prop, "date": {"before": window_end.date().isoformat()}},
+                    family_card_filter,
                 ]
             },
         ]
         expense_or_filters = _build_valid_or_conditions(expense_or_candidates, "expenses_query")
         expense_query = {
             "filter": {
-                "and": [
-                    {
-                        "or": expense_or_filters
-                    },
-                    {"property": cfg.expense_family_card_prop, "checkbox": {"equals": False}},
-                ]
+                "or": expense_or_filters
             },
             "sorts": [{"property": cfg.expense_received_at_prop, "direction": "ascending"}],
             "page_size": 100,
