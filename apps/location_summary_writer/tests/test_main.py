@@ -14,6 +14,8 @@ from main import (
     StaySession,
     TaskEvent,
     build_prompt_db_query,
+    _build_valid_or_conditions,
+    _validate_filter_structure,
     build_gpt_payload,
     compute_window,
     generate_location_summary,
@@ -243,6 +245,15 @@ class MainTests(unittest.TestCase):
         expenses = parse_expenses(pages, cfg, window_start, window_end)
         self.assertEqual(len(expenses), 1)
         self.assertEqual(expenses[0].merchant, "通常利用")
+
+
+    def test_validate_filter_structure_rejects_incomplete_property_condition(self):
+        with self.assertRaisesRegex(ValueError, "incomplete condition"):
+            _validate_filter_structure({"and": [{"property": "Date"}]}, "test_filter")
+
+    def test_build_valid_or_conditions_rejects_empty_candidates(self):
+        with self.assertRaisesRegex(ValueError, "no valid OR conditions"):
+            _build_valid_or_conditions([None, {}], "expenses_query")
 
     def test_build_prompt_db_query_does_not_filter_variant(self):
         cfg = Config(

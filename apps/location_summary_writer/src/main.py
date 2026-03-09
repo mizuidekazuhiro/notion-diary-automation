@@ -120,6 +120,21 @@ class NotionClient:
             if next_cursor:
                 body["start_cursor"] = next_cursor
 
+            _validate_filter_structure(body.get("filter"), f"database_id={database_id}")
+            LOGGER.info(
+                "notion_query: database_id=%s payload=%s",
+                database_id,
+                json.dumps(
+                    {
+                        "filter": body.get("filter"),
+                        "sorts": body.get("sorts"),
+                        "page_size": body.get("page_size"),
+                        "start_cursor": body.get("start_cursor"),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
             resp = self.session.post(url, json=body, timeout=30)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Notion query failed ({resp.status_code}): {resp.text}")
@@ -265,6 +280,50 @@ def normalize_category(category: str) -> str:
         return "other"
     return "unknown"
 
+
+def _is_complete_property_filter_clause(clause: dict[str, Any]) -> bool:
+    prop = clause.get("property")
+    if not isinstance(prop, str) or not prop.strip():
+        return False
+    return any(key != "property" for key in clause)
+
+
+def _validate_filter_structure(filter_obj: Any, context: str) -> None:
+    def _walk(node: Any, path: str) -> None:
+        if not isinstance(node, dict) or not node:
+            raise ValueError(f"Invalid Notion filter for {context}: empty or non-dict condition at {path}")
+
+        if "and" in node or "or" in node:
+            for op in ("and", "or"):
+                if op not in node:
+                    continue
+                group = node.get(op)
+                if not isinstance(group, list) or not group:
+                    raise ValueError(f"Invalid Notion filter for {context}: {path}.{op} must be a non-empty list")
+                for idx, child in enumerate(group):
+                    _walk(child, f"{path}.{op}[{idx}]")
+            return
+
+        if not _is_complete_property_filter_clause(node):
+            raise ValueError(f"Invalid Notion filter for {context}: incomplete condition at {path}: {node}")
+
+    if filter_obj is None:
+        raise ValueError(f"Invalid Notion filter for {context}: filter is missing")
+    _walk(filter_obj, "filter")
+
+
+def _build_valid_or_conditions(candidates: list[dict[str, Any] | None], context: str) -> list[dict[str, Any]]:
+    valid_conditions: list[dict[str, Any]] = []
+    for idx, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict) or not candidate:
+            continue
+        _validate_filter_structure(candidate, f"{context}.or[{idx}]")
+        valid_conditions.append(candidate)
+
+    if not valid_conditions:
+        raise ValueError(f"Failed to build Notion filter for {context}: no valid OR conditions")
+
+    return valid_conditions
 
 def clip_session(start: datetime, end: datetime, window_start: datetime, window_end: datetime) -> tuple[datetime, datetime] | None:
     clipped_start = max(start, window_start)
@@ -856,25 +915,27 @@ def run() -> None:
     task_pages = notion.query_database(cfg.task_db_id, task_query)
     expense_pages: list[dict[str, Any]] = []
     if cfg.expenses_db_id:
+        expense_or_candidates: list[dict[str, Any] | None] = [
+            {
+                "and": [
+                    {"property": cfg.expense_received_at_prop, "date": {"on_or_after": window_start.isoformat()}},
+                    {"property": cfg.expense_received_at_prop, "date": {"before": window_end.isoformat()}},
+                ]
+            },
+            {
+                "and": [
+                    {"property": cfg.expense_received_at_prop, "date": {"is_empty": True}},
+                    {"property": cfg.expense_date_prop, "date": {"on_or_after": window_start.date().isoformat()}},
+                    {"property": cfg.expense_date_prop, "date": {"before": window_end.date().isoformat()}},
+                ]
+            },
+        ]
+        expense_or_filters = _build_valid_or_conditions(expense_or_candidates, "expenses_query")
         expense_query = {
             "filter": {
                 "and": [
                     {
-                        "or": [
-                            {
-                                "and": [
-                                    {"property": cfg.expense_received_at_prop, "date": {"on_or_after": window_start.isoformat()}},
-                                    {"property": cfg.expense_received_at_prop, "date": {"before": window_end.isoformat()}},
-                                ]
-                            },
-                            {
-                                "and": [
-                                    {"property": cfg.expense_received_at_prop, "date": {"is_empty": True}},
-                                    {"property": cfg.expense_date_prop, "date": {"on_or_after": window_start.date().isoformat()}},
-                                    {"property": cfg.expense_date_prop, "date": {"before": window_end.date().isoformat()}},
-                                ]
-                            },
-                        ]
+                        "or": expense_or_filters
                     },
                     {"property": cfg.expense_family_card_prop, "checkbox": {"equals": False}},
                 ]
