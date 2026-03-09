@@ -2198,10 +2198,24 @@ async function handleDailyLogPhotosIngest(
     return badRequest(targetDateResult.reason);
   }
   const { targetDate } = targetDateResult;
+  console.info(`[daily_log.ingest_photos] target_date=${targetDate}`);
 
   const healthPropertyNames = getHealthPropertyNames(env);
   const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
   const healthDbProperties = await getDatabaseProperties(env, env.HEALTH_DB_ID);
+  const configuredHealthMealPhotoPropertyName = healthPropertyNames.mealPhoto;
+  const healthMealPhotoPropertyNameCandidates = [
+    configuredHealthMealPhotoPropertyName,
+    "Meal Photos",
+    "Meal photo",
+  ].filter((name, index, self) => Boolean(name) && self.indexOf(name) === index);
+  const healthMealPhotoPropertyName =
+    healthMealPhotoPropertyNameCandidates.find(
+      (name) => healthDbProperties[name]?.type === "files",
+    ) ?? configuredHealthMealPhotoPropertyName;
+  console.info(
+    `[daily_log.ingest_photos] health_meal_photo_property_name=${healthMealPhotoPropertyName} configured=${configuredHealthMealPhotoPropertyName}`,
+  );
   if (!hasPropertyType(healthDbProperties, healthPropertyNames.date, "date")) {
     return new Response(
       JSON.stringify({
@@ -2230,12 +2244,39 @@ async function handleDailyLogPhotosIngest(
 
   const queryData = await queryResponse.json();
   const healthPages = queryData.results ?? [];
+  console.info(`[daily_log.ingest_photos] health_pages_count=${healthPages.length}`);
+
+  for (const page of healthPages) {
+    const pageId = typeof page?.id === "string" ? page.id : "unknown";
+    const mealPhotoProperty = page?.properties?.[healthMealPhotoPropertyName];
+    const propertyExists = Boolean(mealPhotoProperty);
+    const propertyType =
+      propertyExists && typeof mealPhotoProperty.type === "string"
+        ? mealPhotoProperty.type
+        : "unknown";
+    const normalizedPhotoCount = normalizeFilesFromProperty(mealPhotoProperty).length;
+    console.info(
+      `[daily_log.ingest_photos] page_id=${pageId} property_exists=${propertyExists} property_type=${propertyType} normalized_photo_count=${normalizedPhotoCount}`,
+    );
+  }
+
   const mealPhotos = collectMealPhotosFromHealthPages(
     healthPages,
-    healthPropertyNames.mealPhoto,
+    healthMealPhotoPropertyName,
     normalizeFilesFromProperty,
   );
+  console.info(`[daily_log.ingest_photos] collected_meal_photos_count=${mealPhotos.length}`);
   if (!mealPhotos.length) {
+    const noPhotosReason =
+      healthPages.length === 0
+        ? "pages_count=0"
+        : healthPages.some(
+              (page: Record<string, any>) =>
+                !page?.properties?.[healthMealPhotoPropertyName],
+            )
+          ? "property_missing"
+          : "normalized_photo_count=0";
+    console.warn(`[daily_log.ingest_photos] no_photos_reason=${noPhotosReason}`);
     return new Response(
       JSON.stringify({
         ok: true,
@@ -2243,6 +2284,7 @@ async function handleDailyLogPhotosIngest(
         found: false,
         updated: false,
         reason: "no photos",
+        details: noPhotosReason,
       }),
       { headers: jsonHeaders },
     );
@@ -2284,6 +2326,7 @@ async function handleDailyLogPhotosIngest(
   if ("error" in upsertResult) {
     return upsertResult.error;
   }
+  console.info(`[daily_log.ingest_photos] daily_log_page_id=${upsertResult.pageId}`);
 
   return new Response(
     JSON.stringify({
