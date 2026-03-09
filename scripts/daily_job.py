@@ -164,12 +164,40 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
 
 
 def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str], list[str], str]:
+    expenses_details = ""
+    if summary.expenses.top:
+        parts: list[str] = []
+        for item in summary.expenses.top:
+            title = item.title.strip() or "Untitled"
+            parts.append(f"{title} ({int(item.amount) if float(item.amount).is_integer() else item.amount})")
+        if summary.expenses.remaining > 0:
+            parts.append(f"ほか{summary.expenses.remaining}件")
+        expenses_details = "、".join(parts)
+
     candidates = [
+        ("Date", summary.date),
+        ("Target Date", summary.target_date_value),
         ("Title", summary.title),
+        ("Place", summary.place),
         ("Mood", summary.mood),
         ("Notes", summary.notes),
-        ("Meal summary", summary.meal_summary),
+        ("Done Count", str(summary.done_count) if summary.done_count is not None else None),
+        ("Done Tasks", "、".join(summary.done_tasks) if summary.done_tasks else None),
+        ("Drop Count", str(summary.drop_count) if summary.drop_count is not None else None),
+        ("Drop Tasks", "、".join(summary.drop_tasks) if summary.drop_tasks else None),
+        (
+            "Expenses Total",
+            str(int(summary.expenses_total)) if isinstance(summary.expenses_total, (int, float)) and float(summary.expenses_total).is_integer() else str(summary.expenses_total) if summary.expenses_total is not None else None,
+        ),
+        ("Expenses", expenses_details),
         ("Location summary", summary.location_summary),
+        ("Activity Summary", summary.activity_summary),
+        ("Meal summary", summary.meal_summary),
+        ("Kcal", str(summary.kcal) if summary.kcal is not None else None),
+        ("Fat", str(summary.fat) if summary.fat is not None else None),
+        ("Carb", str(summary.carb) if summary.carb is not None else None),
+        ("Protein", str(summary.protein) if summary.protein is not None else None),
+        ("Weight", str(summary.weight) if summary.weight is not None else None),
     ]
 
     used: dict[str, str] = {}
@@ -190,9 +218,6 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
     return used, skipped, " | ".join(overview_parts)
 
 
-def has_meaningful_notes(notes: str | None) -> bool:
-    return isinstance(notes, str) and notes.strip() != ""
-
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = read_daily_log(
         daily_log_read_url=config.daily_log_read_url,
@@ -207,16 +232,8 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         )
         return
 
-    if not has_meaningful_notes(summary.notes):
-        logging.info(
-            "skip diary update: notes is empty. target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
-        return
-
     logging.info(
-        "diary update triggered by notes. target_date(JST)=%s run_id=%s",
+        "diary update triggered by Daily Log fields. target_date(JST)=%s run_id=%s",
         target_date,
         run_id,
     )

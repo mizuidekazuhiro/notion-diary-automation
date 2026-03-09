@@ -3418,8 +3418,29 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const summaryText = getPlainTextFromRichText(properties["Activity Summary"]);
   const summaryHtml = getPlainTextFromRichText(properties.Diary);
   const diary = getPlainTextFromRichText(properties.Diary) || null;
+  const date = getDateStartFromProperty(properties.Date) || null;
+  const targetDateValue = getDateStartFromProperty(properties["Target Date"]) || targetDate;
+  const place = getPlainTextFromRichText(properties.Place) || null;
+  const doneTaskIds = getRelationIdsFromProperty(properties["Done Tasks"]);
+  const dropTaskIds = getRelationIdsFromProperty(properties["Drop Tasks"]);
+  const doneTaskTitles = await readTaskTitlesByRelationIds(env, doneTaskIds);
+  const dropTaskTitles = await readTaskTitlesByRelationIds(env, dropTaskIds);
+  const doneCount =
+    typeof properties["Done Count"]?.number === "number"
+      ? properties["Done Count"].number
+      : doneTaskIds.length;
+  const dropCount =
+    typeof properties["Drop Count"]?.number === "number"
+      ? properties["Drop Count"].number
+      : dropTaskIds.length;
+  const healthPropertyNames = getDailyLogHealthPropertyNames(env);
+  const kcal = getNumberFromProperty(properties[healthPropertyNames.kcal]);
+  const protein = getNumberFromProperty(properties[healthPropertyNames.protein]);
+  const fat = getNumberFromProperty(properties[healthPropertyNames.fat]);
+  const carb = getNumberFromProperty(properties[healthPropertyNames.carb]);
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
+  const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
   const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
   const expensesTotalRaw =
     typeof properties[dailyLogExpensesPropertyNames.total]?.number === "number"
@@ -3511,6 +3532,8 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     JSON.stringify({
       found: true,
       target_date: targetDate,
+      date,
+      target_date_value: targetDateValue,
       page_id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.dailyLog),
       summary_text: summaryText,
@@ -3520,6 +3543,16 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       diary,
       meal_summary: mealSummary,
       meal_photos: mealPhotos,
+      place,
+      activity_summary: activitySummary,
+      done_count: doneCount,
+      done_tasks: doneTaskTitles,
+      drop_count: dropCount,
+      drop_tasks: dropTaskTitles,
+      kcal,
+      protein,
+      fat,
+      carb,
       expenses_total: resolvedExpensesTotal,
       expenses: {
         total: resolvedExpensesTotal,
