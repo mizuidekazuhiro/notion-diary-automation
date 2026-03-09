@@ -25,6 +25,8 @@ class ExpenseSummary:
 @dataclass(frozen=True)
 class DailyLogSummary:
     target_date: str
+    date: Optional[str]
+    target_date_value: Optional[str]
     page_id: str
     title: str
     summary_text: str
@@ -34,6 +36,16 @@ class DailyLogSummary:
     diary: Optional[str]
     meal_summary: Optional[str]
     meal_photos: List[str]
+    place: Optional[str]
+    activity_summary: Optional[str]
+    done_count: Optional[int]
+    done_tasks: List[str]
+    drop_count: Optional[int]
+    drop_tasks: List[str]
+    kcal: Optional[float]
+    protein: Optional[float]
+    fat: Optional[float]
+    carb: Optional[float]
     expenses_total: Optional[float]
     expenses: ExpenseSummary
     location_summary: Optional[str]
@@ -74,6 +86,8 @@ def read_daily_log(
 
     return DailyLogSummary(
         target_date=payload.get("target_date", target_date),
+        date=payload.get("date"),
+        target_date_value=payload.get("target_date_value"),
         page_id=payload.get("page_id", ""),
         title=payload.get("title", ""),
         summary_text=payload.get("summary_text", ""),
@@ -83,6 +97,16 @@ def read_daily_log(
         diary=payload.get("diary"),
         meal_summary=payload.get("meal_summary"),
         meal_photos=payload.get("meal_photos", []) or [],
+        place=payload.get("place"),
+        activity_summary=payload.get("activity_summary"),
+        done_count=payload.get("done_count"),
+        done_tasks=payload.get("done_tasks", []) or [],
+        drop_count=payload.get("drop_count"),
+        drop_tasks=payload.get("drop_tasks", []) or [],
+        kcal=payload.get("kcal"),
+        protein=payload.get("protein"),
+        fat=payload.get("fat"),
+        carb=payload.get("carb"),
         expenses_total=payload.get("expenses_total"),
         expenses=expenses_summary,
         location_summary=payload.get("location_summary"),
