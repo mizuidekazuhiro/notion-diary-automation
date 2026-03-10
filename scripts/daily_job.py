@@ -19,7 +19,6 @@ from ingest.ensure_daily_log_page import ensure_daily_log_page
 from ingest.http_client import post_json
 from ingest.ingest_sources import ingest_sources
 from publish.read_daily_log import read_daily_log
-from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 from scripts.diary_generator import generate_diary_from_daily_log
@@ -327,17 +326,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         )
         return
 
-    mail = render_diary_notification_mail(
-        target_date=summary.target_date,
-        diary=diary_text,
-        page_url=page_url,
-    )
-    mail_config = MailConfig(
-        mail_from=config.mail_from,
-        mail_to=config.mail_to,
-        gmail_app_password=config.gmail_app_password,
-    )
-    send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
+    logging.info("phase_c_email_disabled")
 
     post_json(
         config.diary_mark_notified_url,
@@ -369,7 +358,7 @@ def main() -> None:
     need_publish = args.phase in ("publish", "all")
     need_notify_diary = args.phase in ("notify_diary", "all")
     config = load_config(
-        need_mail=(need_publish or need_notify_diary),
+        need_mail=need_publish,
         need_tasks=need_ingest,
     )
     run_id = os.getenv("GITHUB_RUN_ID", "local")
