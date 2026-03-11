@@ -31,16 +31,19 @@ def _dummy_summary() -> DailyLogSummary:
         done_count=3,
         done_tasks=["会食予定登録", "打合せ", "通常タスク"],
         done_tasks_detail=[
+            # case 1: done_date=target_date, event_date in the future
             DoneTaskDetail(
                 title="会食予定登録",
                 done_date="2026-02-02",
                 event_date="2026-02-26T20:00:00+09:00",
             ),
+            # case 2: done_date=target_date, event_date=target_date
             DoneTaskDetail(
                 title="打合せ",
                 done_date="2026-02-02",
                 event_date="2026-02-02T10:00:00+09:00",
             ),
+            # case 3: done_date=target_date, event_date is empty
             DoneTaskDetail(title="通常タスク", done_date="2026-02-02", event_date=None),
         ],
         drop_count=0,
@@ -64,9 +67,19 @@ def main() -> None:
     summary = _dummy_summary()
 
     detail_text = _build_done_tasks_detail_text(summary)
-    assert "会食予定登録 | done_date=2026-02-02 | event_date=2026-02-26T20:00:00+09:00" in detail_text
-    assert "打合せ | done_date=2026-02-02 | event_date=2026-02-02T10:00:00+09:00" in detail_text
-    assert "通常タスク | done_date=2026-02-02 | event_date=null" in detail_text
+    detail_lines = set(detail_text.splitlines())
+
+    # case 1: future event should be represented as a scheduled registration
+    assert (
+        "会食予定登録 | done_date=2026-02-02 | event_date=2026-02-26T20:00:00+09:00"
+        in detail_lines
+    )
+
+    # case 2: same-day event may be treated as that day's actual event
+    assert "打合せ | done_date=2026-02-02 | event_date=2026-02-02T10:00:00+09:00" in detail_lines
+
+    # case 3: no event_date should be treated as a normal completed task
+    assert "通常タスク | done_date=2026-02-02 | event_date=null" in detail_lines
 
     fields, skipped, _ = build_diary_input_fields(summary)
     assert "Done Tasks Detail" in fields
