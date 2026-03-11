@@ -19,6 +19,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         ("Place", input_fields.get("Place", "")),
         ("Done Count", input_fields.get("Done Count", "")),
         ("Done Tasks", input_fields.get("Done Tasks", "")),
+        ("Done Tasks Detail", input_fields.get("Done Tasks Detail", "")),
         ("Drop Count", input_fields.get("Drop Count", "")),
         ("Drop Tasks", input_fields.get("Drop Tasks", "")),
         ("Expenses Total", input_fields.get("Expenses Total", "")),
@@ -44,6 +45,15 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         "- 単なる項目の羅列ではなく、自然な日記文にしてください\n"
         "- Notes がある場合は本人の所感として活かしてよいですが、Notes の言い換えだけで終わってはいけません\n"
         "- 支出情報は `Expenses Total` と `Expenses` の両方を参照してください\n\n"
+
+        "Done Tasks と event_date の扱い(最重要):\n"
+        "- Done Tasks は『その日に Done にしたタスク』であり、その日にイベントが実施された証拠ではありません\n"
+        "- 会食・面談・打合せ等を『当日の実施イベント』として書いてよいのは、event_date が target_date と一致する場合のみです\n"
+        "- event_date が target_date より未来なら、その日にイベントがあったとは絶対に書かないでください\n"
+        "- event_date が未来の場合は『予定を登録した』『予定を設定した』『会食予定を入れた』など登録行為としてのみ扱ってください\n"
+        "- event_date が空の Done task は通常の完了タスクとして扱ってください\n"
+        "- 推測でイベント実施を補わないでください\n"
+        "- 登録日(done_date)と実施日(event_date)を混同しないでください\n\n"
         "支出情報の扱い:\n"
         "- `Expenses Total` はその日の支出総額として扱います\n"
         "- `Expenses` はリレーション先の支出明細として扱います\n"
@@ -78,6 +88,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         f"Place: {input_fields.get('Place', '')}\n"
         f"Done Count: {input_fields.get('Done Count', '')}\n"
         f"Done Tasks: {input_fields.get('Done Tasks', '')}\n"
+        f"Done Tasks Detail: {input_fields.get('Done Tasks Detail', '')}\n"
         f"Drop Count: {input_fields.get('Drop Count', '')}\n"
         f"Drop Tasks: {input_fields.get('Drop Tasks', '')}\n"
         f"Expenses Total: {input_fields.get('Expenses Total', '')}\n"
