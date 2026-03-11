@@ -14,14 +14,61 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      APP_TITLE: ${{ vars.APP_TITLE }}
+      NOTION_WORKOUT_SESSION_DB_ID: ${{ vars.NOTION_WORKOUT_SESSION_DB_ID }}
+      NOTION_WORKOUT_SET_LOG_DB_ID: ${{ vars.NOTION_WORKOUT_SET_LOG_DB_ID }}
+      NOTION_EXERCISE_MASTER_DB_ID: ${{ vars.NOTION_EXERCISE_MASTER_DB_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate required CI variables
+        run: |
+          set -euo pipefail
+
+          missing=0
+          required_vars=(
+            "CLOUDFLARE_ACCOUNT_ID"
+            "APP_TITLE"
+            "NOTION_WORKOUT_SESSION_DB_ID"
+            "NOTION_WORKOUT_SET_LOG_DB_ID"
+            "NOTION_EXERCISE_MASTER_DB_ID"
+          )
+
+          for var in "${required_vars[@]}"; do
+            if [ -z "${!var:-}" ]; then
+              echo "::error::${var} is not set"
+              missing=1
+            fi
+          done
+
+          if [ -z "${{ secrets.CF_API_TOKEN }}" ]; then
+            echo "::error::CF_API_TOKEN is not set"
+            missing=1
+          fi
+
+          if [ "$missing" -eq 1 ]; then
+            echo "Required environment values are missing. Configure GitHub Secrets / Variables and re-run."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+
+      - name: Install Workers dependencies
+        working-directory: workers
+        run: npm ci
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers
           command: deploy

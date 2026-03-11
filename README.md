@@ -113,3 +113,45 @@ Notion API
 cd workers
 npm test
 ```
+
+
+## 9. CI (GitHub Actions) の前提と初回セットアップ
+
+### なぜ `package-lock.json` をコミットするのか
+
+このリポジトリの Workers デプロイは **npm + `npm ci` 前提** で動作します。`npm ci` は `package-lock.json` が必須のため、lock file がないと CI は即失敗します。再現性のある依存解決（ローカル / CI の差分防止）のため、`workers/package-lock.json` は常に Git 管理対象に含めてください。
+
+### GitHub Actions は `npm ci` 前提
+
+`deploy_workers.yml` では Node.js セットアップ後に `workers` ディレクトリで `npm ci` を実行します。したがって、依存関係を更新したときは必ず `workers/package-lock.json` も更新してコミットしてください。
+
+### 必須の GitHub Secrets / Variables
+
+#### Secrets
+- `CF_API_TOKEN`（Cloudflare API Token）
+
+#### Variables
+- `CLOUDFLARE_ACCOUNT_ID`
+- `APP_TITLE`
+- `NOTION_WORKOUT_SESSION_DB_ID`
+- `NOTION_WORKOUT_SET_LOG_DB_ID`
+- `NOTION_EXERCISE_MASTER_DB_ID`
+
+### 未設定時のエラー
+
+`deploy_workers.yml` に必須値チェックを追加しています。未設定の値がある場合はデプロイ前に明示的に失敗し、以下の形式でエラーを出します。
+
+- `CLOUDFLARE_ACCOUNT_ID is not set`
+- `APP_TITLE is not set`
+- `NOTION_WORKOUT_SESSION_DB_ID is not set`
+- `NOTION_WORKOUT_SET_LOG_DB_ID is not set`
+- `NOTION_EXERCISE_MASTER_DB_ID is not set`
+- `CF_API_TOKEN is not set`
+
+### 初回セットアップ手順（推奨順）
+
+1. `workers` で依存関係をインストールし、`package-lock.json` を生成する（`npm install`）。
+2. 生成された `workers/package-lock.json` をコミットする。
+3. GitHub Repository の **Settings > Secrets and variables > Actions** で、上記 Secrets / Variables を登録する。
+4. 必要に応じて `workers/wrangler.toml` と Cloudflare 側リソース設定を確認する（秘密情報の直書きはしない）。
+5. `Deploy Cloudflare Workers` ワークフローを手動実行し、環境変数チェック → `npm ci` → deploy の順で通ることを確認する。
