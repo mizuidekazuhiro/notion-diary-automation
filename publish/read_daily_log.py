@@ -23,6 +23,13 @@ class ExpenseSummary:
 
 
 @dataclass(frozen=True)
+class DoneTaskDetail:
+    title: str
+    done_date: Optional[str]
+    event_date: Optional[str]
+
+
+@dataclass(frozen=True)
 class DailyLogSummary:
     target_date: str
     date: Optional[str]
@@ -40,6 +47,7 @@ class DailyLogSummary:
     activity_summary: Optional[str]
     done_count: Optional[int]
     done_tasks: List[str]
+    done_tasks_detail: List[DoneTaskDetail]
     drop_count: Optional[int]
     drop_tasks: List[str]
     kcal: Optional[float]
@@ -77,6 +85,23 @@ def read_daily_log(
                 url = str(item.get("url") or "")
                 top_entries.append(ExpenseItem(title=title, amount=amount, url=url))
 
+    done_tasks_detail_payload = payload.get("done_tasks_detail", []) or []
+    done_tasks_detail: List[DoneTaskDetail] = []
+    if isinstance(done_tasks_detail_payload, list):
+        for item in done_tasks_detail_payload:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            done_tasks_detail.append(
+                DoneTaskDetail(
+                    title=title,
+                    done_date=item.get("done_date"),
+                    event_date=item.get("event_date"),
+                )
+            )
+
     expenses_summary = ExpenseSummary(
         total=float(expenses_payload.get("total") or 0),
         count=int(expenses_payload.get("count") or 0),
@@ -101,6 +126,7 @@ def read_daily_log(
         activity_summary=payload.get("activity_summary"),
         done_count=payload.get("done_count"),
         done_tasks=payload.get("done_tasks", []) or [],
+        done_tasks_detail=done_tasks_detail,
         drop_count=payload.get("drop_count"),
         drop_tasks=payload.get("drop_tasks", []) or [],
         kcal=payload.get("kcal"),
