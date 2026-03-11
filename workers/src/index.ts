@@ -157,6 +157,7 @@ function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
     { name: TITLE_PROPERTIES.tasks, type: "title" },
     { name: doneDatePropertyName, type: "date" },
     { name: dropDatePropertyName, type: "date" },
+    { name: "Event Date", type: "date" },
   ];
 }
 
@@ -1648,6 +1649,7 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
         title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
         priority: page.properties?.Priority?.select?.name ?? null,
         done_date: doneDateRaw,
+        event_date: page.properties?.["Event Date"]?.date?.start ?? null,
         done_date_jst: doneDateJst,
       };
     })
@@ -2955,29 +2957,51 @@ function getCheckboxFromProperty(property: Record<string, any> | undefined): boo
   return property.checkbox;
 }
 
+type DailyLogTaskDetail = {
+  page_id: string;
+  title: string;
+  done_date: string | null;
+  event_date: string | null;
+};
+
+async function readTaskDetailsByRelationIds(
+  env: Env,
+  pageIds: string[],
+): Promise<DailyLogTaskDetail[]> {
+  if (!pageIds.length) {
+    return [];
+  }
+
+  const { doneDatePropertyName } = getTaskPropertyNames(env);
+  const details = await Promise.all(
+    pageIds.map(async (pageId) => {
+      const response = await notionFetch(env, `/pages/${pageId}`);
+      if (!response.ok) {
+        const errorDetails = await getNotionErrorDetails(response);
+        console.warn(
+          `Notion API error in readTaskDetailsByRelationIds: status=${errorDetails.status} page_id=${pageId} message=${errorDetails.message}`,
+        );
+        return null;
+      }
+      const page = await response.json();
+      return {
+        page_id: pageId,
+        title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks).trim(),
+        done_date: page.properties?.[doneDatePropertyName]?.date?.start ?? null,
+        event_date: page.properties?.["Event Date"]?.date?.start ?? null,
+      } satisfies DailyLogTaskDetail;
+    }),
+  );
+
+  return details.filter((item): item is DailyLogTaskDetail => Boolean(item?.title));
+}
+
 async function readTaskTitlesByRelationIds(
   env: Env,
   pageIds: string[],
 ): Promise<string[]> {
-  if (!pageIds.length) {
-    return [];
-  }
-  const titles = await Promise.all(
-    pageIds.map(async (pageId) => {
-      const response = await notionFetch(env, `/pages/${pageId}`);
-      if (!response.ok) {
-        const details = await getNotionErrorDetails(response);
-        console.warn(
-          `Notion API error in readTaskTitlesByRelationIds: status=${details.status} page_id=${pageId} message=${details.message}`,
-        );
-        return "";
-      }
-      const page = await response.json();
-      return getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks);
-    }),
-  );
-
-  return titles.map((value) => value.trim()).filter(Boolean);
+  const details = await readTaskDetailsByRelationIds(env, pageIds);
+  return details.map((item) => item.title).filter(Boolean);
 }
 
 async function handleDailyLogGenerateDiary(
@@ -3466,7 +3490,8 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const place = getPlainTextFromRichText(properties.Place) || null;
   const doneTaskIds = getRelationIdsFromProperty(properties["Done Tasks"]);
   const dropTaskIds = getRelationIdsFromProperty(properties["Drop Tasks"]);
-  const doneTaskTitles = await readTaskTitlesByRelationIds(env, doneTaskIds);
+  const doneTaskDetails = await readTaskDetailsByRelationIds(env, doneTaskIds);
+  const doneTaskTitles = doneTaskDetails.map((item) => item.title);
   const dropTaskTitles = await readTaskTitlesByRelationIds(env, dropTaskIds);
   const doneCount =
     typeof properties["Done Count"]?.number === "number"
@@ -3590,6 +3615,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       activity_summary: activitySummary,
       done_count: doneCount,
       done_tasks: doneTaskTitles,
+      done_tasks_detail: doneTaskDetails,
       drop_count: dropCount,
       drop_tasks: dropTaskTitles,
       kcal,

@@ -162,6 +162,18 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
 
 
+def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:
+    if not summary.done_tasks_detail:
+        return ""
+
+    parts: list[str] = []
+    for task in summary.done_tasks_detail:
+        done_date = (task.done_date or "").strip() or "null"
+        event_date = (task.event_date or "").strip() or "null"
+        parts.append(f"{task.title} | done_date={done_date} | event_date={event_date}")
+    return "\n".join(parts)
+
+
 def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str], list[str], str]:
     expenses_details = ""
     if summary.expenses.top:
@@ -173,6 +185,8 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
             parts.append(f"ほか{summary.expenses.remaining}件")
         expenses_details = "、".join(parts)
 
+    done_tasks_detail = _build_done_tasks_detail_text(summary)
+
     candidates = [
         ("Date", summary.date),
         ("Target Date", summary.target_date_value),
@@ -182,6 +196,7 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Notes", summary.notes),
         ("Done Count", str(summary.done_count) if summary.done_count is not None else None),
         ("Done Tasks", "、".join(summary.done_tasks) if summary.done_tasks else None),
+        ("Done Tasks Detail", done_tasks_detail),
         ("Drop Count", str(summary.drop_count) if summary.drop_count is not None else None),
         ("Drop Tasks", "、".join(summary.drop_tasks) if summary.drop_tasks else None),
         (

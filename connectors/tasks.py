@@ -12,6 +12,8 @@ class TaskItem:
     page_id: str
     title: str
     priority: Optional[str]
+    done_date: Optional[str]
+    event_date: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,8 @@ class TasksConnector:
                 page_id=item.get("page_id", ""),
                 title=item.get("title", ""),
                 priority=item.get("priority"),
+                done_date=item.get("done_date"),
+                event_date=item.get("event_date"),
             )
             for item in payload.get("done", [])
         ]
@@ -64,6 +68,8 @@ class TasksConnector:
                 page_id=item.get("page_id", ""),
                 title=item.get("title", ""),
                 priority=item.get("priority"),
+                done_date=item.get("done_date"),
+                event_date=item.get("event_date"),
             )
             for item in payload.get("drop", [])
         ]
