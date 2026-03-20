@@ -2,7 +2,7 @@ name: Daily Notion Diary - Phase C (Notify Diary)
 on:
   schedule:
     - cron: 
-  workflow_dispatch:
+  workflow_dispatch: "*/10 * * * *"
 
 jobs:
   run-notify-diary:
