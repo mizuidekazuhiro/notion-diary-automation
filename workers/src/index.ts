@@ -115,6 +115,44 @@ type SchemaCache = Record<string, boolean>;
 const schemaCache: SchemaCache = {};
 const databasePropertiesCache: Record<string, Record<string, any>> = {};
 
+function normalizeNotionPropertyName(name: string): string {
+  return name.trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+function findExactOrNormalizedPropertyMatches(
+  properties: Record<string, any>,
+  desiredName: string,
+): string[] {
+  if (!desiredName) {
+    return [];
+  }
+  if (properties[desiredName]) {
+    return [desiredName];
+  }
+  const normalizedDesired = normalizeNotionPropertyName(desiredName);
+  return Object.keys(properties).filter((propertyName) => {
+    return normalizeNotionPropertyName(propertyName) === normalizedDesired;
+  });
+}
+
+function resolvePropertyName(
+  properties: Record<string, any>,
+  desiredName: string,
+  context: string,
+): string | null {
+  const matches = findExactOrNormalizedPropertyMatches(properties, desiredName);
+  if (!matches.length) {
+    return null;
+  }
+  if (matches.length > 1) {
+    console.warn(
+      `[property_resolver] ambiguous match context=${context} desired=${desiredName} matches=${matches.join(", ")}`,
+    );
+    return null;
+  }
+  return matches[0];
+}
+
 function buildDailyLogProperties(env: Env): ExpectedProperty[] {
   const dailyLogExpenses = getDailyLogExpensesPropertyNames(env);
   return [
@@ -1027,7 +1065,8 @@ async function validateDatabaseSchema(
   const missingOptions: string[] = [];
 
   expectedProperties.forEach((property) => {
-    const schema = properties[property.name];
+    const resolvedName = resolvePropertyName(properties, property.name, `validate:${dbId}`);
+    const schema = resolvedName ? properties[resolvedName] : null;
     if (!schema) {
       missing.push(property.name);
       return;
@@ -1038,7 +1077,8 @@ async function validateDatabaseSchema(
   });
 
   Object.entries(selectOptionRequirements).forEach(([propertyName, requiredOptions]) => {
-    const schema = properties[propertyName];
+    const resolvedName = resolvePropertyName(properties, propertyName, `validate_select:${dbId}`);
+    const schema = resolvedName ? properties[resolvedName] : null;
     if (!schema || schema.type !== "select") {
       return;
     }
@@ -1093,8 +1133,21 @@ function hasPropertyType(
   name: string,
   type: NotionPropertyType,
 ): boolean {
-  const schema = properties[name];
+  const resolvedName = resolvePropertyName(properties, name, `hasPropertyType:${type}`);
+  if (!resolvedName) {
+    return false;
+  }
+  const schema = properties[resolvedName];
   return Boolean(schema && schema.type === type);
+}
+
+function getResolvedProperty<T>(
+  properties: Record<string, T>,
+  name: string,
+  context: string,
+): T | undefined {
+  const resolvedName = resolvePropertyName(properties as Record<string, any>, name, context);
+  return resolvedName ? properties[resolvedName] : undefined;
 }
 
 function parseBooleanEnv(value?: string): boolean {
@@ -1220,7 +1273,7 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
     sleepStart: "Sleep Start",
     sleepEnd: "Sleep End",
-    sleepDurationMin: "Sleep Duration Min",
+    sleepDurationMin: "Sleep Duration",
     sleepScore: "Sleep Score",
     sleepSource: "Sleep Source",
     readinessStars: "Readiness Stars",
@@ -1229,10 +1282,10 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     baselineHrv: "Baseline HRV",
     baselineWakingBpm: "Baseline Waking BPM",
     sleepHeartRate: "Sleep Heart Rate",
-    deepDurationMin: "Deep Duration Min",
-    remDurationMin: "REM Duration Min",
-    sleepAnalysisJp: "Sleep Analysis JP",
-    todayConditionForecastJp: "Today Condition Forecast JP",
+    deepDurationMin: "Deep Duration",
+    remDurationMin: "REM Duration",
+    sleepAnalysisJp: "Sleep Analysis",
+    todayConditionForecastJp: "Today Condition Forecast",
   };
 }
 
@@ -2040,40 +2093,40 @@ async function handleDailyLogHealthIngest(
 
   const healthPage = healthPages[0];
   const healthProps = healthPage.properties ?? {};
-  const protein = getNumberFromProperty(healthProps[healthPropertyNames.protein]);
-  const fat = getNumberFromProperty(healthProps[healthPropertyNames.fat]);
-  const carb = getNumberFromProperty(healthProps[healthPropertyNames.carb]);
-  const kcal = getNumberFromProperty(healthProps[healthPropertyNames.kcal]);
-  const weight = getNumberFromProperty(healthProps[healthPropertyNames.weight]);
-  const sleepStart = getDateTimeFromProperty(healthProps[healthPropertyNames.sleepStart]);
-  const sleepEnd = getDateTimeFromProperty(healthProps[healthPropertyNames.sleepEnd]);
+  const protein = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.protein, "health_ingest:protein"));
+  const fat = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.fat, "health_ingest:fat"));
+  const carb = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.carb, "health_ingest:carb"));
+  const kcal = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.kcal, "health_ingest:kcal"));
+  const weight = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.weight, "health_ingest:weight"));
+  const sleepStart = getDateTimeFromProperty(getResolvedProperty(healthProps, healthPropertyNames.sleepStart, "health_ingest:sleep_start"));
+  const sleepEnd = getDateTimeFromProperty(getResolvedProperty(healthProps, healthPropertyNames.sleepEnd, "health_ingest:sleep_end"));
   const sleepDurationMin = getNumberFromProperty(
-    healthProps[healthPropertyNames.sleepDurationMin],
+    getResolvedProperty(healthProps, healthPropertyNames.sleepDurationMin, "health_ingest:sleep_duration"),
   );
-  const sleepScore = getNumberFromProperty(healthProps[healthPropertyNames.sleepScore]);
-  const sleepSource = getStringFromProperty(healthProps[healthPropertyNames.sleepSource]);
+  const sleepScore = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.sleepScore, "health_ingest:sleep_score"));
+  const sleepSource = getStringFromProperty(getResolvedProperty(healthProps, healthPropertyNames.sleepSource, "health_ingest:sleep_source"));
   const readinessStars = getNumberFromProperty(
-    healthProps[healthPropertyNames.readinessStars],
+    getResolvedProperty(healthProps, healthPropertyNames.readinessStars, "health_ingest:readiness_stars"),
   );
   const readinessHrv = getNumberFromProperty(
-    healthProps[healthPropertyNames.readinessHrv],
+    getResolvedProperty(healthProps, healthPropertyNames.readinessHrv, "health_ingest:readiness_hrv"),
   );
   const readinessBpm = getNumberFromProperty(
-    healthProps[healthPropertyNames.readinessBpm],
+    getResolvedProperty(healthProps, healthPropertyNames.readinessBpm, "health_ingest:readiness_bpm"),
   );
-  const baselineHrv = getNumberFromProperty(healthProps[healthPropertyNames.baselineHrv]);
+  const baselineHrv = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.baselineHrv, "health_ingest:baseline_hrv"));
   const baselineWakingBpm = getNumberFromProperty(
-    healthProps[healthPropertyNames.baselineWakingBpm],
+    getResolvedProperty(healthProps, healthPropertyNames.baselineWakingBpm, "health_ingest:baseline_waking_bpm"),
   );
   const sleepHeartRate = getNumberFromProperty(
-    healthProps[healthPropertyNames.sleepHeartRate],
+    getResolvedProperty(healthProps, healthPropertyNames.sleepHeartRate, "health_ingest:sleep_heart_rate"),
   );
   const deepDurationMin = getNumberFromProperty(
-    healthProps[healthPropertyNames.deepDurationMin],
+    getResolvedProperty(healthProps, healthPropertyNames.deepDurationMin, "health_ingest:deep_duration"),
   );
-  const remDurationMin = getNumberFromProperty(healthProps[healthPropertyNames.remDurationMin]);
+  const remDurationMin = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.remDurationMin, "health_ingest:rem_duration"));
   const mealPhotos = normalizeFilesFromProperty(
-    healthProps[healthPropertyNames.mealPhoto],
+    getResolvedProperty(healthProps, healthPropertyNames.mealPhoto, "health_ingest:meal_photo"),
   );
   const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
 
@@ -3753,35 +3806,35 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ? properties["Drop Count"].number
       : dropTaskIds.length;
   const healthPropertyNames = getDailyLogHealthPropertyNames(env);
-  const kcal = getNumberFromProperty(properties[healthPropertyNames.kcal]);
-  const protein = getNumberFromProperty(properties[healthPropertyNames.protein]);
-  const fat = getNumberFromProperty(properties[healthPropertyNames.fat]);
-  const carb = getNumberFromProperty(properties[healthPropertyNames.carb]);
-  const sleepStart = getDateTimeFromProperty(properties[healthPropertyNames.sleepStart]);
-  const sleepEnd = getDateTimeFromProperty(properties[healthPropertyNames.sleepEnd]);
+  const kcal = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.kcal, "daily_log_read:kcal"));
+  const protein = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.protein, "daily_log_read:protein"));
+  const fat = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.fat, "daily_log_read:fat"));
+  const carb = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.carb, "daily_log_read:carb"));
+  const sleepStart = getDateTimeFromProperty(getResolvedProperty(properties, healthPropertyNames.sleepStart, "daily_log_read:sleep_start"));
+  const sleepEnd = getDateTimeFromProperty(getResolvedProperty(properties, healthPropertyNames.sleepEnd, "daily_log_read:sleep_end"));
   const sleepDurationMin = getNumberFromProperty(
-    properties[healthPropertyNames.sleepDurationMin],
+    getResolvedProperty(properties, healthPropertyNames.sleepDurationMin, "daily_log_read:sleep_duration"),
   );
-  const sleepScore = getNumberFromProperty(properties[healthPropertyNames.sleepScore]);
-  const sleepSource = getStringFromProperty(properties[healthPropertyNames.sleepSource]);
-  const readinessStars = getNumberFromProperty(properties[healthPropertyNames.readinessStars]);
-  const readinessHrv = getNumberFromProperty(properties[healthPropertyNames.readinessHrv]);
-  const readinessBpm = getNumberFromProperty(properties[healthPropertyNames.readinessBpm]);
-  const baselineHrv = getNumberFromProperty(properties[healthPropertyNames.baselineHrv]);
+  const sleepScore = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.sleepScore, "daily_log_read:sleep_score"));
+  const sleepSource = getStringFromProperty(getResolvedProperty(properties, healthPropertyNames.sleepSource, "daily_log_read:sleep_source"));
+  const readinessStars = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.readinessStars, "daily_log_read:readiness_stars"));
+  const readinessHrv = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.readinessHrv, "daily_log_read:readiness_hrv"));
+  const readinessBpm = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.readinessBpm, "daily_log_read:readiness_bpm"));
+  const baselineHrv = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.baselineHrv, "daily_log_read:baseline_hrv"));
   const baselineWakingBpm = getNumberFromProperty(
-    properties[healthPropertyNames.baselineWakingBpm],
+    getResolvedProperty(properties, healthPropertyNames.baselineWakingBpm, "daily_log_read:baseline_waking_bpm"),
   );
   const sleepHeartRate = getNumberFromProperty(
-    properties[healthPropertyNames.sleepHeartRate],
+    getResolvedProperty(properties, healthPropertyNames.sleepHeartRate, "daily_log_read:sleep_heart_rate"),
   );
   const deepDurationMin = getNumberFromProperty(
-    properties[healthPropertyNames.deepDurationMin],
+    getResolvedProperty(properties, healthPropertyNames.deepDurationMin, "daily_log_read:deep_duration"),
   );
-  const remDurationMin = getNumberFromProperty(properties[healthPropertyNames.remDurationMin]);
+  const remDurationMin = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.remDurationMin, "daily_log_read:rem_duration"));
   const sleepAnalysisJp =
-    getPlainTextFromRichText(properties[healthPropertyNames.sleepAnalysisJp]) || null;
+    getPlainTextFromRichText(getResolvedProperty(properties, healthPropertyNames.sleepAnalysisJp, "daily_log_read:sleep_analysis")) || null;
   const todayConditionForecastJp =
-    getPlainTextFromRichText(properties[healthPropertyNames.todayConditionForecastJp]) || null;
+    getPlainTextFromRichText(getResolvedProperty(properties, healthPropertyNames.todayConditionForecastJp, "daily_log_read:today_condition_forecast")) || null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
