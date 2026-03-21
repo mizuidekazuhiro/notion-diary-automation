@@ -21,76 +21,71 @@ RECENT_WINDOW_DAYS = 14
 SHORT_WINDOW_DAYS = 7
 SAMPLE_DAYS_PER_BUCKET = 5
 
-MINI_SYSTEM_PROMPT = """あなたは Daily Log 分析用の材料整理アシスタントです。
-役割は最終助言を書くことではなく、過去30日の材料を構造化して整理することです。
+MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前段整理アシスタントです。
+役割は、過去30日比較と当日状態から判断材料を整理し、最終本文の元になる判定JSONだけを作ることです。
 
 必須ルール:
-- 過去30日全体の構造化サマリを踏まえて整理する
-- 評価が高い日5件と低い日5件の差を比較する
-- 当日の diary 本文や過去の日記本文は参照しない
+- 出力は必ず JSON オブジェクト 1 個のみ。前置きや補足文は禁止
+- 最終本文、見出し、メール文面は絶対に書かない
+- 当日の diary 本文、過去の日記本文、location summary、diary由来要約、location summary由来要約は使わない
 - 日本語の自由記述として参照してよいのは notes のみ
-- 睡眠、食事、タスク、支出、記録状況、notes のうち根拠のあるものだけを使う
-- 決め打ちの一般論を書かない
-- 原因を断定しない
-- 相関らしきものは「傾向」「可能性」として扱う
-- データ不足の項目は不足として扱い、補完しない
-- 最終助言文は絶対に書かない
-- 出力は構造化テキストにする
+- 睡眠、食事、done、drop、spend、記録有無、notes、過去30日比較、top_good_days、top_bad_days のみで判断する
+- 因果は断定しない。相関は「傾向」「近さ」「可能性」に留める
+- 支出から感情を安易に推測しない
+- 食事記録がない場合は未記録シグナルとして扱ってよいが、健康状態を断定しない
+- タスクが少ない場合も、進捗不足とは断定せず、done/drop/open から言える範囲に留める
+- recommended_actions は 1 個または 2 個の短い文字列に絞る
+- evidence_used には本文生成に使う根拠を簡潔な配列で残す
 
-出力には必ず次の見出しを含めてください:
-1. recent_trends
-2. top_good_days_patterns
-3. top_bad_days_patterns
-4. good_vs_bad_differences
-5. notes_signals
-6. recording_patterns
-7. hidden_hypotheses
-8. today_relevant_points
+必須キー:
+- day_type
+- main_bottleneck
+- priority_theme
+- primary_risk
+- good_pattern_similarity
+- bad_pattern_similarity
+- notes_signal
+- recording_signal
+- evidence_used
+- recommended_actions
 """
 
-FINAL_SYSTEM_PROMPT = """あなたは朝の Daily Log レビュー用に Today advice を書くアシスタントです。
-役割は、miniモデルの整理結果と今朝の状態を読み、その日に本当に効きそうな論点を選んで、メール本文の冒頭にそのまま載せられる品質の日本語で Today advice を作ることです。
+FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice 本文を書くアシスタントです。
+役割は、判定JSONと当日の最小限の事実だけを使い、短めでも密度の高い日本語本文を書くことです。
 
 最優先要件:
-- 出力タイトルは必ず `Today advice` にする
-- 出力は以下の4部構成に固定する
-  1. Today advice
-  2. 直近の傾向
-  3. 本日の状態
-  4. 本日の進め方
-  5. 総括
-- 見出しは上記の自然な日本語をそのまま使い、口語的な見出しにしない
-- 全体は400〜700字程度を目安にし、短すぎる出力にしない
-- 各セクションは箇条書きではなく、3〜5文程度の自然な連続文で書く
-- 総括は最後に1文で簡潔にまとめる
+- 出力は日本語本文のみ。見出し、タイトル、箇条書き、JSONは禁止
+- 2段落以内
+- 220〜380字程度
+- 一般論は禁止
+- 事実 → 解釈 → 今日の優先行動 の順に自然につなぐ
+- 行動提案は 1〜2 個に絞る
+- 同じ事実の言い換えを繰り返さない
+- 読後に「今日は何を優先する日か」が明確に残るようにする
 
-内容ルール:
-- 一般論に逃げない
-- 必ず入力データに基づいて書く
-- 過去30日の構造化サマリと、評価が高い日5件・低い日5件の比較を必ず踏まえる
-- 今日は直近30日の中でどのパターンに近いかをまず判断する
-- 良い日 / 悪い日の差分を踏まえて、今日の進め方を具体化する
-- 今日の睡眠時間、就寝時刻、起床時刻、睡眠スコア、前日比、直近平均との差分、食事記録、タスク状況、支出、notes を優先する
-- 良い点と注意点の両方を書く
-- 事実 → 解釈 → 行動提案 の順で自然につなぐ
-- 行動提案は時間帯や優先順位がわかる実行可能な粒度で書く
-- 当日の diary 本文や過去の日記本文は参照しない
-- 日本語自由記述として扱ってよいのは notes のみ
-- データから言えないことは断定しない
-- 医療断定や過剰な励ましを避ける
-- 禁止表現: 「バランスの良い食事を心がけましょう」「適度に休憩しましょう」「無理せず過ごしましょう」「規則正しい生活を意識しましょう」「体調に気をつけましょう」など、入力データと結びつかない抽象的な一般論
-- 「〜するとよいでしょう」だけが続く単調な文体にしない
+入力制約:
+- 当日の diary 本文、過去の日記本文、location summary は使わない
+- notes 以外の自由記述を捏造しない
+- 判定JSONにない論点を勝手に増やしすぎない
+- 支出から感情を断定しない
+- 食事未記録から健康状態を断定しない
+
+禁止例:
+- バランスの良い食事を心がけましょう
+- 適度に休憩しましょう
+- 無理せず過ごしましょう
+- 規則正しい生活を意識しましょう
 
 文体:
-- 丁寧で自然な日本語
-- 口語すぎず、硬すぎず、読みやすい
-- レポートと助言文の中間の文体
-- 観測事実と解釈を明確に分けつつ、読んで自然につながる文章にする
+- メール冒頭にそのまま置ける自然な日本語
+- 丁寧だが回りくどくしない
+- 1文ごとに意味を進める
 """
 
 
 def _dump_today_advice_debug_log(*,
     debug_kind: str,
+    stage: str,
     target_date: str,
     model: str,
     advice_input: Mapping[str, Any],
@@ -120,31 +115,33 @@ def _dump_today_advice_debug_log(*,
         print(prompt_text)
         print(f"=== TODAY ADVICE {debug_kind} PROMPT END ===")
     except Exception as exc:
-        logging.warning("today_advice_debug_print_failed kind=%s error=%s", debug_kind, exc)
+        logging.warning("today_advice_debug_print_failed kind=%s stage=%s error=%s", debug_kind, stage, exc)
 
     try:
         debug_dir = os.path.join(os.getcwd(), "debug")
         os.makedirs(debug_dir, exist_ok=True)
         debug_payload = {
+            "stage": stage,
             "target_date": target_date,
             "model": model,
             "advice_input": advice_input,
             "advice_input_summary": advice_input_summary,
             "prompt_text": prompt_text,
         }
-        debug_path = os.path.join(debug_dir, f"today_advice_{debug_kind.lower()}_{target_date}.json")
+        debug_path = os.path.join(debug_dir, f"today_advice_{stage}_{debug_kind.lower()}_{target_date}.json")
         with open(debug_path, "w", encoding="utf-8") as debug_file:
             json.dump(debug_payload, debug_file, ensure_ascii=False, indent=2, default=str)
         print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE START ===")
         print(debug_path)
         print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE END ===")
     except Exception as exc:
-        logging.warning("today_advice_debug_file_failed kind=%s error=%s", debug_kind, exc)
+        logging.warning("today_advice_debug_file_failed kind=%s stage=%s error=%s", debug_kind, stage, exc)
 
 
-def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], structured: Mapping[str, Any], today_state: Mapping[str, Any], has_mini_analysis: bool, prompt_tokens: Optional[int], token_counting_method: str) -> dict[str, Any]:
+def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], structured: Mapping[str, Any], today_state: Mapping[str, Any], stage: str, evidence_used: Sequence[str], notes_used: bool, prompt_tokens: Optional[int], token_counting_method: str) -> dict[str, Any]:
     counts = structured.get("counts", {}) if isinstance(structured, Mapping) else {}
     return {
+        "stage": stage,
         "history_count": len(history),
         "history_dates": [item.target_date for item in history[:LOOKBACK_DAYS]],
         "high_mood_sample_count": structured.get("high_mood_sample_count") if isinstance(structured, Mapping) else None,
@@ -158,12 +155,15 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
         "today_sleep_keys": sorted(today_state.get("today_sleep", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_sleep"), Mapping) else [],
         "today_activity_keys": sorted(today_state.get("today_activity_context", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_activity_context"), Mapping) else [],
         "comparison_keys": sorted(today_state.get("comparisons", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("comparisons"), Mapping) else [],
-        "has_mini_analysis": has_mini_analysis,
         "last_30_days_count": counts.get("last_30_days_count") if isinstance(counts, Mapping) else None,
         "top_good_days_count": counts.get("top_good_days_count") if isinstance(counts, Mapping) else None,
         "top_bad_days_count": counts.get("top_bad_days_count") if isinstance(counts, Mapping) else None,
         "notes_used_count": counts.get("notes_used_count") if isinstance(counts, Mapping) else None,
         "diary_used": False,
+        "past_diary_used": False,
+        "location_summary_used": False,
+        "notes_used": notes_used,
+        "evidence_used": list(evidence_used),
         "input_tokens": prompt_tokens,
         "token_counting_method": token_counting_method,
     }
@@ -171,7 +171,8 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
 @dataclass(frozen=True)
 class MoodAdviceResult:
     today_advice: str
-    mini_analysis: str
+    judgment_json: dict[str, Any]
+    judgment_text: str
     high_mood_sample_count: int
     low_mood_sample_count: int
     history_count: int
@@ -321,7 +322,6 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "sleep_score": today_summary.sleep_score,
         },
         "today_activity_context": {
-            "meal_summary": today_summary.meal_summary,
             "meal_logged": bool(_safe_text(today_summary.meal_summary) or today_summary.meal_photos),
             "done_count": today_summary.done_count,
             "drop_count": today_summary.drop_count,
@@ -364,7 +364,6 @@ def _build_day_record(summary: DailyLogSummary) -> dict[str, Any]:
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.sleep_duration_min,
         "sleep_score": summary.sleep_score,
-        "meal_summary": summary.meal_summary,
         "meal_logged": bool(_safe_text(summary.meal_summary) or summary.meal_photos),
         "done_count": summary.done_count,
         "drop_count": summary.drop_count,
@@ -508,6 +507,53 @@ def _chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str
     return content.strip()
 
 
+def _extract_json_object(text: str) -> dict[str, Any]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            raise RuntimeError("Stage 1 response did not contain a JSON object")
+        data = json.loads(match.group(0))
+    if not isinstance(data, dict):
+        raise RuntimeError("Stage 1 response must be a JSON object")
+    return data
+
+
+def _normalize_judgment_json(payload: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    actions = normalized.get("recommended_actions")
+    if isinstance(actions, list):
+        clean_actions = [str(item).strip() for item in actions if str(item).strip()][:2]
+    elif actions is None:
+        clean_actions = []
+    else:
+        action_text = str(actions).strip()
+        clean_actions = [action_text] if action_text else []
+    normalized["recommended_actions"] = clean_actions
+    evidence = normalized.get("evidence_used")
+    if isinstance(evidence, list):
+        normalized["evidence_used"] = [str(item).strip() for item in evidence if str(item).strip()]
+    elif evidence is None:
+        normalized["evidence_used"] = []
+    else:
+        evidence_text = str(evidence).strip()
+        normalized["evidence_used"] = [evidence_text] if evidence_text else []
+    for key in (
+        "day_type",
+        "main_bottleneck",
+        "priority_theme",
+        "primary_risk",
+        "good_pattern_similarity",
+        "bad_pattern_similarity",
+        "notes_signal",
+        "recording_signal",
+    ):
+        value = normalized.get(key)
+        normalized[key] = "" if value is None else str(value).strip()
+    return normalized
+
+
 def generate_today_advice(
     *,
     daily_log_read_url: str,
@@ -531,115 +577,154 @@ def generate_today_advice(
 
     mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
     final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
+    notes_used = bool(_safe_text(today_summary.notes))
 
-    mini_user_prompt = (
-        "以下の Daily Log 材料を読んで、最終助言は書かずに材料整理だけをしてください。\n"
-        "当日データは朝時点で未完成です。因果は断定せず、傾向と可能性として整理してください。\n"
-        "当日の diary 本文や過去の日記本文は参照禁止です。日本語自由記述として参照してよいのは notes のみです。\n"
-        "過去30日の構造化サマリと、評価が高い日5件・低い日5件の比較を必ず使ってください。\n\n"
-        f"A. 今日朝の状態\n{json.dumps(today_state, ensure_ascii=False, indent=2)}\n\n"
-        f"B. 過去30日の構造化サマリ\n{json.dumps(structured['last_30_days_summary'], ensure_ascii=False, indent=2)}\n\n"
-        f"C. 評価が高い日5件の生データ\n{json.dumps(structured['top_good_days'], ensure_ascii=False, indent=2)}\n\n"
-        f"D. 評価が低い日5件の生データ\n{json.dumps(structured['top_bad_days'], ensure_ascii=False, indent=2)}"
-    )
-    mini_messages = _build_chat_messages(system_prompt=MINI_SYSTEM_PROMPT, user_prompt=mini_user_prompt)
-    mini_prompt_tokens, mini_token_method = _count_input_tokens(model=mini_model, messages=mini_messages)
-    logging.info(
-        "today_advice_input_metrics target_date=%s phase=mini input_tokens=%s token_counting_method=%s last_30_days_count=%s top_good_days_count=%s top_bad_days_count=%s notes_used_count=%s diary_used=%s",
-        target_date,
-        mini_prompt_tokens,
-        mini_token_method,
-        structured["counts"].get("last_30_days_count"),
-        structured["counts"].get("top_good_days_count"),
-        structured["counts"].get("top_bad_days_count"),
-        structured["counts"].get("notes_used_count"),
-        False,
-    )
-    mini_advice_input = {
+    judgment_input = {
         "today_state": today_state,
-        "last_30_days_summary": structured["last_30_days_summary"],
+        "structured_comparison": {
+            "counts": structured["counts"],
+            "comparisons": structured["comparisons"],
+            "last_30_days_summary": structured["last_30_days_summary"],
+        },
         "top_good_days": structured["top_good_days"],
         "top_bad_days": structured["top_bad_days"],
-        "diary_used": False,
+        "input_policy": {
+            "diary_used": False,
+            "past_diary_used": False,
+            "location_summary_used": False,
+            "notes_used": notes_used,
+        },
     }
+    judgment_user_prompt = f"""以下の材料から、Today advice の本文を書く前段として判定JSONだけを返してください。
+出力は JSON オブジェクト 1 個のみで、本文・見出し・説明は禁止です。
+recommended_actions は 1〜2 個、evidence_used は本文生成に使う根拠だけを短く列挙してください。
+
+A. 今日の状態
+{json.dumps(today_state, ensure_ascii=False, indent=2)}
+
+B. 過去30日比較
+{json.dumps(structured["comparisons"], ensure_ascii=False, indent=2)}
+
+C. 過去30日の集計サマリ
+{json.dumps(structured["last_30_days_summary"], ensure_ascii=False, indent=2)}
+
+D. 良い日サンプル
+{json.dumps(structured["top_good_days"], ensure_ascii=False, indent=2)}
+
+E. 悪い日サンプル
+{json.dumps(structured["top_bad_days"], ensure_ascii=False, indent=2)}"""
+    judgment_messages = _build_chat_messages(system_prompt=MINI_SYSTEM_PROMPT, user_prompt=judgment_user_prompt)
+    judgment_prompt_tokens, judgment_token_method = _count_input_tokens(model=mini_model, messages=judgment_messages)
+    logging.info(
+        "today_advice_stage_input target_date=%s stage=judgment model=%s diary_used=%s past_diary_used=%s location_summary_used=%s notes_used=%s input_tokens=%s token_counting_method=%s evidence_used=%s",
+        target_date,
+        mini_model,
+        False,
+        False,
+        False,
+        notes_used,
+        judgment_prompt_tokens,
+        judgment_token_method,
+        [],
+    )
     _dump_today_advice_debug_log(
-        debug_kind="MOOD_MINI",
+        debug_kind="MOOD_JUDGMENT",
+        stage="judgment",
         target_date=target_date,
         model=mini_model,
-        advice_input=mini_advice_input,
+        advice_input=judgment_input,
         advice_input_summary=_build_mood_advice_debug_summary(
             history=history,
             structured=structured,
             today_state=today_state,
-            has_mini_analysis=False,
-            prompt_tokens=mini_prompt_tokens,
-            token_counting_method=mini_token_method,
+            stage="judgment",
+            evidence_used=[],
+            notes_used=notes_used,
+            prompt_tokens=judgment_prompt_tokens,
+            token_counting_method=judgment_token_method,
         ),
-        prompt_text=f"[system]\n{MINI_SYSTEM_PROMPT}\n\n[user]\n{mini_user_prompt}",
+        prompt_text=f"[system]\n{MINI_SYSTEM_PROMPT}\n\n[user]\n{judgment_user_prompt}",
     )
-    mini_analysis = _chat_completion(
-        model=mini_model,
-        system_prompt=MINI_SYSTEM_PROMPT,
-        user_prompt=mini_user_prompt,
-    )
+    try:
+        judgment_text = _chat_completion(
+            model=mini_model,
+            system_prompt=MINI_SYSTEM_PROMPT,
+            user_prompt=judgment_user_prompt,
+        )
+        judgment_json = _normalize_judgment_json(_extract_json_object(judgment_text))
+    except Exception as exc:
+        raise RuntimeError(f"today_advice stage 1 judgment failed: {exc}") from exc
+    evidence_used = judgment_json.get("evidence_used", []) if isinstance(judgment_json.get("evidence_used"), list) else []
 
-    final_user_prompt = (
-        "以下をもとに、Today advice を指定の構成どおりに作成してください。\n"
-        "当日の diary 本文や過去の日記本文は参照禁止です。日本語自由記述として扱ってよいのは notes のみです。\n"
-        "過去30日の構造化サマリと、評価が高い日5件・低い日5件との比較を必ず踏まえてください。\n"
-        "今日は直近30日の中でどのパターンに近いかを判断し、良い日 / 悪い日の差分を踏まえて、今日の進め方を具体化してください。\n"
-        "長すぎず、中身のある文章にしてください。\n\n"
-        f"今朝の状態:\n{json.dumps(today_state, ensure_ascii=False, indent=2)}\n\n"
-        f"過去30日の構造化サマリ:\n{json.dumps(structured['last_30_days_summary'], ensure_ascii=False, indent=2)}\n\n"
-        f"評価が高い日5件の生データ:\n{json.dumps(structured['top_good_days'], ensure_ascii=False, indent=2)}\n\n"
-        f"評価が低い日5件の生データ:\n{json.dumps(structured['top_bad_days'], ensure_ascii=False, indent=2)}\n\n"
-        f"mini整理結果:\n{mini_analysis}\n"
-    )
+    final_input = {
+        "judgment_json": judgment_json,
+        "today_facts": {
+            "today_sleep": today_state.get("today_sleep", {}),
+            "today_activity_context": today_state.get("today_activity_context", {}),
+            "comparisons": today_state.get("comparisons", {}),
+            "recent_3day_trend": today_state.get("recent_3day_trend", {}),
+        },
+        "input_policy": {
+            "diary_used": False,
+            "past_diary_used": False,
+            "location_summary_used": False,
+            "notes_used": notes_used,
+        },
+    }
+    final_user_prompt = f"""以下の判定JSONと当日の最小限の事実だけを使って、Today advice の本文を書いてください。
+出力は見出しなしの日本語本文のみ、2段落以内、220〜380字程度です。
+事実 → 解釈 → 今日の優先行動 の順で、行動提案は recommended_actions にある 1〜2 個へ絞ってください。
+
+判定JSON:
+{json.dumps(judgment_json, ensure_ascii=False, indent=2)}
+
+当日の事実:
+{json.dumps(final_input["today_facts"], ensure_ascii=False, indent=2)}"""
     final_messages = _build_chat_messages(system_prompt=FINAL_SYSTEM_PROMPT, user_prompt=final_user_prompt)
     final_prompt_tokens, final_token_method = _count_input_tokens(model=final_model, messages=final_messages)
     logging.info(
-        "today_advice_input_metrics target_date=%s phase=final input_tokens=%s token_counting_method=%s last_30_days_count=%s top_good_days_count=%s top_bad_days_count=%s notes_used_count=%s diary_used=%s",
+        "today_advice_stage_input target_date=%s stage=final model=%s diary_used=%s past_diary_used=%s location_summary_used=%s notes_used=%s input_tokens=%s token_counting_method=%s evidence_used=%s",
         target_date,
+        final_model,
+        False,
+        False,
+        False,
+        notes_used,
         final_prompt_tokens,
         final_token_method,
-        structured["counts"].get("last_30_days_count"),
-        structured["counts"].get("top_good_days_count"),
-        structured["counts"].get("top_bad_days_count"),
-        structured["counts"].get("notes_used_count"),
-        False,
+        evidence_used,
     )
-    final_advice_input = {
-        "today_state": today_state,
-        "last_30_days_summary": structured["last_30_days_summary"],
-        "top_good_days": structured["top_good_days"],
-        "top_bad_days": structured["top_bad_days"],
-        "mini_analysis": mini_analysis,
-        "diary_used": False,
-    }
     _dump_today_advice_debug_log(
         debug_kind="MOOD_FINAL",
+        stage="final",
         target_date=target_date,
         model=final_model,
-        advice_input=final_advice_input,
+        advice_input=final_input,
         advice_input_summary=_build_mood_advice_debug_summary(
             history=history,
             structured=structured,
             today_state=today_state,
-            has_mini_analysis=True,
+            stage="final",
+            evidence_used=evidence_used,
+            notes_used=notes_used,
             prompt_tokens=final_prompt_tokens,
             token_counting_method=final_token_method,
         ),
         prompt_text=f"[system]\n{FINAL_SYSTEM_PROMPT}\n\n[user]\n{final_user_prompt}",
     )
-    today_advice = _chat_completion(
-        model=final_model,
-        system_prompt=FINAL_SYSTEM_PROMPT,
-        user_prompt=final_user_prompt,
-    )
+    try:
+        today_advice = _chat_completion(
+            model=final_model,
+            system_prompt=FINAL_SYSTEM_PROMPT,
+            user_prompt=final_user_prompt,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"today_advice stage 2 final writing failed: {exc}") from exc
 
     return MoodAdviceResult(
         today_advice=today_advice,
-        mini_analysis=mini_analysis,
+        judgment_json=judgment_json,
+        judgment_text=judgment_text,
         high_mood_sample_count=structured["high_mood_sample_count"],
         low_mood_sample_count=structured["low_mood_sample_count"],
         history_count=len(history),
