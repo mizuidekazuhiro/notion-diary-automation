@@ -32,6 +32,21 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         ("Fat", input_fields.get("Fat", "")),
         ("Carb", input_fields.get("Carb", "")),
         ("Weight", input_fields.get("Weight", "")),
+        ("Sleep Start", input_fields.get("Sleep Start", "")),
+        ("Sleep End", input_fields.get("Sleep End", "")),
+        ("Sleep Duration", input_fields.get("Sleep Duration", "")),
+        ("Sleep Score", input_fields.get("Sleep Score", "")),
+        ("Sleep Source", input_fields.get("Sleep Source", "")),
+        ("Sleep Heart Rate", input_fields.get("Sleep Heart Rate", "")),
+        ("Deep Duration", input_fields.get("Deep Duration", "")),
+        ("REM Duration", input_fields.get("REM Duration", "")),
+        ("Readiness Stars", input_fields.get("Readiness Stars", "")),
+        ("Readiness HRV", input_fields.get("Readiness HRV", "")),
+        ("Readiness BPM", input_fields.get("Readiness BPM", "")),
+        ("Baseline HRV", input_fields.get("Baseline HRV", "")),
+        ("Baseline Waking BPM", input_fields.get("Baseline Waking BPM", "")),
+        ("Sleep Analysis", input_fields.get("Sleep Analysis", "")),
+        ("Today Condition Forecast", input_fields.get("Today Condition Forecast", "")),
     ]
     input_lines = "\n".join(f"{name}: {value}" for name, value in ordered_fields)
 
@@ -44,7 +59,11 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         "- 未入力の項目は無視してよいですが、存在する他項目は積極的に使ってください\n"
         "- 単なる項目の羅列ではなく、自然な日記文にしてください\n"
         "- Notes がある場合は本人の所感として活かしてよいですが、Notes の言い換えだけで終わってはいけません\n"
-        "- 支出情報は `Expenses Total` と `Expenses` の両方を参照してください\n\n"
+        "- 支出情報は `Expenses Total` と `Expenses` の両方を参照してください\n"
+        "- 睡眠情報がある場合は、活動・食事・タスク・場所とバランスよく自然に織り込んでください\n"
+        "- 睡眠だけを過剰に主題化せず、軽いコンディション整理に留めてください\n"
+        "- 医療診断のような表現は禁止です\n"
+        "- `Sleep Analysis` と `Today Condition Forecast` があれば補助的に参照してよいですが、重複した言い換えは避けてください\n\n"
 
         "Done Tasks と event_date の扱い(最重要):\n"
         "- Done Tasks は『その日に Done にしたタスク』であり、その日にイベントが実施された証拠ではありません\n"
@@ -64,7 +83,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         "2. Done Tasks / Drop Tasks / Done Count / Drop Count\n"
         "3. Notes\n"
         "4. Expenses Total / Expenses\n"
-        "5. Meal summary / Kcal / Protein / Fat / Carb / Weight\n"
+        "5. Meal summary / Kcal / Protein / Fat / Carb / Weight / 睡眠関連プロパティ\n"
         "6. Mood\n\n"
         "出力ルール:\n"
         "- 日本語で出力する\n"
@@ -100,7 +119,22 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         f"Protein: {input_fields.get('Protein', '')}\n"
         f"Fat: {input_fields.get('Fat', '')}\n"
         f"Carb: {input_fields.get('Carb', '')}\n"
-        f"Weight: {input_fields.get('Weight', '')}\n\n"
+        f"Weight: {input_fields.get('Weight', '')}\n"
+        f"Sleep Start: {input_fields.get('Sleep Start', '')}\n"
+        f"Sleep End: {input_fields.get('Sleep End', '')}\n"
+        f"Sleep Duration: {input_fields.get('Sleep Duration', '')}\n"
+        f"Sleep Score: {input_fields.get('Sleep Score', '')}\n"
+        f"Sleep Source: {input_fields.get('Sleep Source', '')}\n"
+        f"Sleep Heart Rate: {input_fields.get('Sleep Heart Rate', '')}\n"
+        f"Deep Duration: {input_fields.get('Deep Duration', '')}\n"
+        f"REM Duration: {input_fields.get('REM Duration', '')}\n"
+        f"Readiness Stars: {input_fields.get('Readiness Stars', '')}\n"
+        f"Readiness HRV: {input_fields.get('Readiness HRV', '')}\n"
+        f"Readiness BPM: {input_fields.get('Readiness BPM', '')}\n"
+        f"Baseline HRV: {input_fields.get('Baseline HRV', '')}\n"
+        f"Baseline Waking BPM: {input_fields.get('Baseline Waking BPM', '')}\n"
+        f"Sleep Analysis: {input_fields.get('Sleep Analysis', '')}\n"
+        f"Today Condition Forecast: {input_fields.get('Today Condition Forecast', '')}\n\n"
         f"入力プロパティ(参考):\n{input_lines}"
     )
     return system_prompt, user_prompt

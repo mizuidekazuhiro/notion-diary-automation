@@ -1,10 +1,60 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, List, Mapping, Optional
 from urllib.parse import urlencode
 
 from ingest.http_client import fetch_json
+
+
+def _safe_text(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _safe_float(value: object) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: object) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_bool(value: object) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _safe_string_list(value: object) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    items: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        stripped = item.strip()
+        if stripped:
+            items.append(stripped)
+    return items
+
+
+def _safe_mapping(value: object) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    return {}
 
 
 @dataclass(frozen=True)
@@ -87,7 +137,7 @@ def read_daily_log(
     if not payload.get("found"):
         return None
 
-    expenses_payload = payload.get("expenses", {}) if isinstance(payload, dict) else {}
+    expenses_payload = _safe_mapping(payload.get("expenses") if isinstance(payload, Mapping) else None)
     top_entries: List[ExpenseItem] = []
     if isinstance(expenses_payload, dict):
         top_payload = expenses_payload.get("top", [])
@@ -125,50 +175,50 @@ def read_daily_log(
     )
 
     return DailyLogSummary(
-        target_date=payload.get("target_date", target_date),
-        date=payload.get("date"),
-        target_date_value=payload.get("target_date_value"),
-        page_id=payload.get("page_id", ""),
-        title=payload.get("title", ""),
-        summary_text=payload.get("summary_text", ""),
-        summary_html=payload.get("summary_html", ""),
-        mail_id=payload.get("mail_id", ""),
-        source=payload.get("source"),
-        diary=payload.get("diary"),
-        meal_summary=payload.get("meal_summary"),
-        meal_photos=payload.get("meal_photos", []) or [],
-        place=payload.get("place"),
-        activity_summary=payload.get("activity_summary"),
-        done_count=payload.get("done_count"),
-        done_tasks=payload.get("done_tasks", []) or [],
+        target_date=_safe_text(payload.get("target_date")) or target_date,
+        date=_safe_text(payload.get("date")),
+        target_date_value=_safe_text(payload.get("target_date_value")),
+        page_id=_safe_text(payload.get("page_id")) or "",
+        title=_safe_text(payload.get("title")) or "",
+        summary_text=_safe_text(payload.get("summary_text")) or "",
+        summary_html=_safe_text(payload.get("summary_html")) or "",
+        mail_id=_safe_text(payload.get("mail_id")) or "",
+        source=_safe_text(payload.get("source")),
+        diary=_safe_text(payload.get("diary")),
+        meal_summary=_safe_text(payload.get("meal_summary")),
+        meal_photos=_safe_string_list(payload.get("meal_photos")),
+        place=_safe_text(payload.get("place")),
+        activity_summary=_safe_text(payload.get("activity_summary")),
+        done_count=_safe_int(payload.get("done_count")),
+        done_tasks=_safe_string_list(payload.get("done_tasks")),
         done_tasks_detail=done_tasks_detail,
-        drop_count=payload.get("drop_count"),
-        drop_tasks=payload.get("drop_tasks", []) or [],
-        kcal=payload.get("kcal"),
-        protein=payload.get("protein"),
-        fat=payload.get("fat"),
-        carb=payload.get("carb"),
-        expenses_total=payload.get("expenses_total"),
+        drop_count=_safe_int(payload.get("drop_count")),
+        drop_tasks=_safe_string_list(payload.get("drop_tasks")),
+        kcal=_safe_float(payload.get("kcal")),
+        protein=_safe_float(payload.get("protein")),
+        fat=_safe_float(payload.get("fat")),
+        carb=_safe_float(payload.get("carb")),
+        expenses_total=_safe_float(payload.get("expenses_total")),
         expenses=expenses_summary,
-        location_summary=payload.get("location_summary"),
-        mood=payload.get("mood"),
-        notes=payload.get("notes"),
-        weight=payload.get("weight"),
-        sleep_start=payload.get("sleep_start"),
-        sleep_end=payload.get("sleep_end"),
-        sleep_duration_min=payload.get("sleep_duration_min"),
-        sleep_score=payload.get("sleep_score"),
-        sleep_source=payload.get("sleep_source"),
-        readiness_stars=payload.get("readiness_stars"),
-        readiness_hrv=payload.get("readiness_hrv"),
-        readiness_bpm=payload.get("readiness_bpm"),
-        baseline_hrv=payload.get("baseline_hrv"),
-        baseline_waking_bpm=payload.get("baseline_waking_bpm"),
-        sleep_heart_rate=payload.get("sleep_heart_rate"),
-        deep_duration_min=payload.get("deep_duration_min"),
-        rem_duration_min=payload.get("rem_duration_min"),
-        sleep_analysis_jp=payload.get("sleep_analysis_jp"),
-        today_condition_forecast_jp=payload.get("today_condition_forecast_jp"),
-        page_url=payload.get("page_url"),
-        diary_notification_sent=payload.get("diary_notification_sent"),
+        location_summary=_safe_text(payload.get("location_summary")),
+        mood=_safe_text(payload.get("mood")),
+        notes=_safe_text(payload.get("notes")),
+        weight=_safe_float(payload.get("weight")),
+        sleep_start=_safe_text(payload.get("sleep_start")),
+        sleep_end=_safe_text(payload.get("sleep_end")),
+        sleep_duration_min=_safe_float(payload.get("sleep_duration_min")),
+        sleep_score=_safe_float(payload.get("sleep_score")),
+        sleep_source=_safe_text(payload.get("sleep_source")),
+        readiness_stars=_safe_float(payload.get("readiness_stars")),
+        readiness_hrv=_safe_float(payload.get("readiness_hrv")),
+        readiness_bpm=_safe_float(payload.get("readiness_bpm")),
+        baseline_hrv=_safe_float(payload.get("baseline_hrv")),
+        baseline_waking_bpm=_safe_float(payload.get("baseline_waking_bpm")),
+        sleep_heart_rate=_safe_float(payload.get("sleep_heart_rate")),
+        deep_duration_min=_safe_float(payload.get("deep_duration_min")),
+        rem_duration_min=_safe_float(payload.get("rem_duration_min")),
+        sleep_analysis_jp=_safe_text(payload.get("sleep_analysis_jp")),
+        today_condition_forecast_jp=_safe_text(payload.get("today_condition_forecast_jp")),
+        page_url=_safe_text(payload.get("page_url")),
+        diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
     )

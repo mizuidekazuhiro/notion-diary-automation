@@ -4,48 +4,66 @@
 
 | DB用途 | 環境変数名 | 実利用箇所 | 読み/書き |
 |---|---|---|---|
-| Daily Log | `DAILY_LOG_DB_ID` | `workers/src/index.ts`, `workers/src/application/daily_log_task_relations.ts` | 読み書き |
-| Tasks | `TASK_DB_ID` | `workers/src/index.ts`, `workers/src/application/daily_log_task_relations.ts` | 主に読み（relation書き込みはDaily Log側） |
+| Daily Log | `DAILY_LOG_DB_ID` | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/daily_job.py` | 読み書き |
+| Tasks | `TASK_DB_ID` | `workers/src/index.ts`, `workers/src/application/daily_log_task_relations.ts` | 主に読み |
 | Inbox | `INBOX_DB_ID` | `workers/src/index.ts` | 読み |
 | Health condition | `HEALTH_DB_ID` | `workers/src/index.ts` | 読み |
 | Expenses | `EXPENSES_DB_ID` | `workers/src/index.ts` | 読み |
 | Location Log | `LOCATION_LOG_DB_ID` | `workers/src/index.ts` | 読み |
 
-## 2) データフロー図（文章＋図）
+## 2) 全体フロー
 
 ```text
-Tasks DB / Health DB / Expenses DB / Location Log DB
-    ↓ (query)
-application flow in workers/src/index.ts
-    ↓
-domain helpers (meal_summary, location_summary, daily_log_ingest)
-    ↓
-Daily Log DB (create/update page properties and relations)
+Phase A (Ingest)
+  ├─ ensure Daily Log
+  ├─ Tasks relation ingest
+  ├─ Expenses ingest
+  └─ Health ingest (sleep / nutrition / meal photo)
+        ↓
+Location Summary Writer
+        ↓
+Phase C (Notify Diary)
+  ├─ Daily Log read
+  ├─ sleep_condition_generator
+  └─ diary_generator
+        ↓
+Phase B (Publish)
+  └─ render_mail / send_mail
 ```
 
-```text
-Tasks DB
-  ↓ queryDatabaseAll(status/date filter)
-updateDailyLogTaskRelations()
-  ↓ find/create Daily Log page by Date
-Daily Log DB
-  ↓ update "Done Tasks" / "Drop Tasks"
-```
+## 3) 睡眠プロパティの読み元 / 書き先 / 利用箇所
 
-## 3) プロパティ単位マッピング（主要）
+| Notion表示名 | 内部名 | 読み元 | 書き先 | 利用箇所 |
+|---|---|---|---|---|
+| Sleep Start | `sleep_start` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/daily_job.py`, `publish/email_templates.py` |
+| Sleep End | `sleep_end` | Health DB | Daily Log | 同上 |
+| Sleep Duration | `sleep_duration_min` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/sleep_condition_generator.py`, `scripts/diary_generator.py`, `publish/email_templates.py` |
+| Sleep Score | `sleep_score` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/sleep_condition_generator.py`, `scripts/diary_generator.py` |
+| Sleep Source | `sleep_source` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/diary_generator.py` |
+| Sleep Heart Rate | `sleep_heart_rate` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/sleep_condition_generator.py`, `scripts/diary_generator.py` |
+| Deep Duration | `deep_duration_min` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/sleep_condition_generator.py`, `scripts/diary_generator.py` |
+| REM Duration | `rem_duration_min` | Health DB | Daily Log | 同上 |
+| Readiness Stars | `readiness_stars` | Health DB | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/sleep_condition_generator.py`, `scripts/diary_generator.py` |
+| Readiness HRV | `readiness_hrv` | Health DB | Daily Log | 同上 |
+| Readiness BPM | `readiness_bpm` | Health DB | Daily Log | 同上 |
+| Baseline HRV | `baseline_hrv` | Health DB | Daily Log | 同上 |
+| Baseline Waking BPM | `baseline_waking_bpm` | Health DB | Daily Log | 同上 |
+| Sleep Analysis | `sleep_analysis_jp` | Daily Log | Daily Log | `workers/src/index.ts`, `publish/read_daily_log.py`, `scripts/sleep_condition_generator.py`, `scripts/daily_job.py`, `scripts/diary_generator.py`, `publish/email_templates.py` |
+| Today Condition Forecast | `today_condition_forecast_jp` | Daily Log | Daily Log | 同上 |
 
-| DB | Property | 読み | 書き | ファイル |
-|---|---|---:|---:|---|
-| Tasks | `Status` (`TASK_STATUS_PROPERTY_NAME`) | ✅ | - | `workers/src/index.ts`, `workers/src/application/daily_log_task_relations.ts` |
-| Tasks | `Done date` (`TASK_DONE_DATE_PROPERTY_NAME`) | ✅ | - | 同上 |
-| Tasks | `Drop date` (`TASK_DROP_DATE_PROPERTY_NAME`) | ✅ | - | 同上 |
-| Daily Log | `Date` | ✅ | ✅ | `workers/src/index.ts`, `workers/src/application/daily_log_task_relations.ts` |
-| Daily Log | `Target Date` | ✅ | ✅ | `workers/src/index.ts` |
-| Daily Log | `Activity Summary` | - | ✅ | `workers/src/index.ts` |
-| Daily Log | `Diary` | - | ✅ | `workers/src/index.ts` |
-| Daily Log | `Done Tasks` | - | ✅ | `workers/src/application/daily_log_task_relations.ts` |
-| Daily Log | `Drop Tasks` | - | ✅ | `workers/src/application/daily_log_task_relations.ts` |
-| Daily Log | `Location summary` | - | - | 別システム担当（本リポジトリでは更新しない） |
-| Daily Log | `Meal summary` | - | ✅ | `workers/src/index.ts` |
-| Daily Log | `Expenses total` | - | ✅ | `workers/src/index.ts` |
-| Daily Log | `Expenses` | - | ✅ | `workers/src/index.ts` |
+## 4) property 解決ルール
+
+- Workers は property 名を normalize して比較します。
+- normalize では以下を吸収します。
+  - 大文字小文字差
+  - 前後空白
+  - スペース
+  - アンダースコア (`_`)
+  - ハイフン (`-`)
+- 複数候補に一致した場合は warning を出し、自動更新を skip します。
+
+## 5) sleep 未入力時の挙動
+
+- Ingest は睡眠値がない場合でも成功扱いで継続します。
+- Notify Diary は睡眠 signal が無ければ sleep insight 生成を skip します。
+- Publish / mail は値がある項目だけ表示します。

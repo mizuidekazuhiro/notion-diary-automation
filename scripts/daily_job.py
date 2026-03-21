@@ -216,6 +216,21 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Carb", str(summary.carb) if summary.carb is not None else None),
         ("Protein", str(summary.protein) if summary.protein is not None else None),
         ("Weight", str(summary.weight) if summary.weight is not None else None),
+        ("Sleep Start", summary.sleep_start),
+        ("Sleep End", summary.sleep_end),
+        ("Sleep Duration", str(summary.sleep_duration_min) if summary.sleep_duration_min is not None else None),
+        ("Sleep Score", str(summary.sleep_score) if summary.sleep_score is not None else None),
+        ("Sleep Source", summary.sleep_source),
+        ("Sleep Heart Rate", str(summary.sleep_heart_rate) if summary.sleep_heart_rate is not None else None),
+        ("Deep Duration", str(summary.deep_duration_min) if summary.deep_duration_min is not None else None),
+        ("REM Duration", str(summary.rem_duration_min) if summary.rem_duration_min is not None else None),
+        ("Readiness Stars", str(summary.readiness_stars) if summary.readiness_stars is not None else None),
+        ("Readiness HRV", str(summary.readiness_hrv) if summary.readiness_hrv is not None else None),
+        ("Readiness BPM", str(summary.readiness_bpm) if summary.readiness_bpm is not None else None),
+        ("Baseline HRV", str(summary.baseline_hrv) if summary.baseline_hrv is not None else None),
+        ("Baseline Waking BPM", str(summary.baseline_waking_bpm) if summary.baseline_waking_bpm is not None else None),
+        ("Sleep Analysis", summary.sleep_analysis_jp),
+        ("Today Condition Forecast", summary.today_condition_forecast_jp),
     ]
 
     used: dict[str, str] = {}
