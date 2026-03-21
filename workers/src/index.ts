@@ -181,6 +181,7 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Target Date", type: "date" },
     { name: "Activity Summary", type: "rich_text" },
     { name: "Diary", type: "rich_text" },
+    { name: "Today advice", type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
     { name: "Meal summary", type: "rich_text" },
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
@@ -3501,7 +3502,8 @@ async function handleDailyLogGenerateDiary(
     typeof payload.today_condition_forecast_jp === "string"
       ? payload.today_condition_forecast_jp.trim()
       : "";
-  if (!diary && !sleepAnalysisJp && !todayConditionForecastJp) {
+  const todayAdvice = typeof payload.today_advice === "string" ? payload.today_advice.trim() : "";
+  if (!diary && !sleepAnalysisJp && !todayConditionForecastJp && !todayAdvice) {
     return badRequest("no updatable content");
   }
 
@@ -3532,6 +3534,9 @@ async function handleDailyLogGenerateDiary(
   const updateProperties: Record<string, any> = {};
   if (diary) {
     updateProperties.Diary = createRichTextPropertyWithLimit(diary, DIARY_RICH_TEXT_LIMIT);
+  }
+  if (todayAdvice) {
+    updateProperties["Today advice"] = createRichTextPropertyWithLimit(todayAdvice, DIARY_RICH_TEXT_LIMIT);
   }
   const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
   const sleepAnalysisPropertyName = canUseProperty(
@@ -4084,6 +4089,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
         getSleepPropertyAliases(SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp),
       ),
     ) || null;
+  const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
@@ -4214,6 +4220,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       rem_duration_min: remDurationMin,
       sleep_analysis_jp: sleepAnalysisJp,
       today_condition_forecast_jp: todayConditionForecastJp,
+      today_advice: todayAdvice,
       expenses_total: resolvedExpensesTotal,
       expenses: {
         total: resolvedExpensesTotal,

@@ -67,6 +67,7 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "weight": summary.weight,
         "sleep_analysis_jp": summary.sleep_analysis_jp,
         "today_condition_forecast_jp": summary.today_condition_forecast_jp,
+        "today_advice": summary.today_advice,
         "sleep_start": summary.sleep_start,
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.sleep_duration_min,
