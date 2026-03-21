@@ -1,160 +1,89 @@
 # notion-diary-automation
 
-Notion Daily Log を中心に、Tasks / Expenses / Meal / Location summary / Mail の既存フローを維持したまま、睡眠データを正式対応させるための automation リポジトリです。今回の変更では、Health / Shortcut → Workers → Daily Log → sleep_condition_generator → diary generation → publish / mail の流れに、睡眠系プロパティを最小差分で接続しました。
+Notion Daily Log を中心に、Tasks / Expenses / Meal / Location summary / Publish / Mail の既存フローを維持したまま、実際の Daily Log DB に存在する睡眠系プロパティ名へ合わせて最小差分で運用するためのリポジトリです。
 
-## 全体構成
+## 睡眠系プロパティの正式ルール
 
-### Workflow 連鎖
+### 正式な Notion 表示名
+
+以下を正式名として扱います。
+
+- Baseline HRV
+- Deep Duration
+- REM Duration
+- Readiness BPM
+- Readiness HRV
+- Readiness Stars
+- Sleep Analysis JP
+- Sleep Duration
+- Sleep End
+- Sleep Heart Rate
+- Sleep Score
+- Sleep Source
+- Sleep Start
+- Today Condition Forecast JP
+
+### Notion 表示名 ↔ 内部名 対応表
+
+| 内部名 | 正式な Notion 表示名 |
+| --- | --- |
+| `sleep_start` | Sleep Start |
+| `sleep_end` | Sleep End |
+| `sleep_duration_min` | Sleep Duration |
+| `sleep_score` | Sleep Score |
+| `sleep_source` | Sleep Source |
+| `sleep_heart_rate` | Sleep Heart Rate |
+| `deep_duration_min` | Deep Duration |
+| `rem_duration_min` | REM Duration |
+| `readiness_stars` | Readiness Stars |
+| `readiness_hrv` | Readiness HRV |
+| `readiness_bpm` | Readiness BPM |
+| `baseline_hrv` | Baseline HRV |
+| `sleep_analysis_jp` | Sleep Analysis JP |
+| `today_condition_forecast_jp` | Today Condition Forecast JP |
+
+### 旧名からの置換
+
+| 旧名 | 現在の扱い |
+| --- | --- |
+| Sleep Analysis | 読み取り alias は許容、書き込み先は必ず `Sleep Analysis JP` |
+| Today Condition Forecast | 読み取り alias は許容、書き込み先は必ず `Today Condition Forecast JP` |
+| Baseline Waking BPM | 現 DB では未使用。read / write / diary input の正式対象から除外 |
+
+## 実装ルール
+
+- property 名比較は case-insensitive です。
+- 前後空白、スペース、`_`、`-` の揺れを吸収して比較します。
+- 書き込み時は DB に実在する正式プロパティ名を使います。
+- normalize 後に複数候補へ一致した場合は warning を出して skip します。
+- `Sleep Analysis JP` と `Today Condition Forecast JP` は既存値が入っていても Notify 実行のたびに再生成・上書きします。
+- sleep 系入力が本当に無い日は insight 生成だけ gracefully skip します。
+- JST 基準の `target_date` 処理は維持します。
+
+## フロー
 
 1. **Phase A (Ingest)**
    - Daily Log を ensure します。
-   - Tasks / Expenses / Health データを取り込みます。
-   - Health 由来の睡眠値を Daily Log へ upsert します。
+   - Tasks / Expenses / Health を ingest します。
+   - Health DB の sleep internal name を Daily Log の正式表示名へ保存します。
 2. **Location Summary Writer**
-   - 既存どおり Location summary を更新します。
+   - 既存どおり `Location summary (GPT)` を更新します。
 3. **Phase C (Notify Diary)**
    - Daily Log を読み出します。
-   - sleep input signal があれば、`Sleep Analysis` と `Today Condition Forecast` を毎回再生成して上書き保存します。
-   - diary prompt に睡眠情報も渡し、日記を生成します。
+   - sleep 入力があれば `Sleep Analysis JP` / `Today Condition Forecast JP` を毎回再生成して保存します。
+   - 同じ Daily Log を diary prompt に渡して Diary を生成します。
 4. **Phase B (Publish)**
-   - 毎朝メール / publish で睡眠要約を必要十分な範囲で表示します。
+   - メール / publish では `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Analysis JP` / `Today Condition Forecast JP` のうち値があるものだけ表示します。
 
-### 睡眠連携の流れ
+## 動作確認の要点
 
-```text
-Health / Shortcut
-  ↓
-Workers ingest_health
-  ↓
-Daily Log
-  ↓
-scripts/sleep_condition_generator.py
-  ↓
-Sleep Analysis / Today Condition Forecast を Daily Log に保存
-  ↓
-scripts/diary_generator.py
-  ↓
-publish / mail
-```
+1. Health DB に `sleep_start` などの内部名列が入っていることを確認します。
+2. Daily Log DB に正式表示名の列があることを確認します。
+3. Phase A 実行後、Daily Log に正式表示名の sleep 値が入ることを確認します。
+4. Phase C を 2 回実行し、`Sleep Analysis JP` と `Today Condition Forecast JP` が毎回更新されることを確認します。
+5. Phase B 実行後、メールに sleep セクションが必要な項目だけ表示されることを確認します。
 
-## Notion 表示名と内部名の対応表
+## 補足
 
-### Daily Log / Notion 表示名 → コード内部名
-
-| Notion表示名 | 内部名 | 型の目安 | 主な利用 phase |
-| --- | --- | --- | --- |
-| Sleep Start | `sleep_start` | Date | Ingest / Notify / Publish |
-| Sleep End | `sleep_end` | Date | Ingest / Notify / Publish |
-| Sleep Duration | `sleep_duration_min` | Number | Ingest / Notify / Publish |
-| Sleep Score | `sleep_score` | Number | Ingest / Notify |
-| Sleep Source | `sleep_source` | Rich text or Select | Ingest / Notify |
-| Sleep Heart Rate | `sleep_heart_rate` | Number | Ingest / Notify |
-| Deep Duration | `deep_duration_min` | Number | Ingest / Notify |
-| REM Duration | `rem_duration_min` | Number | Ingest / Notify |
-| Readiness Stars | `readiness_stars` | Number | Ingest / Notify |
-| Readiness HRV | `readiness_hrv` | Number | Ingest / Notify |
-| Readiness BPM | `readiness_bpm` | Number | Ingest / Notify |
-| Baseline HRV | `baseline_hrv` | Number | Ingest / Notify |
-| Baseline Waking BPM | `baseline_waking_bpm` | Number | Ingest / Notify |
-| Sleep Analysis | `sleep_analysis_jp` | Rich text | Notify / Publish |
-| Today Condition Forecast | `today_condition_forecast_jp` | Rich text | Notify / Publish |
-
-### Health DB で前提にする内部名
-
-| Health DB property | 用途 |
-| --- | --- |
-| `sleep_start` | 就寝開始 |
-| `sleep_end` | 起床 |
-| `sleep_duration_min` | 睡眠時間（分） |
-| `sleep_score` | 睡眠スコア |
-| `sleep_source` | 睡眠データのソース |
-| `sleep_heart_rate` | 睡眠時心拍 |
-| `deep_duration_min` | 深睡眠時間（分） |
-| `rem_duration_min` | REM時間（分） |
-| `readiness_stars` | readiness 星評価 |
-| `readiness_hrv` | readiness HRV |
-| `readiness_bpm` | readiness BPM |
-| `baseline_hrv` | baseline HRV |
-| `baseline_waking_bpm` | baseline 起床時 BPM |
-
-## Notion 側で必要な睡眠プロパティ一覧
-
-### Daily Log に必要な列
-
-- Sleep Start
-- Sleep End
-- Sleep Duration
-- Sleep Score
-- Sleep Source
-- Sleep Heart Rate
-- Deep Duration
-- REM Duration
-- Readiness Stars
-- Readiness HRV
-- Readiness BPM
-- Baseline HRV
-- Baseline Waking BPM
-- Sleep Analysis
-- Today Condition Forecast
-
-### 実装上のルール
-
-- コード内部では内部名を使用します。
-- Notion 表示名との対応は Workers 内の定数で一元管理します。
-- property 名比較は **大文字小文字を区別せず**、さらに **前後空白 / スペース / アンダースコア / ハイフン** の揺れを normalize して解決します。
-- normalize 後に複数候補へ曖昧一致した場合は、自動更新せず warning を出して skip します。
-
-## sleep 系が未入力だった場合の挙動
-
-- Health 側に睡眠データがなければ、既存の Daily Log ingest は継続します。
-- 個別プロパティが欠損していても、その項目だけ skip します。
-- `Sleep Analysis` / `Today Condition Forecast` は既存値の有無に関係なく再生成対象ですが、今日データに睡眠 signal が無ければ gracefully skip します。
-- OpenAI 呼び出しに失敗しても diary automation 全体は停止させません。
-- 既存の JST 基準 target_date 運用は維持します。
-
-## セットアップ手順
-
-1. Health DB に睡眠内部名の列を追加します。
-2. Daily Log に表示名の列を追加します。
-3. 既存 env を設定します。
-   - `NOTION_TOKEN`
-   - `HEALTH_DB_ID`
-   - `DAILY_LOG_DB_ID`
-   - `TASK_DB_ID`
-   - `EXPENSES_DB_ID`
-   - `DAILY_LOG_UPSERT_URL`
-   - `WORKERS_BEARER_TOKEN`
-   - `OPENAI_API_KEY`
-   - `PUBLIC_BASE_URL`
-   - `MAIL_LINK_SECRET`
-4. workflow をそのまま実行します。今回の変更で新規必須 env は増やしていません。
-
-## 動作確認手順
-
-1. Health DB に対象日の睡眠データを 1 件入れます。
-2. Phase A を実行し、Daily Log に睡眠値が入ることを確認します。
-3. Location Summary Writer を実行します。
-4. Phase C を実行し、`Sleep Analysis` / `Today Condition Forecast` が毎回再生成・毎回上書き保存されることを確認します。
-5. 同じ Daily Log から diary が生成されることを確認します。
-6. Phase B を実行し、メールに以下が表示されることを確認します。
-   - 就寝時間
-   - 起床時間
-   - 睡眠時間
-   - Sleep Analysis
-   - Today Condition Forecast
-
-## よくある失敗例
-
-- Notion に列だけ追加してコード未対応。
-- `DailyLogSummary` を拡張しておらず、read 側に睡眠値が出ない。
-- sleep insights は保存されるが read API が旧 property 名を見ていて取得できない。
-- property 名の大文字小文字や `_` / `-` / space の不一致で更新できない。
-- `Sleep Duration Min` や `Sleep Analysis JP` のような旧名を残してしまう。
-- 既存値があるから sleep insights は更新されないと思い込んでしまう。
-
-## 再発防止のための運用ポイント
-
-- 新しい Notion property を追加するときは、**表示名** と **内部名** を必ずセットで管理してください。
-- Daily Log write 側だけでなく、read 側 (`DailyLogSummary`) と prompt 入力側 (`build_diary_input_fields`) も同時に確認してください。
-- property 参照を増やすときは、Workers の normalize helper を経由させてください。
-- docs の対応表と workflow 実行順を更新して、Phase 間の依存関係を明示してください。
+- workflow の Node 24 警告対応として、対象 workflow は `actions/checkout@v5` と `actions/setup-python@v6` を利用します。
+- `Daily LogSummary`、Workers schema validation、generate_diary 保存、publish / mail 表示はすべて上記正式名へ揃えてあります。

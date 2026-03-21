@@ -262,8 +262,8 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     meal_summary_html = html.escape(meal_summary).replace("\n", "<br />")
     location_html = html.escape(location_summary).replace("\n", "<br />")
     sleep_lines = [
-        ("Sleep Analysis", sleep_analysis_jp),
-        ("Today Condition Forecast", today_condition_forecast_jp),
+        ("Sleep Analysis JP", sleep_analysis_jp),
+        ("Today Condition Forecast JP", today_condition_forecast_jp),
         ("就寝時間", sleep_start),
         ("起床時間", sleep_end),
         ("睡眠時間", sleep_duration),
@@ -611,8 +611,8 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             mood_notes_url,
         ]
     sleep_lines = [
-        ("Sleep Analysis", sleep_analysis_jp),
-        ("Today Condition Forecast", today_condition_forecast_jp),
+        ("Sleep Analysis JP", sleep_analysis_jp),
+        ("Today Condition Forecast JP", today_condition_forecast_jp),
         ("就寝時間", sleep_start),
         ("起床時間", sleep_end),
         ("睡眠時間", sleep_duration),

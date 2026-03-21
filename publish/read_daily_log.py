@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional
+from typing import Any, Iterable, List, Mapping, Optional
 from urllib.parse import urlencode
 
 from ingest.http_client import fetch_json
@@ -55,6 +55,52 @@ def _safe_mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return value
     return {}
+
+
+def _normalize_property_key(name: str) -> str:
+    return "".join(ch for ch in name.strip().lower() if ch not in {" ", "_", "-"})
+
+
+DAILY_LOG_SLEEP_PROPERTY_ALIASES = {
+    "sleep_start": ("Sleep Start",),
+    "sleep_end": ("Sleep End",),
+    "sleep_duration_min": ("Sleep Duration",),
+    "sleep_score": ("Sleep Score",),
+    "sleep_source": ("Sleep Source",),
+    "sleep_heart_rate": ("Sleep Heart Rate",),
+    "deep_duration_min": ("Deep Duration",),
+    "rem_duration_min": ("REM Duration",),
+    "readiness_stars": ("Readiness Stars",),
+    "readiness_hrv": ("Readiness HRV",),
+    "readiness_bpm": ("Readiness BPM",),
+    "baseline_hrv": ("Baseline HRV",),
+    "sleep_analysis_jp": ("Sleep Analysis JP", "Sleep Analysis"),
+    "today_condition_forecast_jp": ("Today Condition Forecast JP", "Today Condition Forecast"),
+}
+
+
+def _get_case_insensitive_value(payload: Mapping[str, Any], *candidate_keys: str) -> object:
+    normalized_payload: dict[str, list[str]] = {}
+    for key in payload.keys():
+        if not isinstance(key, str):
+            continue
+        normalized_payload.setdefault(_normalize_property_key(key), []).append(key)
+
+    for candidate in candidate_keys:
+        if candidate in payload:
+            return payload[candidate]
+        matches = normalized_payload.get(_normalize_property_key(candidate), [])
+        if len(matches) > 1:
+            return None
+        if len(matches) == 1:
+            return payload.get(matches[0])
+    return None
+
+
+def _get_sleep_value(payload: Mapping[str, Any], internal_name: str) -> object:
+    aliases: Iterable[str] = DAILY_LOG_SLEEP_PROPERTY_ALIASES.get(internal_name, ())
+    candidates = [internal_name, *aliases]
+    return _get_case_insensitive_value(payload, *candidates)
 
 
 @dataclass(frozen=True)
@@ -119,7 +165,6 @@ class DailyLogSummary:
     readiness_hrv: Optional[float]
     readiness_bpm: Optional[float]
     baseline_hrv: Optional[float]
-    baseline_waking_bpm: Optional[float]
     sleep_heart_rate: Optional[float]
     deep_duration_min: Optional[float]
     rem_duration_min: Optional[float]
@@ -204,21 +249,20 @@ def read_daily_log(
         mood=_safe_text(payload.get("mood")),
         notes=_safe_text(payload.get("notes")),
         weight=_safe_float(payload.get("weight")),
-        sleep_start=_safe_text(payload.get("sleep_start")),
-        sleep_end=_safe_text(payload.get("sleep_end")),
-        sleep_duration_min=_safe_float(payload.get("sleep_duration_min")),
-        sleep_score=_safe_float(payload.get("sleep_score")),
-        sleep_source=_safe_text(payload.get("sleep_source")),
-        readiness_stars=_safe_float(payload.get("readiness_stars")),
-        readiness_hrv=_safe_float(payload.get("readiness_hrv")),
-        readiness_bpm=_safe_float(payload.get("readiness_bpm")),
-        baseline_hrv=_safe_float(payload.get("baseline_hrv")),
-        baseline_waking_bpm=_safe_float(payload.get("baseline_waking_bpm")),
-        sleep_heart_rate=_safe_float(payload.get("sleep_heart_rate")),
-        deep_duration_min=_safe_float(payload.get("deep_duration_min")),
-        rem_duration_min=_safe_float(payload.get("rem_duration_min")),
-        sleep_analysis_jp=_safe_text(payload.get("sleep_analysis_jp")),
-        today_condition_forecast_jp=_safe_text(payload.get("today_condition_forecast_jp")),
+        sleep_start=_safe_text(_get_sleep_value(payload, "sleep_start")),
+        sleep_end=_safe_text(_get_sleep_value(payload, "sleep_end")),
+        sleep_duration_min=_safe_float(_get_sleep_value(payload, "sleep_duration_min")),
+        sleep_score=_safe_float(_get_sleep_value(payload, "sleep_score")),
+        sleep_source=_safe_text(_get_sleep_value(payload, "sleep_source")),
+        readiness_stars=_safe_float(_get_sleep_value(payload, "readiness_stars")),
+        readiness_hrv=_safe_float(_get_sleep_value(payload, "readiness_hrv")),
+        readiness_bpm=_safe_float(_get_sleep_value(payload, "readiness_bpm")),
+        baseline_hrv=_safe_float(_get_sleep_value(payload, "baseline_hrv")),
+        sleep_heart_rate=_safe_float(_get_sleep_value(payload, "sleep_heart_rate")),
+        deep_duration_min=_safe_float(_get_sleep_value(payload, "deep_duration_min")),
+        rem_duration_min=_safe_float(_get_sleep_value(payload, "rem_duration_min")),
+        sleep_analysis_jp=_safe_text(_get_sleep_value(payload, "sleep_analysis_jp")),
+        today_condition_forecast_jp=_safe_text(_get_sleep_value(payload, "today_condition_forecast_jp")),
         page_url=_safe_text(payload.get("page_url")),
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
     )

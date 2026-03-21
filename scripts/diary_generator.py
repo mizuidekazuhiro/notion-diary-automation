@@ -44,9 +44,8 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         ("Readiness HRV", input_fields.get("Readiness HRV", "")),
         ("Readiness BPM", input_fields.get("Readiness BPM", "")),
         ("Baseline HRV", input_fields.get("Baseline HRV", "")),
-        ("Baseline Waking BPM", input_fields.get("Baseline Waking BPM", "")),
-        ("Sleep Analysis", input_fields.get("Sleep Analysis", "")),
-        ("Today Condition Forecast", input_fields.get("Today Condition Forecast", "")),
+        ("Sleep Analysis JP", input_fields.get("Sleep Analysis JP", "")),
+        ("Today Condition Forecast JP", input_fields.get("Today Condition Forecast JP", "")),
     ]
     input_lines = "\n".join(f"{name}: {value}" for name, value in ordered_fields)
 
@@ -63,7 +62,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         "- 睡眠情報がある場合は、活動・食事・タスク・場所とバランスよく自然に織り込んでください\n"
         "- 睡眠だけを過剰に主題化せず、軽いコンディション整理に留めてください\n"
         "- 医療診断のような表現は禁止です\n"
-        "- `Sleep Analysis` と `Today Condition Forecast` があれば補助的に参照してよいですが、重複した言い換えは避けてください\n\n"
+        "- `Sleep Analysis JP` と `Today Condition Forecast JP` があれば補助的に参照してよいですが、重複した言い換えは避けてください\n\n"
 
         "Done Tasks と event_date の扱い(最重要):\n"
         "- Done Tasks は『その日に Done にしたタスク』であり、その日にイベントが実施された証拠ではありません\n"
@@ -132,9 +131,8 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         f"Readiness HRV: {input_fields.get('Readiness HRV', '')}\n"
         f"Readiness BPM: {input_fields.get('Readiness BPM', '')}\n"
         f"Baseline HRV: {input_fields.get('Baseline HRV', '')}\n"
-        f"Baseline Waking BPM: {input_fields.get('Baseline Waking BPM', '')}\n"
-        f"Sleep Analysis: {input_fields.get('Sleep Analysis', '')}\n"
-        f"Today Condition Forecast: {input_fields.get('Today Condition Forecast', '')}\n\n"
+        f"Sleep Analysis JP: {input_fields.get('Sleep Analysis JP', '')}\n"
+        f"Today Condition Forecast JP: {input_fields.get('Today Condition Forecast JP', '')}\n\n"
         f"入力プロパティ(参考):\n{input_lines}"
     )
     return system_prompt, user_prompt

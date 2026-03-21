@@ -135,12 +135,32 @@ function findExactOrNormalizedPropertyMatches(
   });
 }
 
+function findPropertyMatchesWithAliases(
+  properties: Record<string, any>,
+  desiredName: string,
+  aliases: string[] = [],
+): string[] {
+  const seen = new Set<string>();
+  const matches: string[] = [];
+  [desiredName, ...aliases].forEach((name) => {
+    for (const match of findExactOrNormalizedPropertyMatches(properties, name)) {
+      if (seen.has(match)) {
+        continue;
+      }
+      seen.add(match);
+      matches.push(match);
+    }
+  });
+  return matches;
+}
+
 function resolvePropertyName(
   properties: Record<string, any>,
   desiredName: string,
   context: string,
+  aliases: string[] = [],
 ): string | null {
-  const matches = findExactOrNormalizedPropertyMatches(properties, desiredName);
+  const matches = findPropertyMatchesWithAliases(properties, desiredName, aliases);
   if (!matches.length) {
     return null;
   }
@@ -179,7 +199,6 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName, type: "number" },
     { name: SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName, type: "number" },
     { name: SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName, type: "number" },
-    { name: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.displayName, type: "number" },
     { name: SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName, type: "rich_text" },
     { name: SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName, type: "rich_text" },
   ];
@@ -1079,7 +1098,13 @@ async function validateDatabaseSchema(
   const missingOptions: string[] = [];
 
   expectedProperties.forEach((property) => {
-    const resolvedName = resolvePropertyName(properties, property.name, `validate:${dbId}`);
+    const sleepMapping = Object.values(SLEEP_PROPERTY_MAPPINGS).find((item) => item.displayName === property.name);
+    const resolvedName = resolvePropertyName(
+      properties,
+      property.name,
+      `validate:${dbId}`,
+      sleepMapping ? getSleepPropertyAliases(sleepMapping) : [],
+    );
     const schema = resolvedName ? properties[resolvedName] : null;
     if (!schema) {
       missing.push(property.name);
@@ -1159,18 +1184,19 @@ function getResolvedProperty<T>(
   properties: Record<string, T>,
   name: string,
   context: string,
+  aliases: string[] = [],
 ): T | undefined {
-  const resolvedName = resolvePropertyName(properties as Record<string, any>, name, context);
+  const resolvedName = resolvePropertyName(properties as Record<string, any>, name, context, aliases);
   return resolvedName ? properties[resolvedName] : undefined;
 }
-
 
 function resolvePropertyNameOrWarn(
   properties: Record<string, any>,
   desiredName: string,
   context: string,
+  aliases: string[] = [],
 ): string | null {
-  const resolvedName = resolvePropertyName(properties, desiredName, context);
+  const resolvedName = resolvePropertyName(properties, desiredName, context, aliases);
   if (!resolvedName) {
     console.warn(`[property_resolver] missing match context=${context} desired=${desiredName}`);
     return null;
@@ -1183,8 +1209,9 @@ function canUseProperty(
   desiredName: string,
   type: NotionPropertyType,
   context: string,
+  aliases: string[] = [],
 ): string | null {
-  const resolvedName = resolvePropertyNameOrWarn(properties, desiredName, context);
+  const resolvedName = resolvePropertyNameOrWarn(properties, desiredName, context, aliases);
   if (!resolvedName) {
     return null;
   }
@@ -1197,6 +1224,10 @@ function canUseProperty(
   }
   return resolvedName;
 }
+function getSleepPropertyAliases(mapping: SleepPropertyMapping): string[] {
+  return mapping.aliases ?? [];
+}
+
 function parseBooleanEnv(value?: string): boolean {
   if (!value) {
     return false;
@@ -1242,7 +1273,6 @@ type HealthPropertyNames = {
   readinessHrv: string;
   readinessBpm: string;
   baselineHrv: string;
-  baselineWakingBpm: string;
   sleepHeartRate: string;
   deepDurationMin: string;
   remDurationMin: string;
@@ -1264,7 +1294,6 @@ type DailyLogHealthPropertyNames = {
   readinessHrv: string;
   readinessBpm: string;
   baselineHrv: string;
-  baselineWakingBpm: string;
   sleepHeartRate: string;
   deepDurationMin: string;
   remDurationMin: string;
@@ -1275,6 +1304,7 @@ type DailyLogHealthPropertyNames = {
 type SleepPropertyMapping = {
   displayName: string;
   internalName: string;
+  aliases?: string[];
 };
 
 const SLEEP_PROPERTY_MAPPINGS: Record<string, SleepPropertyMapping> = {
@@ -1290,9 +1320,16 @@ const SLEEP_PROPERTY_MAPPINGS: Record<string, SleepPropertyMapping> = {
   readinessHrv: { displayName: "Readiness HRV", internalName: "readiness_hrv" },
   readinessBpm: { displayName: "Readiness BPM", internalName: "readiness_bpm" },
   baselineHrv: { displayName: "Baseline HRV", internalName: "baseline_hrv" },
-  baselineWakingBpm: { displayName: "Baseline Waking BPM", internalName: "baseline_waking_bpm" },
-  sleepAnalysisJp: { displayName: "Sleep Analysis", internalName: "sleep_analysis_jp" },
-  todayConditionForecastJp: { displayName: "Today Condition Forecast", internalName: "today_condition_forecast_jp" },
+  sleepAnalysisJp: {
+    displayName: "Sleep Analysis JP",
+    internalName: "sleep_analysis_jp",
+    aliases: ["Sleep Analysis"],
+  },
+  todayConditionForecastJp: {
+    displayName: "Today Condition Forecast JP",
+    internalName: "today_condition_forecast_jp",
+    aliases: ["Today Condition Forecast"],
+  },
 };
 
 type ExpensesPropertyNames = {
@@ -1326,7 +1363,6 @@ function getHealthPropertyNames(env: Env): HealthPropertyNames {
     readinessHrv: SLEEP_PROPERTY_MAPPINGS.readinessHrv.internalName,
     readinessBpm: SLEEP_PROPERTY_MAPPINGS.readinessBpm.internalName,
     baselineHrv: SLEEP_PROPERTY_MAPPINGS.baselineHrv.internalName,
-    baselineWakingBpm: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.internalName,
     sleepHeartRate: SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.internalName,
     deepDurationMin: SLEEP_PROPERTY_MAPPINGS.deepDurationMin.internalName,
     remDurationMin: SLEEP_PROPERTY_MAPPINGS.remDurationMin.internalName,
@@ -1350,7 +1386,6 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     readinessHrv: SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
     readinessBpm: SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
     baselineHrv: SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
-    baselineWakingBpm: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.displayName,
     sleepHeartRate: SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
     deepDurationMin: SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
     remDurationMin: SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
@@ -1949,6 +1984,24 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     return authError;
   }
 
+  console.log(
+    `Daily Log schema validation uses sleep property names: ${[
+      SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepSource.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
+      SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
+      SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName,
+      SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName,
+    ].join(", ")}`
+  );
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
 
   const payload = await parseJsonBody(request);
@@ -2185,9 +2238,6 @@ async function handleDailyLogHealthIngest(
     getResolvedProperty(healthProps, healthPropertyNames.readinessBpm, "health_ingest:readiness_bpm"),
   );
   const baselineHrv = getNumberFromProperty(getResolvedProperty(healthProps, healthPropertyNames.baselineHrv, "health_ingest:baseline_hrv"));
-  const baselineWakingBpm = getNumberFromProperty(
-    getResolvedProperty(healthProps, healthPropertyNames.baselineWakingBpm, "health_ingest:baseline_waking_bpm"),
-  );
   const sleepHeartRate = getNumberFromProperty(
     getResolvedProperty(healthProps, healthPropertyNames.sleepHeartRate, "health_ingest:sleep_heart_rate"),
   );
@@ -2200,6 +2250,41 @@ async function handleDailyLogHealthIngest(
   );
   const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
 
+  console.log(
+    `Health ingest sleep inputs resolved for ${targetDate}: ${JSON.stringify({
+      sleepStart,
+      sleepEnd,
+      sleepDurationMin,
+      sleepScore,
+      sleepSource,
+      sleepHeartRate,
+      deepDurationMin,
+      remDurationMin,
+      readinessStars,
+      readinessHrv,
+      readinessBpm,
+      baselineHrv,
+    })}`
+  );
+
+  console.log(
+    `Daily Log schema validation uses sleep property names: ${[
+      SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepSource.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
+      SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
+      SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName,
+      SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName,
+    ].join(", ")}`
+  );
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   const updateProperties: Record<string, any> = {};
@@ -2281,7 +2366,6 @@ async function handleDailyLogHealthIngest(
     [dailyLogHealthPropertyNames.readinessHrv, readinessHrv],
     [dailyLogHealthPropertyNames.readinessBpm, readinessBpm],
     [dailyLogHealthPropertyNames.baselineHrv, baselineHrv],
-    [dailyLogHealthPropertyNames.baselineWakingBpm, baselineWakingBpm],
     [dailyLogHealthPropertyNames.sleepHeartRate, sleepHeartRate],
     [dailyLogHealthPropertyNames.deepDurationMin, deepDurationMin],
     [dailyLogHealthPropertyNames.remDurationMin, remDurationMin],
@@ -2603,6 +2687,24 @@ async function handleDailyLogPhotosIngest(
     );
   }
 
+  console.log(
+    `Daily Log schema validation uses sleep property names: ${[
+      SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepSource.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
+      SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
+      SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName,
+      SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName,
+    ].join(", ")}`
+  );
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   let updateProperties: Record<string, any> = {};
@@ -3437,8 +3539,10 @@ async function handleDailyLogGenerateDiary(
     dailyLogHealthPropertyNames.sleepAnalysisJp,
     "rich_text",
     "generate_diary:sleep_analysis",
+    getSleepPropertyAliases(SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp),
   );
   if (sleepAnalysisJp && sleepAnalysisPropertyName) {
+    console.log(`Saving Sleep Analysis JP for ${targetDate} via ${sleepAnalysisPropertyName}`);
     updateProperties[sleepAnalysisPropertyName] = createRichTextPropertyWithLimit(
       sleepAnalysisJp,
       DIARY_RICH_TEXT_LIMIT,
@@ -3449,8 +3553,10 @@ async function handleDailyLogGenerateDiary(
     dailyLogHealthPropertyNames.todayConditionForecastJp,
     "rich_text",
     "generate_diary:today_condition_forecast",
+    getSleepPropertyAliases(SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp),
   );
   if (todayConditionForecastJp && todayConditionForecastPropertyName) {
+    console.log(`Saving Today Condition Forecast JP for ${targetDate} via ${todayConditionForecastPropertyName}`);
     updateProperties[todayConditionForecastPropertyName] = createRichTextPropertyWithLimit(
       todayConditionForecastJp,
       DIARY_RICH_TEXT_LIMIT,
@@ -3732,7 +3838,25 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
   }
 
   try {
-    await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
+    console.log(
+    `Daily Log schema validation uses sleep property names: ${[
+      SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepSource.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
+      SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
+      SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName,
+      SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName,
+    ].join(", ")}`
+  );
+  await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
   } catch (error) {
     if (isOptionalLocationSummaryValidationError(error)) {
       console.info("Location summary is optional; skip validation");
@@ -3843,6 +3967,24 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     return authError;
   }
 
+  console.log(
+    `Daily Log schema validation uses sleep property names: ${[
+      SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepSource.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
+      SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
+      SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
+      SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName,
+      SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName,
+    ].join(", ")}`
+  );
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
 
   const url = new URL(request.url);
@@ -3917,9 +4059,6 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const readinessHrv = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.readinessHrv, "daily_log_read:readiness_hrv"));
   const readinessBpm = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.readinessBpm, "daily_log_read:readiness_bpm"));
   const baselineHrv = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.baselineHrv, "daily_log_read:baseline_hrv"));
-  const baselineWakingBpm = getNumberFromProperty(
-    getResolvedProperty(properties, healthPropertyNames.baselineWakingBpm, "daily_log_read:baseline_waking_bpm"),
-  );
   const sleepHeartRate = getNumberFromProperty(
     getResolvedProperty(properties, healthPropertyNames.sleepHeartRate, "daily_log_read:sleep_heart_rate"),
   );
@@ -3928,9 +4067,23 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   );
   const remDurationMin = getNumberFromProperty(getResolvedProperty(properties, healthPropertyNames.remDurationMin, "daily_log_read:rem_duration"));
   const sleepAnalysisJp =
-    getPlainTextFromRichText(getResolvedProperty(properties, healthPropertyNames.sleepAnalysisJp, "daily_log_read:sleep_analysis")) || null;
+    getPlainTextFromRichText(
+      getResolvedProperty(
+        properties,
+        healthPropertyNames.sleepAnalysisJp,
+        "daily_log_read:sleep_analysis",
+        getSleepPropertyAliases(SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp),
+      ),
+    ) || null;
   const todayConditionForecastJp =
-    getPlainTextFromRichText(getResolvedProperty(properties, healthPropertyNames.todayConditionForecastJp, "daily_log_read:today_condition_forecast")) || null;
+    getPlainTextFromRichText(
+      getResolvedProperty(
+        properties,
+        healthPropertyNames.todayConditionForecastJp,
+        "daily_log_read:today_condition_forecast",
+        getSleepPropertyAliases(SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp),
+      ),
+    ) || null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
@@ -4056,7 +4209,6 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       readiness_hrv: readinessHrv,
       readiness_bpm: readinessBpm,
       baseline_hrv: baselineHrv,
-      baseline_waking_bpm: baselineWakingBpm,
       sleep_heart_rate: sleepHeartRate,
       deep_duration_min: deepDurationMin,
       rem_duration_min: remDurationMin,
