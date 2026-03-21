@@ -259,6 +259,16 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     sleep_duration = _format_sleep_duration(
         payload.get("sleep_duration_min") if isinstance(payload, Mapping) else None
     )
+    sleep_score = _normalize_number(payload.get("sleep_score") if isinstance(payload, Mapping) else None)
+    readiness_stars = _normalize_number(payload.get("readiness_stars") if isinstance(payload, Mapping) else None)
+    readiness_hrv = _normalize_number(payload.get("readiness_hrv") if isinstance(payload, Mapping) else None)
+    readiness_bpm = _normalize_number(payload.get("readiness_bpm") if isinstance(payload, Mapping) else None)
+    baseline_hrv = _normalize_number(payload.get("baseline_hrv") if isinstance(payload, Mapping) else None)
+    baseline_waking_bpm = _normalize_number(payload.get("baseline_waking_bpm") if isinstance(payload, Mapping) else None)
+    sleep_heart_rate = _normalize_number(payload.get("sleep_heart_rate") if isinstance(payload, Mapping) else None)
+    deep_duration = _format_sleep_duration(payload.get("deep_duration_min") if isinstance(payload, Mapping) else None)
+    rem_duration = _format_sleep_duration(payload.get("rem_duration_min") if isinstance(payload, Mapping) else None)
+    sleep_source = _optional_text(payload.get("sleep_source") if isinstance(payload, Mapping) else None)
     mood_notes_url = str(payload.get("mood_notes_url") or "")
     today_advice_html = ""
     if today_advice:
@@ -278,6 +288,16 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
         ("就寝時間", sleep_start),
         ("起床時間", sleep_end),
         ("睡眠時間", sleep_duration),
+        ("Sleep Score", None if sleep_score == "—" else sleep_score),
+        ("Readiness Stars", None if readiness_stars == "—" else readiness_stars),
+        ("Readiness HRV", None if readiness_hrv == "—" else readiness_hrv),
+        ("Readiness BPM", None if readiness_bpm == "—" else readiness_bpm),
+        ("Baseline HRV", None if baseline_hrv == "—" else baseline_hrv),
+        ("Baseline Waking BPM", None if baseline_waking_bpm == "—" else baseline_waking_bpm),
+        ("Sleep Heart Rate", None if sleep_heart_rate == "—" else sleep_heart_rate),
+        ("Deep Duration", deep_duration),
+        ("REM Duration", rem_duration),
+        ("Sleep Source", sleep_source),
     ]
     visible_sleep_lines = [(label, value) for label, value in sleep_lines if value]
     sleep_condition_html = ""
@@ -381,7 +401,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             "background:#111827;color:#ffffff;text-decoration:none;font-size:14px;\">"
             "Mood / Notes を入力</a>"
             "<p style=\"margin: 8px 0 0 0; font-size: 12px; color: #9ca3af;\">"
-            "{safe_url}</p>"
+            f"{safe_url}</p>"
             "</td></tr></table>"
             "</td>"
             "</tr>"
@@ -576,6 +596,16 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     sleep_duration = _format_sleep_duration(
         payload.get("sleep_duration_min") if isinstance(payload, Mapping) else None
     )
+    sleep_score = _normalize_number(payload.get("sleep_score") if isinstance(payload, Mapping) else None)
+    readiness_stars = _normalize_number(payload.get("readiness_stars") if isinstance(payload, Mapping) else None)
+    readiness_hrv = _normalize_number(payload.get("readiness_hrv") if isinstance(payload, Mapping) else None)
+    readiness_bpm = _normalize_number(payload.get("readiness_bpm") if isinstance(payload, Mapping) else None)
+    baseline_hrv = _normalize_number(payload.get("baseline_hrv") if isinstance(payload, Mapping) else None)
+    baseline_waking_bpm = _normalize_number(payload.get("baseline_waking_bpm") if isinstance(payload, Mapping) else None)
+    sleep_heart_rate = _normalize_number(payload.get("sleep_heart_rate") if isinstance(payload, Mapping) else None)
+    deep_duration = _format_sleep_duration(payload.get("deep_duration_min") if isinstance(payload, Mapping) else None)
+    rem_duration = _format_sleep_duration(payload.get("rem_duration_min") if isinstance(payload, Mapping) else None)
+    sleep_source = _optional_text(payload.get("sleep_source") if isinstance(payload, Mapping) else None)
     mood_notes_url = str(payload.get("mood_notes_url") or "")
 
     expenses_lines: List[str] = []
@@ -604,6 +634,16 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         ("就寝時間", sleep_start),
         ("起床時間", sleep_end),
         ("睡眠時間", sleep_duration),
+        ("Sleep Score", None if sleep_score == "—" else sleep_score),
+        ("Readiness Stars", None if readiness_stars == "—" else readiness_stars),
+        ("Readiness HRV", None if readiness_hrv == "—" else readiness_hrv),
+        ("Readiness BPM", None if readiness_bpm == "—" else readiness_bpm),
+        ("Baseline HRV", None if baseline_hrv == "—" else baseline_hrv),
+        ("Baseline Waking BPM", None if baseline_waking_bpm == "—" else baseline_waking_bpm),
+        ("Sleep Heart Rate", None if sleep_heart_rate == "—" else sleep_heart_rate),
+        ("Deep Duration", deep_duration),
+        ("REM Duration", rem_duration),
+        ("Sleep Source", sleep_source),
     ]
     visible_sleep_lines = [f"- {label}: {value}" for label, value in sleep_lines if value]
     if visible_sleep_lines:
