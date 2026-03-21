@@ -1,4 +1,4 @@
-name: Daily Notion Diary - Phase A (Ingest)
+name: Daily Diary 01 - Ingest Daily Log
 on:
   schedule:
     - cron: "08 20 * * *"

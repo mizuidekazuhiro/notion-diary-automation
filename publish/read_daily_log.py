@@ -74,6 +74,7 @@ DAILY_LOG_SLEEP_PROPERTY_ALIASES = {
     "readiness_hrv": ("Readiness HRV",),
     "readiness_bpm": ("Readiness BPM",),
     "baseline_hrv": ("Baseline HRV",),
+    "baseline_waking_bpm": ("Baseline Waking BPM",),
     "sleep_analysis_jp": ("Sleep Analysis JP", "Sleep Analysis"),
     "today_condition_forecast_jp": ("Today Condition Forecast JP", "Today Condition Forecast"),
 }
@@ -165,6 +166,7 @@ class DailyLogSummary:
     readiness_hrv: Optional[float]
     readiness_bpm: Optional[float]
     baseline_hrv: Optional[float]
+    baseline_waking_bpm: Optional[float]
     sleep_heart_rate: Optional[float]
     deep_duration_min: Optional[float]
     rem_duration_min: Optional[float]
@@ -258,6 +260,7 @@ def read_daily_log(
         readiness_hrv=_safe_float(_get_sleep_value(payload, "readiness_hrv")),
         readiness_bpm=_safe_float(_get_sleep_value(payload, "readiness_bpm")),
         baseline_hrv=_safe_float(_get_sleep_value(payload, "baseline_hrv")),
+        baseline_waking_bpm=_safe_float(_get_sleep_value(payload, "baseline_waking_bpm")),
         sleep_heart_rate=_safe_float(_get_sleep_value(payload, "sleep_heart_rate")),
         deep_duration_min=_safe_float(_get_sleep_value(payload, "deep_duration_min")),
         rem_duration_min=_safe_float(_get_sleep_value(payload, "rem_duration_min")),

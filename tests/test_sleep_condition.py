@@ -43,6 +43,7 @@ def _summary(**overrides):
         readiness_hrv=None,
         readiness_bpm=None,
         baseline_hrv=None,
+        baseline_waking_bpm=None,
         sleep_heart_rate=None,
         deep_duration_min=None,
         rem_duration_min=None,
@@ -61,6 +62,7 @@ def test_build_sleep_insight_context_partial_history():
         sleep_score=78,
         readiness_hrv=55,
         readiness_bpm=52,
+        baseline_waking_bpm=49,
         deep_duration_min=90,
         rem_duration_min=110,
     )
@@ -75,6 +77,7 @@ def test_build_sleep_insight_context_partial_history():
     assert context.trend_values["sleep_duration_min_delta_vs_7d"] == 30
     assert context.trend_values["readiness_hrv_7d_avg"] == 55
     assert context.trend_values["readiness_bpm_delta_vs_7d"] == 0
+    assert context.today_values["baseline_waking_bpm"] == 49
 
 
 def test_render_mail_sleep_section_only_when_values_exist():

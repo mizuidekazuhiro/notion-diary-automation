@@ -1,9 +1,9 @@
-name: Location Summary Writer
+name: Daily Diary 02 - Generate Location Summary
 
 on:
   workflow_run:
     workflows:
-      - Daily Notion Diary - Phase A (Ingest)
+      - Daily Diary 01 - Ingest Daily Log
     types:
       - completed
   workflow_dispatch:

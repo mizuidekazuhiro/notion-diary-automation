@@ -1,8 +1,8 @@
-name: Daily Notion Diary - Phase B (Publish)
+name: Daily Diary 04 - Publish Daily Mail
 on:
   workflow_run:
     workflows:
-      - Daily Notion Diary - Phase C (Notify Diary)
+      - Daily Diary 03 - Generate Diary & Sleep Insights
     types:
       - completed
   workflow_dispatch:

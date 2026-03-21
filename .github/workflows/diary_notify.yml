@@ -1,9 +1,9 @@
-name: Daily Notion Diary - Phase C (Notify Diary)
+name: Daily Diary 03 - Generate Diary & Sleep Insights
 
 on:
   workflow_run:
     workflows:
-      - Location Summary Writer
+      - Daily Diary 02 - Generate Location Summary
     types:
       - completed
   workflow_dispatch:
