@@ -1,12 +1,12 @@
 name: Daily Diary 01 - Ingest Daily Log
+
 on:
-  schedule:
-    - cron: 
   workflow_dispatch:
 
 jobs:
   run-ingest:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -24,38 +24,9 @@ jobs:
 
       - name: Run ingest phase
         env:
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           INBOX_JSON_URL: ${{ secrets.INBOX_JSON_URL }}
           TASKS_JSON_URL: ${{ secrets.TASKS_JSON_URL }}
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
         run: python scripts/daily_job.py --phase ingest
-
-      - name: Debug health ingest endpoint
-        env:
-          URL: https://notion-diary-automation.kazuhiro-mizuide.workers.dev/execute/api/daily_log/ingest_health
-          TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
-        run: |
-          set -euxo pipefail
-          curl -i --fail-with-body \
-            -X POST "$URL" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            --max-time 30
-
-      - name: Debug photos ingest endpoint
-        env:
-          URL: https://notion-diary-automation.kazuhiro-mizuide.workers.dev/execute/api/daily_log/ingest_photos
-          TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
-        run: |
-          set -euxo pipefail
-          curl -i --fail-with-body \
-            -X POST "$URL" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            --max-time 30
