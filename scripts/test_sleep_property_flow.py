@@ -52,6 +52,7 @@ def _summary(**overrides: object) -> DailyLogSummary:
         readiness_hrv=None,
         readiness_bpm=None,
         baseline_hrv=None,
+        baseline_waking_bpm=None,
         sleep_heart_rate=None,
         deep_duration_min=None,
         rem_duration_min=None,
@@ -78,12 +79,14 @@ def main() -> None:
         readiness_hrv=41,
         readiness_bpm=58,
         baseline_hrv=46,
+        baseline_waking_bpm=51,
         sleep_analysis_jp="old analysis",
         today_condition_forecast_jp="old forecast",
     )
     history = [_summary(sleep_duration_min=360, sleep_score=70, readiness_hrv=35, readiness_bpm=60)]
     context = build_sleep_insight_context(today_summary=today, history_summaries=history)
     assert context.today_values["sleep_source"] == "AutoSleep"
+    assert context.today_values["baseline_waking_bpm"] == 51
     assert context.trend_values["sleep_duration_min_delta_vs_7d"] == 40
 
     fields, skipped, _ = build_diary_input_fields(today)
