@@ -95,3 +95,13 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
 - `publish/render_mail.py` はテンプレート payload に sleep / readiness / advice 系フィールドを渡します。
 - `publish/email_templates.py` は値があるセクションだけを表示し、睡眠時間は `7時間15分` の形式で表示します。
 - `Today advice` は一般論ではなく、直近7日〜14日の傾向、当日の睡眠/行動データ、前日比、直近平均との差分、直近3日連続の流れなど、実際に取得できた根拠に基づいて生成します。データ不足の項目は無理に補完しません。
+
+
+## today advice のデバッグ方法
+
+- Workflow 03（`Daily Diary 03 - Generate Diary & Sleep Insights`）実行時に、today advice を生成する直前の入力データと最終プロンプトを `print` で出力します。GitHub Actions のログ上では、`=== TODAY ADVICE ... START ===` / `=== TODAY ADVICE ... END ===` のマーカーで区間を確認できます。
+- sleep 系の today advice 生成では `scripts/sleep_condition_generator.py` が `today_values` / `trend_values` / `supporting_context` を JSON で出力し、主要項目サマリ・使用モデル名・対象日・最終プロンプト全文も続けて出力します。
+- mood 補完の today advice 生成では `scripts/mood_advice_generator.py` が mini 整理用と final 生成用の両方について、入力 JSON・主要項目サマリ・使用モデル名・対象日・最終プロンプト全文を出力します。
+- 可能な環境では同じ内容を `debug/` ディレクトリ配下の JSON ファイルにも保存します。ファイル保存に失敗しても warning ログのみに留め、既存処理は継続します。
+- JSON 出力は `ensure_ascii=False` と `default=str` を使うため、日本語をそのまま保持しつつ、`datetime` など JSON 化できない値が含まれてもデバッグ出力で処理が落ちないようにしています。
+- API key や secrets は debug payload に含めていないため、機密情報は出力されません。
