@@ -60,6 +60,21 @@ class DailyLogSummary:
     mood: Optional[str]
     notes: Optional[str]
     weight: Optional[float]
+    sleep_start: Optional[str]
+    sleep_end: Optional[str]
+    sleep_duration_min: Optional[float]
+    sleep_score: Optional[float]
+    sleep_source: Optional[str]
+    readiness_stars: Optional[float]
+    readiness_hrv: Optional[float]
+    readiness_bpm: Optional[float]
+    baseline_hrv: Optional[float]
+    baseline_waking_bpm: Optional[float]
+    sleep_heart_rate: Optional[float]
+    deep_duration_min: Optional[float]
+    rem_duration_min: Optional[float]
+    sleep_analysis_jp: Optional[str]
+    today_condition_forecast_jp: Optional[str]
     page_url: Optional[str]
     diary_notification_sent: Optional[bool]
 
@@ -139,6 +154,21 @@ def read_daily_log(
         mood=payload.get("mood"),
         notes=payload.get("notes"),
         weight=payload.get("weight"),
+        sleep_start=payload.get("sleep_start"),
+        sleep_end=payload.get("sleep_end"),
+        sleep_duration_min=payload.get("sleep_duration_min"),
+        sleep_score=payload.get("sleep_score"),
+        sleep_source=payload.get("sleep_source"),
+        readiness_stars=payload.get("readiness_stars"),
+        readiness_hrv=payload.get("readiness_hrv"),
+        readiness_bpm=payload.get("readiness_bpm"),
+        baseline_hrv=payload.get("baseline_hrv"),
+        baseline_waking_bpm=payload.get("baseline_waking_bpm"),
+        sleep_heart_rate=payload.get("sleep_heart_rate"),
+        deep_duration_min=payload.get("deep_duration_min"),
+        rem_duration_min=payload.get("rem_duration_min"),
+        sleep_analysis_jp=payload.get("sleep_analysis_jp"),
+        today_condition_forecast_jp=payload.get("today_condition_forecast_jp"),
         page_url=payload.get("page_url"),
         diary_notification_sent=payload.get("diary_notification_sent"),
     )

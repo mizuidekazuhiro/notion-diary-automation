@@ -1133,6 +1133,19 @@ type HealthPropertyNames = {
   weight: string;
   mealPhoto: string;
   source: string;
+  sleepStart: string;
+  sleepEnd: string;
+  sleepDurationMin: string;
+  sleepScore: string;
+  sleepSource: string;
+  readinessStars: string;
+  readinessHrv: string;
+  readinessBpm: string;
+  baselineHrv: string;
+  baselineWakingBpm: string;
+  sleepHeartRate: string;
+  deepDurationMin: string;
+  remDurationMin: string;
 };
 
 type DailyLogHealthPropertyNames = {
@@ -1142,6 +1155,21 @@ type DailyLogHealthPropertyNames = {
   kcal: string;
   weight: string;
   mealPhoto: string;
+  sleepStart: string;
+  sleepEnd: string;
+  sleepDurationMin: string;
+  sleepScore: string;
+  sleepSource: string;
+  readinessStars: string;
+  readinessHrv: string;
+  readinessBpm: string;
+  baselineHrv: string;
+  baselineWakingBpm: string;
+  sleepHeartRate: string;
+  deepDurationMin: string;
+  remDurationMin: string;
+  sleepAnalysisJp: string;
+  todayConditionForecastJp: string;
 };
 
 type ExpensesPropertyNames = {
@@ -1166,6 +1194,19 @@ function getHealthPropertyNames(env: Env): HealthPropertyNames {
     weight: env.HEALTH_WEIGHT_PROPERTY_NAME || "Weight",
     mealPhoto: env.HEALTH_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
     source: env.HEALTH_SOURCE_PROPERTY_NAME || "Source",
+    sleepStart: "sleep_start",
+    sleepEnd: "sleep_end",
+    sleepDurationMin: "sleep_duration_min",
+    sleepScore: "sleep_score",
+    sleepSource: "sleep_source",
+    readinessStars: "readiness_stars",
+    readinessHrv: "readiness_hrv",
+    readinessBpm: "readiness_bpm",
+    baselineHrv: "baseline_hrv",
+    baselineWakingBpm: "baseline_waking_bpm",
+    sleepHeartRate: "sleep_heart_rate",
+    deepDurationMin: "deep_duration_min",
+    remDurationMin: "rem_duration_min",
   };
 }
 
@@ -1177,6 +1218,21 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     kcal: env.DAILY_LOG_KCAL_PROPERTY_NAME || "Kcal",
     weight: env.DAILY_LOG_WEIGHT_PROPERTY_NAME || "Weight",
     mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
+    sleepStart: "Sleep Start",
+    sleepEnd: "Sleep End",
+    sleepDurationMin: "Sleep Duration Min",
+    sleepScore: "Sleep Score",
+    sleepSource: "Sleep Source",
+    readinessStars: "Readiness Stars",
+    readinessHrv: "Readiness HRV",
+    readinessBpm: "Readiness BPM",
+    baselineHrv: "Baseline HRV",
+    baselineWakingBpm: "Baseline Waking BPM",
+    sleepHeartRate: "Sleep Heart Rate",
+    deepDurationMin: "Deep Duration Min",
+    remDurationMin: "REM Duration Min",
+    sleepAnalysisJp: "Sleep Analysis JP",
+    todayConditionForecastJp: "Today Condition Forecast JP",
   };
 }
 
@@ -1332,6 +1388,16 @@ function createCheckboxProperty(value: boolean) {
   };
 }
 
+function hasNonEmptyValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  return true;
+}
+
 function splitIntoChunks(content: string, maxLength: number): string[] {
   if (!content) {
     return [];
@@ -1363,6 +1429,25 @@ function getPlainTextFromRichText(richTextOrProperty: any): string {
   return richText
     .map((item: { plain_text?: string }) => item.plain_text ?? "")
     .join("");
+}
+
+function getStringFromProperty(property: any): string | null {
+  const richText = getPlainTextFromRichText(property).trim();
+  if (richText) {
+    return richText;
+  }
+  const selectName =
+    typeof property?.select?.name === "string" ? property.select.name.trim() : "";
+  if (selectName) {
+    return selectName;
+  }
+  return null;
+}
+
+function getDateTimeFromProperty(property: any): string | null {
+  const start =
+    typeof property?.date?.start === "string" ? property.date.start.trim() : "";
+  return start || null;
 }
 
 function normalizeNote(text: string): string {
@@ -1952,6 +2037,33 @@ async function handleDailyLogHealthIngest(
   const carb = getNumberFromProperty(healthProps[healthPropertyNames.carb]);
   const kcal = getNumberFromProperty(healthProps[healthPropertyNames.kcal]);
   const weight = getNumberFromProperty(healthProps[healthPropertyNames.weight]);
+  const sleepStart = getDateTimeFromProperty(healthProps[healthPropertyNames.sleepStart]);
+  const sleepEnd = getDateTimeFromProperty(healthProps[healthPropertyNames.sleepEnd]);
+  const sleepDurationMin = getNumberFromProperty(
+    healthProps[healthPropertyNames.sleepDurationMin],
+  );
+  const sleepScore = getNumberFromProperty(healthProps[healthPropertyNames.sleepScore]);
+  const sleepSource = getStringFromProperty(healthProps[healthPropertyNames.sleepSource]);
+  const readinessStars = getNumberFromProperty(
+    healthProps[healthPropertyNames.readinessStars],
+  );
+  const readinessHrv = getNumberFromProperty(
+    healthProps[healthPropertyNames.readinessHrv],
+  );
+  const readinessBpm = getNumberFromProperty(
+    healthProps[healthPropertyNames.readinessBpm],
+  );
+  const baselineHrv = getNumberFromProperty(healthProps[healthPropertyNames.baselineHrv]);
+  const baselineWakingBpm = getNumberFromProperty(
+    healthProps[healthPropertyNames.baselineWakingBpm],
+  );
+  const sleepHeartRate = getNumberFromProperty(
+    healthProps[healthPropertyNames.sleepHeartRate],
+  );
+  const deepDurationMin = getNumberFromProperty(
+    healthProps[healthPropertyNames.deepDurationMin],
+  );
+  const remDurationMin = getNumberFromProperty(healthProps[healthPropertyNames.remDurationMin]);
   const mealPhotos = normalizeFilesFromProperty(
     healthProps[healthPropertyNames.mealPhoto],
   );
@@ -2012,6 +2124,54 @@ async function handleDailyLogHealthIngest(
     updateProperties["Meal summary"] = createRichTextProperty(mealSummary);
   } else {
     console.warn('Daily_Log missing rich_text property "Meal summary", skipping.');
+  }
+  if (
+    hasNonEmptyValue(sleepStart) &&
+    hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepStart, "date")
+  ) {
+    updateProperties[dailyLogHealthPropertyNames.sleepStart] =
+      createDateProperty(sleepStart as string);
+  }
+  if (
+    hasNonEmptyValue(sleepEnd) &&
+    hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepEnd, "date")
+  ) {
+    updateProperties[dailyLogHealthPropertyNames.sleepEnd] =
+      createDateProperty(sleepEnd as string);
+  }
+  const optionalNumberFields: Array<[string, number | null | undefined]> = [
+    [dailyLogHealthPropertyNames.sleepDurationMin, sleepDurationMin],
+    [dailyLogHealthPropertyNames.sleepScore, sleepScore],
+    [dailyLogHealthPropertyNames.readinessStars, readinessStars],
+    [dailyLogHealthPropertyNames.readinessHrv, readinessHrv],
+    [dailyLogHealthPropertyNames.readinessBpm, readinessBpm],
+    [dailyLogHealthPropertyNames.baselineHrv, baselineHrv],
+    [dailyLogHealthPropertyNames.baselineWakingBpm, baselineWakingBpm],
+    [dailyLogHealthPropertyNames.sleepHeartRate, sleepHeartRate],
+    [dailyLogHealthPropertyNames.deepDurationMin, deepDurationMin],
+    [dailyLogHealthPropertyNames.remDurationMin, remDurationMin],
+  ];
+  for (const [propertyName, value] of optionalNumberFields) {
+    if (!hasNonEmptyValue(value)) {
+      continue;
+    }
+    if (!hasPropertyType(dailyLogProperties, propertyName, "number")) {
+      continue;
+    }
+    updateProperties[propertyName] = createNumberProperty(value);
+  }
+  if (hasNonEmptyValue(sleepSource)) {
+    if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepSource, "rich_text")) {
+      updateProperties[dailyLogHealthPropertyNames.sleepSource] = createRichTextProperty(
+        sleepSource as string,
+      );
+    } else if (
+      hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepSource, "select")
+    ) {
+      updateProperties[dailyLogHealthPropertyNames.sleepSource] = createSelectProperty(
+        sleepSource as string,
+      );
+    }
   }
 
   if (!Object.keys(updateProperties).length) {
@@ -3025,8 +3185,14 @@ async function handleDailyLogGenerateDiary(
     return badRequest("invalid target_date format");
   }
   const diary = typeof payload.diary === "string" ? payload.diary.trim() : "";
-  if (!diary) {
-    return badRequest("invalid diary");
+  const sleepAnalysisJp =
+    typeof payload.sleep_analysis_jp === "string" ? payload.sleep_analysis_jp.trim() : "";
+  const todayConditionForecastJp =
+    typeof payload.today_condition_forecast_jp === "string"
+      ? payload.today_condition_forecast_jp.trim()
+      : "";
+  if (!diary && !sleepAnalysisJp && !todayConditionForecastJp) {
+    return badRequest("no updatable content");
   }
 
   const queryResponse = await notionFetch(env, `/databases/${env.DAILY_LOG_DB_ID}/query`, {
@@ -3052,11 +3218,31 @@ async function handleDailyLogGenerateDiary(
     );
   }
 
-  const updateProperties: Record<string, any> = {
-    Diary: createRichTextPropertyWithLimit(diary, DIARY_RICH_TEXT_LIMIT),
-  };
-
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  const updateProperties: Record<string, any> = {};
+  if (diary) {
+    updateProperties.Diary = createRichTextPropertyWithLimit(diary, DIARY_RICH_TEXT_LIMIT);
+  }
+  const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
+  if (
+    sleepAnalysisJp &&
+    hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepAnalysisJp, "rich_text")
+  ) {
+    updateProperties[dailyLogHealthPropertyNames.sleepAnalysisJp] =
+      createRichTextPropertyWithLimit(sleepAnalysisJp, DIARY_RICH_TEXT_LIMIT);
+  }
+  if (
+    todayConditionForecastJp &&
+    hasPropertyType(
+      dailyLogProperties,
+      dailyLogHealthPropertyNames.todayConditionForecastJp,
+      "rich_text",
+    )
+  ) {
+    updateProperties[dailyLogHealthPropertyNames.todayConditionForecastJp] =
+      createRichTextPropertyWithLimit(todayConditionForecastJp, DIARY_RICH_TEXT_LIMIT);
+  }
+
   const generatedAtPropertyName = getDiaryGeneratedAtPropertyName(env);
   if (hasPropertyType(dailyLogProperties, generatedAtPropertyName, "date")) {
     updateProperties[generatedAtPropertyName] = createDateProperty(getJstDateString());
@@ -3506,6 +3692,31 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const protein = getNumberFromProperty(properties[healthPropertyNames.protein]);
   const fat = getNumberFromProperty(properties[healthPropertyNames.fat]);
   const carb = getNumberFromProperty(properties[healthPropertyNames.carb]);
+  const sleepStart = getDateTimeFromProperty(properties[healthPropertyNames.sleepStart]);
+  const sleepEnd = getDateTimeFromProperty(properties[healthPropertyNames.sleepEnd]);
+  const sleepDurationMin = getNumberFromProperty(
+    properties[healthPropertyNames.sleepDurationMin],
+  );
+  const sleepScore = getNumberFromProperty(properties[healthPropertyNames.sleepScore]);
+  const sleepSource = getStringFromProperty(properties[healthPropertyNames.sleepSource]);
+  const readinessStars = getNumberFromProperty(properties[healthPropertyNames.readinessStars]);
+  const readinessHrv = getNumberFromProperty(properties[healthPropertyNames.readinessHrv]);
+  const readinessBpm = getNumberFromProperty(properties[healthPropertyNames.readinessBpm]);
+  const baselineHrv = getNumberFromProperty(properties[healthPropertyNames.baselineHrv]);
+  const baselineWakingBpm = getNumberFromProperty(
+    properties[healthPropertyNames.baselineWakingBpm],
+  );
+  const sleepHeartRate = getNumberFromProperty(
+    properties[healthPropertyNames.sleepHeartRate],
+  );
+  const deepDurationMin = getNumberFromProperty(
+    properties[healthPropertyNames.deepDurationMin],
+  );
+  const remDurationMin = getNumberFromProperty(properties[healthPropertyNames.remDurationMin]);
+  const sleepAnalysisJp =
+    getPlainTextFromRichText(properties[healthPropertyNames.sleepAnalysisJp]) || null;
+  const todayConditionForecastJp =
+    getPlainTextFromRichText(properties[healthPropertyNames.todayConditionForecastJp]) || null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
@@ -3622,6 +3833,21 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       protein,
       fat,
       carb,
+      sleep_start: sleepStart,
+      sleep_end: sleepEnd,
+      sleep_duration_min: sleepDurationMin,
+      sleep_score: sleepScore,
+      sleep_source: sleepSource,
+      readiness_stars: readinessStars,
+      readiness_hrv: readinessHrv,
+      readiness_bpm: readinessBpm,
+      baseline_hrv: baselineHrv,
+      baseline_waking_bpm: baselineWakingBpm,
+      sleep_heart_rate: sleepHeartRate,
+      deep_duration_min: deepDurationMin,
+      rem_duration_min: remDurationMin,
+      sleep_analysis_jp: sleepAnalysisJp,
+      today_condition_forecast_jp: todayConditionForecastJp,
       expenses_total: resolvedExpensesTotal,
       expenses: {
         total: resolvedExpensesTotal,

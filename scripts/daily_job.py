@@ -22,6 +22,10 @@ from publish.read_daily_log import read_daily_log
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 from scripts.diary_generator import generate_diary_from_daily_log
+from scripts.sleep_condition_generator import (
+    load_recent_daily_logs,
+    maybe_generate_sleep_insights,
+)
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -251,6 +255,40 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         target_date,
         run_id,
     )
+
+    history_summaries = load_recent_daily_logs(
+        daily_log_read_url=config.daily_log_read_url,
+        bearer_token=config.bearer_token,
+        target_date=target_date,
+        days=7,
+    )
+    if not summary.sleep_analysis_jp or not summary.today_condition_forecast_jp:
+        sleep_payload = maybe_generate_sleep_insights(
+            target_date=target_date,
+            today_summary=summary,
+            history_summaries=history_summaries,
+        )
+        if sleep_payload:
+            save_result = post_json(
+                config.diary_generate_url,
+                {"target_date": summary.target_date, **sleep_payload},
+                config.bearer_token,
+            )
+            logging.info(
+                "Sleep insights saved via worker endpoint... target_date(JST)=%s run_id=%s updated=%s reason=%s keys=%s",
+                summary.target_date,
+                run_id,
+                save_result.get("updated"),
+                save_result.get("reason"),
+                sorted(sleep_payload.keys()),
+            )
+            refreshed_summary = read_daily_log(
+                daily_log_read_url=config.daily_log_read_url,
+                target_date=target_date,
+                bearer_token=config.bearer_token,
+            )
+            if refreshed_summary:
+                summary = refreshed_summary
 
     diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
     if not diary_input_fields:
