@@ -64,7 +64,6 @@ def _dummy_summary() -> DailyLogSummary:
         readiness_hrv=None,
         readiness_bpm=None,
         baseline_hrv=None,
-        baseline_waking_bpm=None,
         sleep_heart_rate=None,
         deep_duration_min=None,
         rem_duration_min=None,

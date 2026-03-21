@@ -228,9 +228,8 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Readiness HRV", str(summary.readiness_hrv) if summary.readiness_hrv is not None else None),
         ("Readiness BPM", str(summary.readiness_bpm) if summary.readiness_bpm is not None else None),
         ("Baseline HRV", str(summary.baseline_hrv) if summary.baseline_hrv is not None else None),
-        ("Baseline Waking BPM", str(summary.baseline_waking_bpm) if summary.baseline_waking_bpm is not None else None),
-        ("Sleep Analysis", summary.sleep_analysis_jp),
-        ("Today Condition Forecast", summary.today_condition_forecast_jp),
+        ("Sleep Analysis JP", summary.sleep_analysis_jp),
+        ("Today Condition Forecast JP", summary.today_condition_forecast_jp),
     ]
 
     used: dict[str, str] = {}
@@ -277,6 +276,30 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         target_date=target_date,
         days=7,
     )
+    sleep_signal_fields = {
+        "Sleep Start": summary.sleep_start,
+        "Sleep End": summary.sleep_end,
+        "Sleep Duration": summary.sleep_duration_min,
+        "Sleep Score": summary.sleep_score,
+        "Sleep Source": summary.sleep_source,
+        "Sleep Heart Rate": summary.sleep_heart_rate,
+        "Deep Duration": summary.deep_duration_min,
+        "REM Duration": summary.rem_duration_min,
+        "Readiness Stars": summary.readiness_stars,
+        "Readiness HRV": summary.readiness_hrv,
+        "Readiness BPM": summary.readiness_bpm,
+        "Baseline HRV": summary.baseline_hrv,
+    }
+    available_sleep_inputs = sorted(
+        name for name, value in sleep_signal_fields.items() if value not in (None, "")
+    )
+    logging.info(
+        "Sleep input availability. target_date(JST)=%s run_id=%s available=%s",
+        target_date,
+        run_id,
+        available_sleep_inputs,
+    )
+
     sleep_payload = maybe_generate_sleep_insights(
         target_date=target_date,
         today_summary=summary,
@@ -294,7 +317,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             run_id,
             save_result.get("updated"),
             save_result.get("reason"),
-            ["Sleep Analysis", "Today Condition Forecast"],
+            ["Sleep Analysis JP", "Today Condition Forecast JP"],
         )
         refreshed_summary = read_daily_log(
             daily_log_read_url=config.daily_log_read_url,

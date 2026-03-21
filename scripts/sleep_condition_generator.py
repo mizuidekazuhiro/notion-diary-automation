@@ -59,7 +59,6 @@ def build_sleep_insight_context(
         "readiness_hrv": _collect_numeric(today_summary, "readiness_hrv"),
         "readiness_bpm": _collect_numeric(today_summary, "readiness_bpm"),
         "baseline_hrv": _collect_numeric(today_summary, "baseline_hrv"),
-        "baseline_waking_bpm": _collect_numeric(today_summary, "baseline_waking_bpm"),
         "sleep_heart_rate": _collect_numeric(today_summary, "sleep_heart_rate"),
         "deep_duration_min": _collect_numeric(today_summary, "deep_duration_min"),
         "rem_duration_min": _collect_numeric(today_summary, "rem_duration_min"),

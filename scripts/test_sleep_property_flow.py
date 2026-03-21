@@ -52,7 +52,6 @@ def _summary(**overrides: object) -> DailyLogSummary:
         readiness_hrv=None,
         readiness_bpm=None,
         baseline_hrv=None,
-        baseline_waking_bpm=None,
         sleep_heart_rate=None,
         deep_duration_min=None,
         rem_duration_min=None,
@@ -79,7 +78,6 @@ def main() -> None:
         readiness_hrv=41,
         readiness_bpm=58,
         baseline_hrv=46,
-        baseline_waking_bpm=55,
         sleep_analysis_jp="old analysis",
         today_condition_forecast_jp="old forecast",
     )
@@ -89,8 +87,8 @@ def main() -> None:
     assert context.trend_values["sleep_duration_min_delta_vs_7d"] == 40
 
     fields, skipped, _ = build_diary_input_fields(today)
-    assert fields["Sleep Analysis"] == "old analysis"
-    assert fields["Today Condition Forecast"] == "old forecast"
+    assert fields["Sleep Analysis JP"] == "old analysis"
+    assert fields["Today Condition Forecast JP"] == "old forecast"
     assert fields["Sleep Start"].startswith("2026-03-20")
     assert "Sleep Score" in fields
     assert "Mood" in skipped
