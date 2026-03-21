@@ -682,7 +682,7 @@ async function parseRequestBody(request: Request): Promise<Record<string, string
   }
   const formData = await request.formData();
   const entries: Record<string, string> = {};
-  for (const [key, value] of formData.entries()) {
+  for (const [key, value] of formData as any as Iterable<[string, FormDataEntryValue]>) {
     if (typeof value === "string") {
       entries[key] = value;
     }
@@ -1431,23 +1431,27 @@ function getPlainTextFromRichText(richTextOrProperty: any): string {
     .join("");
 }
 
-function getStringFromProperty(property: any): string | null {
+function getStringFromProperty(property: Record<string, any> | undefined): string {
+  if (!property) {
+    return "";
+  }
   const richText = getPlainTextFromRichText(property).trim();
   if (richText) {
     return richText;
   }
-  const selectName =
-    typeof property?.select?.name === "string" ? property.select.name.trim() : "";
-  if (selectName) {
-    return selectName;
+  const titleText = getPlainTextFromTitle(property).trim();
+  if (titleText) {
+    return titleText;
   }
-  return null;
+  const selectName =
+    typeof property.select?.name === "string" ? property.select.name.trim() : "";
+  return selectName;
 }
 
-function getDateTimeFromProperty(property: any): string | null {
+function getDateTimeFromProperty(property: Record<string, any> | undefined): string {
   const start =
     typeof property?.date?.start === "string" ? property.date.start.trim() : "";
-  return start || null;
+  return start;
 }
 
 function normalizeNote(text: string): string {
@@ -1505,9 +1509,13 @@ function getNumberFromProperty(
   return property.number;
 }
 
+type NotionFilePropertyValue =
+  | { name: string; type: "external"; external: { url: string } }
+  | { name: string; type: "file"; file: { url: string } };
+
 function normalizeFilesFromProperty(
   property: Record<string, any> | undefined,
-): Array<Record<string, any>> {
+): NotionFilePropertyValue[] {
   if (!property || !Array.isArray(property.files)) {
     return [];
   }
@@ -1522,7 +1530,7 @@ function normalizeFilesFromProperty(
       }
       return null;
     })
-    .filter((item): item is Record<string, any> => Boolean(item));
+    .filter((item): item is NotionFilePropertyValue => Boolean(item));
 }
 
 function getFileUrlsFromProperty(
@@ -2503,28 +2511,6 @@ async function handleDailyLogPhotosIngest(
 }
 
 
-function getDateTimeFromProperty(property: Record<string, any> | undefined): string {
-  const value = property?.date?.start;
-  return typeof value === "string" ? value : "";
-}
-
-function getStringFromProperty(property: Record<string, any> | undefined): string {
-  if (!property) {
-    return "";
-  }
-  const richText = getPlainTextFromRichText(property);
-  if (richText) {
-    return richText;
-  }
-  const titleText = getPlainTextFromTitle(property);
-  if (titleText) {
-    return titleText;
-  }
-  if (typeof property.select?.name === "string") {
-    return property.select.name;
-  }
-  return "";
-}
 
 function getNumberLikeFromProperty(property: Record<string, any> | undefined): number | null {
   const num = getNumberFromProperty(property);
@@ -2739,6 +2725,27 @@ location_summary_text の書式ルール:
     },
   } as LocationSummaryResult;
 }
+function normalizeLocationLogPage(
+  page: Record<string, any>,
+  propertyNames: LocationPropertyNames,
+): NormalizedLocationLog | null {
+  const properties = page.properties ?? {};
+  const timeIso = getDateTimeFromProperty(properties[propertyNames.time]);
+  const timeMs = Date.parse(timeIso);
+  if (!timeIso || Number.isNaN(timeMs)) {
+    return null;
+  }
+
+  return {
+    timeIso,
+    timeMs,
+    place: getStringFromProperty(properties[propertyNames.place]).trim(),
+    lat: getNumberLikeFromProperty(properties[propertyNames.lat]),
+    lon: getNumberLikeFromProperty(properties[propertyNames.lon]),
+    source: getStringFromProperty(properties[propertyNames.source]).trim(),
+  };
+}
+
 async function handleDailyLogLocationIngest(
   request: Request,
   env: Env,
@@ -2750,6 +2757,9 @@ async function handleDailyLogLocationIngest(
   if (authError) {
     return authError;
   }
+  if (!env.LOCATION_LOG_DB_ID) {
+    return badRequest("LOCATION_LOG_DB_ID is not set");
+  }
 
   const payload = await parseJsonBody(request);
   if (!payload) {
@@ -2757,12 +2767,54 @@ async function handleDailyLogLocationIngest(
   }
 
   const targetDateResult = resolveIngestTargetDate(payload);
+  if (!targetDateResult.ok) {
+    return badRequest(targetDateResult.reason);
+  }
+
+  const diaryDate = targetDateResult.targetDate;
   const windowStartHour = parseIntEnv(env.WINDOW_START_HOUR, 5);
-  const window = resolveLocationWindow(new Date(), windowStartHour);
-  const diaryDate = targetDateResult.ok ? targetDateResult.targetDate : window.diaryDate;
+  const previousDate = addDaysToJstDate(diaryDate, -1);
+  const hourText = String(windowStartHour).padStart(2, "0");
+  const window = {
+    anchorStartIso: `${previousDate}T${hourText}:00:00+09:00`,
+    anchorEndIso: `${diaryDate}T${hourText}:00:00+09:00`,
+    diaryDate,
+  };
+  const locationPropertyNames = getLocationPropertyNames(env);
   const dailyLogDateProp = getDailyLogDatePropertyName(env);
 
-  // Daily Log ページを対象日で取得（存在しなければ後段で upsert）
+  const locationPages = await queryDatabaseAllWithBody(env, env.LOCATION_LOG_DB_ID, {
+    filter: {
+      and: [
+        { property: locationPropertyNames.time, date: { on_or_after: window.anchorStartIso } },
+        { property: locationPropertyNames.time, date: { before: window.anchorEndIso } },
+      ],
+    },
+    sorts: [{ property: locationPropertyNames.time, direction: "ascending" }],
+  });
+
+  const normalized = locationPages
+    .map((page) => normalizeLocationLogPage(page, locationPropertyNames))
+    .filter((item): item is NormalizedLocationLog => Boolean(item));
+  const { segments, moveCount } = segmentLocationLogs(
+    normalized,
+    parseIntEnv(env.LOCATION_ROUND_DECIMALS, 4),
+    5,
+  );
+  const dataQualityNotes: string[] = [];
+  if (!normalized.length) {
+    dataQualityNotes.push("位置ログなし");
+  }
+  const summary = await generateLocationSummaryWithGpt(
+    env,
+    diaryDate,
+    window.anchorStartIso,
+    window.anchorEndIso,
+    segments,
+    moveCount,
+    dataQualityNotes,
+  );
+
   const dailyLogPages = await queryDatabaseAllWithBody(env, env.DAILY_LOG_DB_ID, {
     filter: {
       property: dailyLogDateProp,
@@ -2803,6 +2855,19 @@ async function handleDailyLogLocationIngest(
       }),
       { headers: jsonHeaders },
     );
+  }
+
+  const locationSummaryProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
+  const updateResponse = await notionFetch(env, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      properties: {
+        [locationSummaryProp]: createRichTextProperty(summary.location_summary_text),
+      },
+    }),
+  });
+  if (!updateResponse.ok) {
+    return notionErrorResponse(updateResponse, "handleDailyLogLocationIngest.updateDailyLog");
   }
 
   return new Response(
