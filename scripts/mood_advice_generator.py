@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -24,25 +25,25 @@ MINI_SYSTEM_PROMPT = """あなたは Daily Log 分析用の材料整理アシス
 役割は最終助言を書くことではなく、過去30日の材料を構造化して整理することです。
 
 必須ルール:
-- 高評価日(Mood 4/5)と低評価日(Mood 1/2)の違いを整理する
-- 直近7日〜14日の変化と、直近3日連続の流れがあれば整理する
-- 睡眠、活動、食事、体調メモ、タスク、記録状況のうち根拠のあるものだけを使う
-- Notes / Diary / Location summary のシグナルを見る
+- 過去30日全体の構造化サマリを踏まえて整理する
+- 評価が高い日5件と低い日5件の差を比較する
+- 当日の diary 本文や過去の日記本文は参照しない
+- 日本語の自由記述として参照してよいのは notes のみ
+- 睡眠、食事、タスク、支出、記録状況、notes のうち根拠のあるものだけを使う
 - 決め打ちの一般論を書かない
 - 原因を断定しない
 - 相関らしきものは「傾向」「可能性」として扱う
-- 意外な関連性候補も残す
 - データ不足の項目は不足として扱い、補完しない
 - 最終助言文は絶対に書かない
 - 出力は構造化テキストにする
 
 出力には必ず次の見出しを含めてください:
 1. recent_trends
-2. high_mood_patterns
-3. low_mood_patterns
-4. differences_summary
-5. recording_patterns
-6. notes_diary_location_signals
+2. top_good_days_patterns
+3. top_bad_days_patterns
+4. good_vs_bad_differences
+5. notes_signals
+6. recording_patterns
 7. hidden_hypotheses
 8. today_relevant_points
 """
@@ -66,11 +67,15 @@ FINAL_SYSTEM_PROMPT = """あなたは朝の Daily Log レビュー用に Today a
 内容ルール:
 - 一般論に逃げない
 - 必ず入力データに基づいて書く
-- 直近7日〜14日のデータから根拠がある傾向だけを書く
-- 今日の睡眠時間、就寝時刻、起床時刻、睡眠スコア、前日比、直近平均との差分、予定、未処理タスクなど使える情報を優先する
+- 過去30日の構造化サマリと、評価が高い日5件・低い日5件の比較を必ず踏まえる
+- 今日は直近30日の中でどのパターンに近いかをまず判断する
+- 良い日 / 悪い日の差分を踏まえて、今日の進め方を具体化する
+- 今日の睡眠時間、就寝時刻、起床時刻、睡眠スコア、前日比、直近平均との差分、食事記録、タスク状況、支出、notes を優先する
 - 良い点と注意点の両方を書く
 - 事実 → 解釈 → 行動提案 の順で自然につなぐ
 - 行動提案は時間帯や優先順位がわかる実行可能な粒度で書く
+- 当日の diary 本文や過去の日記本文は参照しない
+- 日本語自由記述として扱ってよいのは notes のみ
 - データから言えないことは断定しない
 - 医療断定や過剰な励ましを避ける
 - 禁止表現: 「バランスの良い食事を心がけましょう」「適度に休憩しましょう」「無理せず過ごしましょう」「規則正しい生活を意識しましょう」「体調に気をつけましょう」など、入力データと結びつかない抽象的な一般論
@@ -82,8 +87,6 @@ FINAL_SYSTEM_PROMPT = """あなたは朝の Daily Log レビュー用に Today a
 - レポートと助言文の中間の文体
 - 観測事実と解釈を明確に分けつつ、読んで自然につながる文章にする
 """
-
-
 
 
 def _dump_today_advice_debug_log(*,
@@ -139,7 +142,7 @@ def _dump_today_advice_debug_log(*,
         logging.warning("today_advice_debug_file_failed kind=%s error=%s", debug_kind, exc)
 
 
-def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], structured: Mapping[str, Any], today_state: Mapping[str, Any], has_mini_analysis: bool) -> dict[str, Any]:
+def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], structured: Mapping[str, Any], today_state: Mapping[str, Any], has_mini_analysis: bool, prompt_tokens: Optional[int], token_counting_method: str) -> dict[str, Any]:
     counts = structured.get("counts", {}) if isinstance(structured, Mapping) else {}
     return {
         "history_count": len(history),
@@ -156,6 +159,13 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
         "today_activity_keys": sorted(today_state.get("today_activity_context", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_activity_context"), Mapping) else [],
         "comparison_keys": sorted(today_state.get("comparisons", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("comparisons"), Mapping) else [],
         "has_mini_analysis": has_mini_analysis,
+        "last_30_days_count": counts.get("last_30_days_count") if isinstance(counts, Mapping) else None,
+        "top_good_days_count": counts.get("top_good_days_count") if isinstance(counts, Mapping) else None,
+        "top_bad_days_count": counts.get("top_bad_days_count") if isinstance(counts, Mapping) else None,
+        "notes_used_count": counts.get("notes_used_count") if isinstance(counts, Mapping) else None,
+        "diary_used": False,
+        "input_tokens": prompt_tokens,
+        "token_counting_method": token_counting_method,
     }
 
 @dataclass(frozen=True)
@@ -261,24 +271,6 @@ def _recording_rate(items: Sequence[DailyLogSummary], extractor: Any) -> Optiona
     return round(count / len(items), 2)
 
 
-def _sample_days(items: Sequence[DailyLogSummary], limit: int = SAMPLE_DAYS_PER_BUCKET) -> list[DailyLogSummary]:
-    if len(items) <= limit:
-        return list(items)
-    sorted_items = sorted(items, key=lambda item: item.target_date)
-    if limit == 1:
-        return [sorted_items[len(sorted_items) // 2]]
-    last_index = len(sorted_items) - 1
-    indexes = sorted({round(i * last_index / (limit - 1)) for i in range(limit)})
-    selected = [sorted_items[index] for index in indexes]
-    while len(selected) < limit:
-        for item in sorted_items:
-            if item not in selected:
-                selected.append(item)
-            if len(selected) >= limit:
-                break
-    return selected[:limit]
-
-
 def _format_number(value: Optional[float]) -> str:
     if value is None:
         return "未記録"
@@ -287,53 +279,13 @@ def _format_number(value: Optional[float]) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
-def _format_day_sample(summary: DailyLogSummary) -> str:
-    meal_photo_flag = "あり" if summary.meal_photos else "なし"
-    fields = [
-        ("Date", summary.target_date),
-        ("Mood", summary.mood or "未記録"),
-        ("Mood Score", str(normalize_mood_to_score(summary.mood) or "未記録")),
-        ("Sleep Start", summary.sleep_start or "未記録"),
-        ("Sleep End", summary.sleep_end or "未記録"),
-        ("Sleep Duration", _format_number(summary.sleep_duration_min)),
-        ("Sleep Score", _format_number(summary.sleep_score)),
-        ("Sleep Heart Rate", _format_number(summary.sleep_heart_rate)),
-        ("Deep Duration", _format_number(summary.deep_duration_min)),
-        ("REM Duration", _format_number(summary.rem_duration_min)),
-        ("Readiness Stars", _format_number(summary.readiness_stars)),
-        ("Readiness HRV", _format_number(summary.readiness_hrv)),
-        ("Readiness BPM", _format_number(summary.readiness_bpm)),
-        ("Baseline HRV", _format_number(summary.baseline_hrv)),
-        ("Done Count", _format_number(summary.done_count)),
-        ("Drop Count", _format_number(summary.drop_count)),
-        ("Expenses Total", _format_number(summary.expenses_total)),
-        ("Kcal", _format_number(summary.kcal)),
-        ("Protein", _format_number(summary.protein)),
-        ("Fat", _format_number(summary.fat)),
-        ("Carb", _format_number(summary.carb)),
-        ("Notes", summary.notes or "未記録"),
-        ("Diary", summary.diary or "未記録"),
-        ("Location summary", summary.location_summary or "未記録"),
-        ("Weight", _format_number(summary.weight)),
-        ("Meal Photos", meal_photo_flag),
-    ]
-    return "\n".join(f"- {name}: {value}" for name, value in fields)
-
-
 def _build_metric_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
     return {
         "sleep_duration_min_avg": _mean([item.sleep_duration_min for item in items]),
         "sleep_score_avg": _mean([item.sleep_score for item in items]),
-        "readiness_hrv_avg": _mean([item.readiness_hrv for item in items]),
-        "readiness_bpm_avg": _mean([item.readiness_bpm for item in items]),
         "done_count_avg": _mean([_safe_float(item.done_count) for item in items]),
         "drop_count_avg": _mean([_safe_float(item.drop_count) for item in items]),
         "expenses_total_avg": _mean([item.expenses_total for item in items]),
-        "kcal_avg": _mean([item.kcal for item in items]),
-        "protein_avg": _mean([item.protein for item in items]),
-        "fat_avg": _mean([item.fat for item in items]),
-        "carb_avg": _mean([item.carb for item in items]),
-        "weight_avg": _mean([item.weight for item in items]),
     }
 
 
@@ -359,8 +311,6 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
 
     today_sleep_duration = _safe_float(today_summary.sleep_duration_min)
     today_sleep_score = _safe_float(today_summary.sleep_score)
-    today_readiness_hrv = _safe_float(today_summary.readiness_hrv)
-    today_readiness_bpm = _safe_float(today_summary.readiness_bpm)
 
     return {
         "today_is_morning_incomplete": True,
@@ -369,39 +319,30 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "sleep_end": today_summary.sleep_end or "未記録",
             "sleep_duration_min": today_summary.sleep_duration_min,
             "sleep_score": today_summary.sleep_score,
-            "sleep_heart_rate": today_summary.sleep_heart_rate,
-            "deep_duration_min": today_summary.deep_duration_min,
-            "rem_duration_min": today_summary.rem_duration_min,
-            "readiness_stars": today_summary.readiness_stars,
-            "readiness_hrv": today_summary.readiness_hrv,
-            "readiness_bpm": today_summary.readiness_bpm,
-            "baseline_hrv": today_summary.baseline_hrv,
-            "today_condition_forecast_jp": today_summary.today_condition_forecast_jp or "未記録",
-            "sleep_analysis_jp": today_summary.sleep_analysis_jp or "未記録",
         },
         "today_activity_context": {
-            "location_summary": today_summary.location_summary,
-            "activity_summary": today_summary.activity_summary,
             "meal_summary": today_summary.meal_summary,
+            "meal_logged": bool(_safe_text(today_summary.meal_summary) or today_summary.meal_photos),
             "done_count": today_summary.done_count,
             "drop_count": today_summary.drop_count,
-            "done_tasks": list(today_summary.done_tasks),
-            "drop_tasks": list(today_summary.drop_tasks),
+            "spend_total": today_summary.expenses_total,
             "notes": today_summary.notes,
-            "diary": today_summary.diary,
+            "daily_score": normalize_mood_to_score(today_summary.mood),
         },
         "comparisons": {
             "vs_yesterday": {
                 "sleep_duration_min_delta": _delta(today_sleep_duration, _safe_float(yesterday.sleep_duration_min) if yesterday else None),
                 "sleep_score_delta": _delta(today_sleep_score, _safe_float(yesterday.sleep_score) if yesterday else None),
-                "readiness_hrv_delta": _delta(today_readiness_hrv, _safe_float(yesterday.readiness_hrv) if yesterday else None),
-                "readiness_bpm_delta": _delta(today_readiness_bpm, _safe_float(yesterday.readiness_bpm) if yesterday else None),
+                "done_count_delta": _delta(_safe_float(today_summary.done_count), _safe_float(yesterday.done_count) if yesterday else None),
+                "drop_count_delta": _delta(_safe_float(today_summary.drop_count), _safe_float(yesterday.drop_count) if yesterday else None),
+                "spend_total_delta": _delta(_safe_float(today_summary.expenses_total), _safe_float(yesterday.expenses_total) if yesterday else None),
             },
             "vs_recent_7d_avg": {
                 "sleep_duration_min_delta": _delta(today_sleep_duration, recent_7_metrics["sleep_duration_min_avg"]),
                 "sleep_score_delta": _delta(today_sleep_score, recent_7_metrics["sleep_score_avg"]),
-                "readiness_hrv_delta": _delta(today_readiness_hrv, recent_7_metrics["readiness_hrv_avg"]),
-                "readiness_bpm_delta": _delta(today_readiness_bpm, recent_7_metrics["readiness_bpm_avg"]),
+                "done_count_delta": _delta(_safe_float(today_summary.done_count), recent_7_metrics["done_count_avg"]),
+                "drop_count_delta": _delta(_safe_float(today_summary.drop_count), recent_7_metrics["drop_count_avg"]),
+                "spend_total_delta": _delta(_safe_float(today_summary.expenses_total), recent_7_metrics["expenses_total_avg"]),
             },
             "recent_7d_avg": recent_7_metrics,
             "recent_14d_avg": recent_14_metrics,
@@ -411,34 +352,42 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "sleep_score": _trend_direction([item.sleep_score for item in recent_3_chronological]),
             "done_count": _trend_direction([_safe_float(item.done_count) for item in recent_3_chronological]),
             "drop_count": _trend_direction([_safe_float(item.drop_count) for item in recent_3_chronological]),
+            "spend_total": _trend_direction([_safe_float(item.expenses_total) for item in recent_3_chronological]),
         },
-        "recent_sleep_trend": [
-            {
-                "date": item.target_date,
-                "sleep_duration_min": item.sleep_duration_min,
-                "sleep_score": item.sleep_score,
-                "readiness_hrv": item.readiness_hrv,
-                "readiness_bpm": item.readiness_bpm,
-                "mood": item.mood or "未記録",
-            }
-            for item in recent_summaries[:7]
-        ],
-        "recent_behavior_trend": [
-            {
-                "date": item.target_date,
-                "done_count": item.done_count,
-                "drop_count": item.drop_count,
-                "expenses_total": item.expenses_total,
-                "kcal": item.kcal,
-                "protein": item.protein,
-                "fat": item.fat,
-                "carb": item.carb,
-                "pfc_recorded": all(value is not None for value in (item.kcal, item.protein, item.fat, item.carb)),
-                "notes_recorded": bool((item.notes or "").strip()),
-            }
-            for item in recent_summaries[:7]
-        ],
     }
+
+
+def _build_day_record(summary: DailyLogSummary) -> dict[str, Any]:
+    return {
+        "date": summary.target_date,
+        "sleep_start": summary.sleep_start,
+        "sleep_end": summary.sleep_end,
+        "sleep_duration_min": summary.sleep_duration_min,
+        "sleep_score": summary.sleep_score,
+        "meal_summary": summary.meal_summary,
+        "meal_logged": bool(_safe_text(summary.meal_summary) or summary.meal_photos),
+        "done_count": summary.done_count,
+        "drop_count": summary.drop_count,
+        "spend_total": summary.expenses_total,
+        "notes": summary.notes,
+        "daily_score": normalize_mood_to_score(summary.mood),
+    }
+
+
+def _select_top_days(items: Sequence[DailyLogSummary], *, descending: bool, limit: int = SAMPLE_DAYS_PER_BUCKET) -> list[DailyLogSummary]:
+    scored_items = []
+    for item in items:
+        score = normalize_mood_to_score(item.mood)
+        if score is None:
+            continue
+        scored_items.append((item, score, _safe_float(item.sleep_score) or -1.0, _safe_float(item.done_count) or -1.0, item.target_date))
+    if descending:
+        filtered = [entry for entry in scored_items if entry[1] >= 4]
+        filtered.sort(key=lambda entry: (entry[1], entry[2], entry[3], entry[4]), reverse=True)
+    else:
+        filtered = [entry for entry in scored_items if entry[1] <= 2]
+        filtered.sort(key=lambda entry: (entry[1], -(entry[2]), -(entry[3]), entry[4]))
+    return [item for item, *_ in filtered[:limit]]
 
 
 def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str, Any]:
@@ -448,23 +397,19 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
     middle = [item for item, mood in scored if mood == 3]
     recent_7 = list(history[:SHORT_WINDOW_DAYS])
     recent_14 = list(history[:RECENT_WINDOW_DAYS])
+    top_good_days = _select_top_days(history, descending=True)
+    top_bad_days = _select_top_days(history, descending=False)
+    last_30_days = [_build_day_record(item) for item in history[:LOOKBACK_DAYS]]
 
     def compare(items: Sequence[DailyLogSummary]) -> dict[str, Any]:
         return {
             "count": len(items),
             **_build_metric_snapshot(items),
             "notes_recording_rate": _recording_rate(items, lambda item: item.notes),
-            "pfc_recording_rate": _recording_rate(
-                items,
-                lambda item: [item.kcal, item.protein, item.fat, item.carb]
-                if all(v is not None for v in (item.kcal, item.protein, item.fat, item.carb))
-                else [],
-            ),
-            "location_summary_rate": _recording_rate(items, lambda item: item.location_summary),
-            "diary_rate": _recording_rate(items, lambda item: item.diary),
-            "meal_photo_rate": _recording_rate(items, lambda item: item.meal_photos),
+            "meal_logged_rate": _recording_rate(items, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
         }
 
+    notes_used_count = sum(1 for item in history if _safe_text(item.notes))
     return {
         "counts": {
             "history_days": len(history),
@@ -474,6 +419,11 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
             "low_mood_days": len(low),
             "middle_mood_days": len(middle),
             "mood_recorded_days": sum(1 for _, mood in scored if mood is not None),
+            "last_30_days_count": len(last_30_days),
+            "top_good_days_count": len(top_good_days),
+            "top_bad_days_count": len(top_bad_days),
+            "notes_used_count": notes_used_count,
+            "diary_used": False,
         },
         "comparisons": {
             "recent_7d": compare(recent_7),
@@ -481,18 +431,62 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
             "high_mood": compare(high),
             "low_mood": compare(low),
             "middle_mood": compare(middle),
+            "good_vs_bad_delta": {
+                "sleep_duration_min": _delta(_build_metric_snapshot(top_good_days)["sleep_duration_min_avg"], _build_metric_snapshot(top_bad_days)["sleep_duration_min_avg"]),
+                "sleep_score": _delta(_build_metric_snapshot(top_good_days)["sleep_score_avg"], _build_metric_snapshot(top_bad_days)["sleep_score_avg"]),
+                "done_count": _delta(_build_metric_snapshot(top_good_days)["done_count_avg"], _build_metric_snapshot(top_bad_days)["done_count_avg"]),
+                "drop_count": _delta(_build_metric_snapshot(top_good_days)["drop_count_avg"], _build_metric_snapshot(top_bad_days)["drop_count_avg"]),
+                "spend_total": _delta(_build_metric_snapshot(top_good_days)["expenses_total_avg"], _build_metric_snapshot(top_bad_days)["expenses_total_avg"]),
+            },
         },
-        "high_mood_samples": [_format_day_sample(item) for item in _sample_days(high)],
-        "low_mood_samples": [_format_day_sample(item) for item in _sample_days(low)],
-        "high_mood_sample_count": min(len(high), SAMPLE_DAYS_PER_BUCKET),
-        "low_mood_sample_count": min(len(low), SAMPLE_DAYS_PER_BUCKET),
+        "last_30_days_summary": {
+            "daily_records": last_30_days,
+            "aggregates": {
+                "all_days": compare(history),
+                "recent_7d": compare(recent_7),
+                "recent_14d": compare(recent_14),
+                "top_good_days": compare(top_good_days),
+                "top_bad_days": compare(top_bad_days),
+            },
+        },
+        "top_good_days": [_build_day_record(item) for item in top_good_days],
+        "top_bad_days": [_build_day_record(item) for item in top_bad_days],
+        "high_mood_sample_count": len(top_good_days),
+        "low_mood_sample_count": len(top_bad_days),
     }
+
+
+def _build_chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def _count_input_tokens(*, model: str, messages: Sequence[Mapping[str, Any]]) -> tuple[Optional[int], str]:
+    tiktoken_spec = importlib.util.find_spec("tiktoken")
+    if tiktoken_spec is not None:
+        tiktoken = importlib.import_module("tiktoken")
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            encoding = tiktoken.get_encoding("o200k_base")
+        total = 0
+        for message in messages:
+            total += 4
+            total += len(encoding.encode(str(message.get("role", ""))))
+            total += len(encoding.encode(str(message.get("content", ""))))
+        total += 2
+        return total, "tiktoken"
+    raw_text = json.dumps(list(messages), ensure_ascii=False)
+    return max(1, len(raw_text) // 4), "estimated_chars_div4"
 
 
 def _chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is missing")
+    messages = _build_chat_messages(system_prompt=system_prompt, user_prompt=user_prompt)
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -502,10 +496,7 @@ def _chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str
         json={
             "model": model,
             "temperature": 0.3,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "messages": messages,
         },
         timeout=OPENAI_TIMEOUT,
     )
@@ -544,20 +535,32 @@ def generate_today_advice(
     mini_user_prompt = (
         "以下の Daily Log 材料を読んで、最終助言は書かずに材料整理だけをしてください。\n"
         "当日データは朝時点で未完成です。因果は断定せず、傾向と可能性として整理してください。\n"
-        "特に、直近7日平均、前日比、直近平均との差分、直近3日連続の流れが使える箇所を優先して整理してください。\n\n"
+        "当日の diary 本文や過去の日記本文は参照禁止です。日本語自由記述として参照してよいのは notes のみです。\n"
+        "過去30日の構造化サマリと、評価が高い日5件・低い日5件の比較を必ず使ってください。\n\n"
         f"A. 今日朝の状態\n{json.dumps(today_state, ensure_ascii=False, indent=2)}\n\n"
-        f"B. 過去30日の構造化情報\n{json.dumps(structured['counts'], ensure_ascii=False, indent=2)}\n"
-        f"{json.dumps(structured['comparisons'], ensure_ascii=False, indent=2)}\n\n"
-        "C. 生データの日次サンプル\n"
-        f"High mood samples ({structured['high_mood_sample_count']}件):\n" + "\n\n".join(structured["high_mood_samples"]) + "\n\n"
-        f"Low mood samples ({structured['low_mood_sample_count']}件):\n" + "\n\n".join(structured["low_mood_samples"])
+        f"B. 過去30日の構造化サマリ\n{json.dumps(structured['last_30_days_summary'], ensure_ascii=False, indent=2)}\n\n"
+        f"C. 評価が高い日5件の生データ\n{json.dumps(structured['top_good_days'], ensure_ascii=False, indent=2)}\n\n"
+        f"D. 評価が低い日5件の生データ\n{json.dumps(structured['top_bad_days'], ensure_ascii=False, indent=2)}"
+    )
+    mini_messages = _build_chat_messages(system_prompt=MINI_SYSTEM_PROMPT, user_prompt=mini_user_prompt)
+    mini_prompt_tokens, mini_token_method = _count_input_tokens(model=mini_model, messages=mini_messages)
+    logging.info(
+        "today_advice_input_metrics target_date=%s phase=mini input_tokens=%s token_counting_method=%s last_30_days_count=%s top_good_days_count=%s top_bad_days_count=%s notes_used_count=%s diary_used=%s",
+        target_date,
+        mini_prompt_tokens,
+        mini_token_method,
+        structured["counts"].get("last_30_days_count"),
+        structured["counts"].get("top_good_days_count"),
+        structured["counts"].get("top_bad_days_count"),
+        structured["counts"].get("notes_used_count"),
+        False,
     )
     mini_advice_input = {
         "today_state": today_state,
-        "structured_counts": structured["counts"],
-        "structured_comparisons": structured["comparisons"],
-        "high_mood_samples": structured["high_mood_samples"],
-        "low_mood_samples": structured["low_mood_samples"],
+        "last_30_days_summary": structured["last_30_days_summary"],
+        "top_good_days": structured["top_good_days"],
+        "top_bad_days": structured["top_bad_days"],
+        "diary_used": False,
     }
     _dump_today_advice_debug_log(
         debug_kind="MOOD_MINI",
@@ -569,6 +572,8 @@ def generate_today_advice(
             structured=structured,
             today_state=today_state,
             has_mini_analysis=False,
+            prompt_tokens=mini_prompt_tokens,
+            token_counting_method=mini_token_method,
         ),
         prompt_text=f"[system]\n{MINI_SYSTEM_PROMPT}\n\n[user]\n{mini_user_prompt}",
     )
@@ -580,18 +585,36 @@ def generate_today_advice(
 
     final_user_prompt = (
         "以下をもとに、Today advice を指定の構成どおりに作成してください。\n"
-        "当日の Done/Drop/PFC/Notes/Mood の完成値はまだ存在しない前提です。\n"
-        "データ不足の項目は無理に埋めず、使える根拠だけで文章を組み立ててください。\n\n"
+        "当日の diary 本文や過去の日記本文は参照禁止です。日本語自由記述として扱ってよいのは notes のみです。\n"
+        "過去30日の構造化サマリと、評価が高い日5件・低い日5件との比較を必ず踏まえてください。\n"
+        "今日は直近30日の中でどのパターンに近いかを判断し、良い日 / 悪い日の差分を踏まえて、今日の進め方を具体化してください。\n"
+        "長すぎず、中身のある文章にしてください。\n\n"
         f"今朝の状態:\n{json.dumps(today_state, ensure_ascii=False, indent=2)}\n\n"
-        f"過去30日の比較要約:\n{json.dumps(structured['counts'], ensure_ascii=False, indent=2)}\n"
-        f"{json.dumps(structured['comparisons'], ensure_ascii=False, indent=2)}\n\n"
+        f"過去30日の構造化サマリ:\n{json.dumps(structured['last_30_days_summary'], ensure_ascii=False, indent=2)}\n\n"
+        f"評価が高い日5件の生データ:\n{json.dumps(structured['top_good_days'], ensure_ascii=False, indent=2)}\n\n"
+        f"評価が低い日5件の生データ:\n{json.dumps(structured['top_bad_days'], ensure_ascii=False, indent=2)}\n\n"
         f"mini整理結果:\n{mini_analysis}\n"
+    )
+    final_messages = _build_chat_messages(system_prompt=FINAL_SYSTEM_PROMPT, user_prompt=final_user_prompt)
+    final_prompt_tokens, final_token_method = _count_input_tokens(model=final_model, messages=final_messages)
+    logging.info(
+        "today_advice_input_metrics target_date=%s phase=final input_tokens=%s token_counting_method=%s last_30_days_count=%s top_good_days_count=%s top_bad_days_count=%s notes_used_count=%s diary_used=%s",
+        target_date,
+        final_prompt_tokens,
+        final_token_method,
+        structured["counts"].get("last_30_days_count"),
+        structured["counts"].get("top_good_days_count"),
+        structured["counts"].get("top_bad_days_count"),
+        structured["counts"].get("notes_used_count"),
+        False,
     )
     final_advice_input = {
         "today_state": today_state,
-        "structured_counts": structured["counts"],
-        "structured_comparisons": structured["comparisons"],
+        "last_30_days_summary": structured["last_30_days_summary"],
+        "top_good_days": structured["top_good_days"],
+        "top_bad_days": structured["top_bad_days"],
         "mini_analysis": mini_analysis,
+        "diary_used": False,
     }
     _dump_today_advice_debug_log(
         debug_kind="MOOD_FINAL",
@@ -603,6 +626,8 @@ def generate_today_advice(
             structured=structured,
             today_state=today_state,
             has_mini_analysis=True,
+            prompt_tokens=final_prompt_tokens,
+            token_counting_method=final_token_method,
         ),
         prompt_text=f"[system]\n{FINAL_SYSTEM_PROMPT}\n\n[user]\n{final_user_prompt}",
     )
