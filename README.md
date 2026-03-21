@@ -59,7 +59,7 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
 
 - `Sleep Analysis JP`: 昨夜の睡眠データの**分析**。
 - `Today Condition Forecast JP`: 今日の体調・集中力・疲労感などの**予測**。
-- `Today advice`: 今日すぐ実行する短い**具体行動**。メール本文の最上部に表示。
+- `Today advice`: 直近の傾向・本日の状態・本日の進め方・総括を含む、400〜700字程度の実用的な助言文。`Today advice` の見出しで始まり、メール本文の最上部に表示。
 
 ## Secrets
 
@@ -94,3 +94,4 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
 - `scripts/daily_job.py` は sleep insights の保存後に Daily Log を再読込し、後続の diary / mail で同じフィールドを安全に参照します。
 - `publish/render_mail.py` はテンプレート payload に sleep / readiness / advice 系フィールドを渡します。
 - `publish/email_templates.py` は値があるセクションだけを表示し、睡眠時間は `7時間15分` の形式で表示します。
+- `Today advice` は一般論ではなく、直近7日〜14日の傾向、当日の睡眠/行動データ、前日比、直近平均との差分、直近3日連続の流れなど、実際に取得できた根拠に基づいて生成します。データ不足の項目は無理に補完しません。

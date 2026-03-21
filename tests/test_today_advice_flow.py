@@ -113,3 +113,28 @@ def test_render_daily_log_text_includes_sleep_sections_in_order() -> None:
     assert "- 就寝時間: 23:45" in rendered
     assert "- 起床時間: 07:00" in rendered
     assert "- 睡眠時間: 7時間15分" in rendered
+
+
+def test_build_today_state_includes_comparison_context() -> None:
+    from scripts.mood_advice_generator import _build_today_state
+
+    today = _summary(
+        sleep_duration_min=450,
+        sleep_score=82,
+        readiness_hrv=48,
+        readiness_bpm=52,
+        done_count=3,
+        drop_count=1,
+    )
+    recent = [
+        _summary(target_date="2026-03-19", sleep_duration_min=420, sleep_score=79, readiness_hrv=45, readiness_bpm=54, done_count=2, drop_count=1),
+        _summary(target_date="2026-03-18", sleep_duration_min=410, sleep_score=77, readiness_hrv=43, readiness_bpm=55, done_count=1, drop_count=2),
+        _summary(target_date="2026-03-17", sleep_duration_min=400, sleep_score=75, readiness_hrv=40, readiness_bpm=56, done_count=1, drop_count=2),
+    ]
+
+    state = _build_today_state(today, recent)
+
+    assert state["comparisons"]["vs_yesterday"]["sleep_duration_min_delta"] == 30
+    assert state["comparisons"]["vs_recent_7d_avg"]["sleep_score_delta"] == 5.0
+    assert state["recent_3day_trend"]["sleep_duration_min"] == "up"
+    assert state["recent_3day_trend"]["drop_count"] is None
