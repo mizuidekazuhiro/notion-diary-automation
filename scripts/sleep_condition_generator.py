@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -166,6 +167,77 @@ def load_recent_daily_logs(
     return summaries
 
 
+
+
+def _dump_today_advice_debug_log(*,
+    debug_kind: str,
+    target_date: str,
+    model: str,
+    advice_input: Mapping[str, Any],
+    advice_input_summary: Mapping[str, Any],
+    prompt_text: str,
+) -> None:
+    try:
+        advice_input_json = json.dumps(advice_input, ensure_ascii=False, indent=2, default=str)
+        advice_summary_json = json.dumps(advice_input_summary, ensure_ascii=False, indent=2, default=str)
+        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA START ===")
+        print(advice_input_json)
+        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY START ===")
+        print(advice_summary_json)
+        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} MODEL START ===")
+        print(model)
+        print(f"=== TODAY ADVICE {debug_kind} MODEL END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE START ===")
+        print(target_date)
+        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} PROMPT START ===")
+        print(prompt_text)
+        print(f"=== TODAY ADVICE {debug_kind} PROMPT END ===")
+    except Exception as exc:
+        logging.warning("today_advice_debug_print_failed kind=%s error=%s", debug_kind, exc)
+
+    try:
+        debug_dir = os.path.join(os.getcwd(), "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_payload = {
+            "target_date": target_date,
+            "model": model,
+            "advice_input": advice_input,
+            "advice_input_summary": advice_input_summary,
+            "prompt_text": prompt_text,
+        }
+        debug_path = os.path.join(debug_dir, f"today_advice_{debug_kind.lower()}_{target_date}.json")
+        with open(debug_path, "w", encoding="utf-8") as debug_file:
+            json.dump(debug_payload, debug_file, ensure_ascii=False, indent=2, default=str)
+        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE START ===")
+        print(debug_path)
+        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE END ===")
+    except Exception as exc:
+        logging.warning("today_advice_debug_file_failed kind=%s error=%s", debug_kind, exc)
+
+
+def _build_sleep_advice_debug_summary(*, context: SleepInsightContext) -> dict[str, Any]:
+    return {
+        "today_values_keys": sorted(context.today_values.keys()),
+        "today_values_present_count": sum(1 for value in context.today_values.values() if value not in (None, "")),
+        "trend_values_keys": sorted(context.trend_values.keys()),
+        "trend_values_present_count": sum(1 for value in context.trend_values.values() if value not in (None, "")),
+        "supporting_context_keys": sorted(context.supporting_context.keys()),
+        "done_tasks_count": len(context.supporting_context.get("done_tasks", [])),
+        "drop_tasks_count": len(context.supporting_context.get("drop_tasks", [])),
+        "has_notes": bool(context.supporting_context.get("notes")),
+        "has_diary": bool(context.supporting_context.get("diary")),
+        "has_location_summary": bool(context.supporting_context.get("location_summary")),
+        "has_activity_summary": bool(context.supporting_context.get("activity_summary")),
+        "has_meal_summary": bool(context.supporting_context.get("meal_summary")),
+    }
+
 def _build_prompts(target_date: str, context: SleepInsightContext) -> tuple[str, str]:
     system_prompt = (
         "あなたは睡眠データから日本語の分析文を作るアシスタントです。\n"
@@ -207,6 +279,20 @@ def generate_sleep_insights(
         raise RuntimeError("OPENAI_API_KEY is missing")
 
     system_prompt, user_prompt = _build_prompts(target_date, context)
+    advice_input = {
+        "today_values": context.today_values,
+        "trend_values": context.trend_values,
+        "supporting_context": context.supporting_context,
+    }
+    prompt_text = f"[system]\n{system_prompt}\n\n[user]\n{user_prompt}"
+    _dump_today_advice_debug_log(
+        debug_kind="SLEEP",
+        target_date=target_date,
+        model=model,
+        advice_input=advice_input,
+        advice_input_summary=_build_sleep_advice_debug_summary(context=context),
+        prompt_text=prompt_text,
+    )
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={

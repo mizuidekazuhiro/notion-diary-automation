@@ -84,6 +84,80 @@ FINAL_SYSTEM_PROMPT = """あなたは朝の Daily Log レビュー用に Today a
 """
 
 
+
+
+def _dump_today_advice_debug_log(*,
+    debug_kind: str,
+    target_date: str,
+    model: str,
+    advice_input: Mapping[str, Any],
+    advice_input_summary: Mapping[str, Any],
+    prompt_text: str,
+) -> None:
+    try:
+        advice_input_json = json.dumps(advice_input, ensure_ascii=False, indent=2, default=str)
+        advice_summary_json = json.dumps(advice_input_summary, ensure_ascii=False, indent=2, default=str)
+        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA START ===")
+        print(advice_input_json)
+        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY START ===")
+        print(advice_summary_json)
+        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} MODEL START ===")
+        print(model)
+        print(f"=== TODAY ADVICE {debug_kind} MODEL END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE START ===")
+        print(target_date)
+        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE END ===")
+        print()
+        print(f"=== TODAY ADVICE {debug_kind} PROMPT START ===")
+        print(prompt_text)
+        print(f"=== TODAY ADVICE {debug_kind} PROMPT END ===")
+    except Exception as exc:
+        logging.warning("today_advice_debug_print_failed kind=%s error=%s", debug_kind, exc)
+
+    try:
+        debug_dir = os.path.join(os.getcwd(), "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_payload = {
+            "target_date": target_date,
+            "model": model,
+            "advice_input": advice_input,
+            "advice_input_summary": advice_input_summary,
+            "prompt_text": prompt_text,
+        }
+        debug_path = os.path.join(debug_dir, f"today_advice_{debug_kind.lower()}_{target_date}.json")
+        with open(debug_path, "w", encoding="utf-8") as debug_file:
+            json.dump(debug_payload, debug_file, ensure_ascii=False, indent=2, default=str)
+        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE START ===")
+        print(debug_path)
+        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE END ===")
+    except Exception as exc:
+        logging.warning("today_advice_debug_file_failed kind=%s error=%s", debug_kind, exc)
+
+
+def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], structured: Mapping[str, Any], today_state: Mapping[str, Any], has_mini_analysis: bool) -> dict[str, Any]:
+    counts = structured.get("counts", {}) if isinstance(structured, Mapping) else {}
+    return {
+        "history_count": len(history),
+        "history_dates": [item.target_date for item in history[:LOOKBACK_DAYS]],
+        "high_mood_sample_count": structured.get("high_mood_sample_count") if isinstance(structured, Mapping) else None,
+        "low_mood_sample_count": structured.get("low_mood_sample_count") if isinstance(structured, Mapping) else None,
+        "history_days": counts.get("history_days") if isinstance(counts, Mapping) else None,
+        "recent_7d_days": counts.get("recent_7d_days") if isinstance(counts, Mapping) else None,
+        "recent_14d_days": counts.get("recent_14d_days") if isinstance(counts, Mapping) else None,
+        "high_mood_days": counts.get("high_mood_days") if isinstance(counts, Mapping) else None,
+        "low_mood_days": counts.get("low_mood_days") if isinstance(counts, Mapping) else None,
+        "today_state_keys": sorted(today_state.keys()) if isinstance(today_state, Mapping) else [],
+        "today_sleep_keys": sorted(today_state.get("today_sleep", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_sleep"), Mapping) else [],
+        "today_activity_keys": sorted(today_state.get("today_activity_context", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_activity_context"), Mapping) else [],
+        "comparison_keys": sorted(today_state.get("comparisons", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("comparisons"), Mapping) else [],
+        "has_mini_analysis": has_mini_analysis,
+    }
+
 @dataclass(frozen=True)
 class MoodAdviceResult:
     today_advice: str
@@ -478,6 +552,26 @@ def generate_today_advice(
         f"High mood samples ({structured['high_mood_sample_count']}件):\n" + "\n\n".join(structured["high_mood_samples"]) + "\n\n"
         f"Low mood samples ({structured['low_mood_sample_count']}件):\n" + "\n\n".join(structured["low_mood_samples"])
     )
+    mini_advice_input = {
+        "today_state": today_state,
+        "structured_counts": structured["counts"],
+        "structured_comparisons": structured["comparisons"],
+        "high_mood_samples": structured["high_mood_samples"],
+        "low_mood_samples": structured["low_mood_samples"],
+    }
+    _dump_today_advice_debug_log(
+        debug_kind="MOOD_MINI",
+        target_date=target_date,
+        model=mini_model,
+        advice_input=mini_advice_input,
+        advice_input_summary=_build_mood_advice_debug_summary(
+            history=history,
+            structured=structured,
+            today_state=today_state,
+            has_mini_analysis=False,
+        ),
+        prompt_text=f"[system]\n{MINI_SYSTEM_PROMPT}\n\n[user]\n{mini_user_prompt}",
+    )
     mini_analysis = _chat_completion(
         model=mini_model,
         system_prompt=MINI_SYSTEM_PROMPT,
@@ -492,6 +586,25 @@ def generate_today_advice(
         f"過去30日の比較要約:\n{json.dumps(structured['counts'], ensure_ascii=False, indent=2)}\n"
         f"{json.dumps(structured['comparisons'], ensure_ascii=False, indent=2)}\n\n"
         f"mini整理結果:\n{mini_analysis}\n"
+    )
+    final_advice_input = {
+        "today_state": today_state,
+        "structured_counts": structured["counts"],
+        "structured_comparisons": structured["comparisons"],
+        "mini_analysis": mini_analysis,
+    }
+    _dump_today_advice_debug_log(
+        debug_kind="MOOD_FINAL",
+        target_date=target_date,
+        model=final_model,
+        advice_input=final_advice_input,
+        advice_input_summary=_build_mood_advice_debug_summary(
+            history=history,
+            structured=structured,
+            today_state=today_state,
+            has_mini_analysis=True,
+        ),
+        prompt_text=f"[system]\n{FINAL_SYSTEM_PROMPT}\n\n[user]\n{final_user_prompt}",
     )
     today_advice = _chat_completion(
         model=final_model,
