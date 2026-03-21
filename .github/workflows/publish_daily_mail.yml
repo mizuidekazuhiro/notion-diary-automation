@@ -1,11 +1,15 @@
 name: Daily Notion Diary - Phase B (Publish)
 on:
-  schedule:
-    - cron: "01 22 * * *"
+  workflow_run:
+    workflows:
+      - Daily Notion Diary - Phase C (Notify Diary)
+    types:
+      - completed
   workflow_dispatch:
 
 jobs:
   run-publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
