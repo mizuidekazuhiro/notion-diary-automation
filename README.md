@@ -1,43 +1,87 @@
 # notion-diary-automation
 
-Notion の Daily Log を中心に、前日のデータ ingest → Location summary 生成 → Diary / Sleep insights / Today advice 生成 → 朝メール配信までを GitHub Actions でつなぐ自動化リポジトリです。
+Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/notify → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成と通知判定を担当します。
 
-## 4 workflows の正式名称と実行順
+## Workflow 名と依存関係
 
-| Order | Workflow name | Trigger | Notes |
+| Order | Workflow name | Trigger | 実責務 |
 | --- | --- | --- | --- |
-| 01 | `Daily Diary 01 - Ingest Daily Log` | `workflow_dispatch` | Daily Log の ensure と ingest を実行 |
-| 02 | `Daily Diary 02 - Generate Location Summary` | `workflow_run` from 01 / manual | `Location summary (GPT)` を更新 |
-| 03 | `Daily Diary 03 - Generate Diary & Sleep Insights` | `workflow_run` from 02 / manual | `Sleep Analysis JP` / `Today Condition Forecast JP` / `Today advice` / `Diary` を更新 |
-| 04 | `Daily Diary 04 - Publish Daily Mail` | `workflow_run` from 03 / manual | 朝メールを配信 |
+| 01 | `Daily Diary 01 - Ingest Daily Log` | `workflow_dispatch` | Phase A: Daily Log の ensure / ingest |
+| 02 | `Daily Diary 02 - Generate Location Summary` | `workflow_run` from 01 / manual | Phase B: `Location summary (GPT)` 更新 |
+| 03 | `Daily Diary 03 - Generate Diary & Sleep Insights` | `workflow_run` from 02 / manual | Phase C: sleep insights → Today advice → Diary → notify 判定 |
+| 04 | `Daily Diary 04 - Publish Daily Mail` | `workflow_run` from 03 / manual | Phase D: 朝メール配信 |
 
-`workflow_run` の参照先も上記名称に合わせて実装済みです。GitHub Actions の cron を使う場合、**cron は UTC 基準**です。JST の朝実行にしたい場合は UTC に換算して設定してください。
+`workflow_run.workflows` は上記 `name:` と一致しています。README の名称・YAML の `name:`・依存先は同じです。
 
-## 実装上のフロー
+## Phase ごとの最終仕様
 
-1. **Ingest**
-   - Daily Log ページを ensure します。
-   - Tasks / Health / Expenses を Daily Log に取り込みます。
-2. **Location Summary**
-   - `Location summary (GPT)` を更新します。
-3. **Generate Diary & Sleep Insights**
-   - Daily Log を再読込します。
-   - sleep 系入力があれば `scripts/sleep_condition_generator.py` が当日値・7日平均・平均との差分・既存コンテキストを使って、`Sleep Analysis JP` / `Today Condition Forecast JP` を生成します。
-   - `Today advice` は別責務として `scripts/mood_advice_generator.py` が生成します。Stage 1 で判定JSONを作り、Stage 2 で短めかつ密度の高い本文を生成します。
-   - `Today advice` の入力には diary / 過去日記 / location summary を使わず、自由記述は notes のみ参照します。
-   - その後、同じ Daily Log の内容から Diary を生成します。
-4. **Publish Daily Mail**
-   - メール本文の表示順は次のとおりです。
-     1. `Today advice`
-     2. `Sleep Analysis JP`
-     3. `Today Condition Forecast JP`
-     4. `就寝時間 / 起床時間 / 睡眠時間`
-     5. `Diary`
-     6. Summary / Expenses / Done / Drop / Meal
+### Phase A: ingest
+- Daily Log ページを ensure します。
+- Tasks / Health / Expenses を Daily Log に取り込みます。
 
-## Daily Log DB に必要な sleep 系プロパティ一覧
+### Phase B: publish source prep
+- `apps/location_summary_writer` が `Location summary (GPT)` を更新します。
+- ここでは Today advice / sleep insights / Diary は生成しません。
 
-以下の Notion 表示名を前提に実装しています。値がなければ Python 側は `None` として安全に扱います。
+### Phase C: generate/notify
+`scripts/daily_job.py --phase notify_diary` は次の順番で**直列実行**します。
+
+1. sleep insights 生成
+2. sleep insights 保存
+3. Daily Log 再読込
+4. Today advice 生成
+5. Today advice 保存
+6. Daily Log 再読込
+7. Diary 生成
+8. Diary 保存
+9. Daily Log 再読込
+10. notify 判定
+
+#### 役割分離
+- `scripts/sleep_condition_generator.py` は **`sleep_analysis_jp` / `today_condition_forecast_jp` の2項目だけ**生成します。
+- `scripts/mood_advice_generator.py` は **`today_advice` だけ**生成します。
+- `scripts/diary_generator.py` は Diary だけを生成します。
+- Diary は後段で sleep insights と Today advice を参照できますが、責務としては「後段参照」のみです。
+
+#### Today advice の入力ルール
+- 過去30日を使います。
+- 高評価日は mood 4/5、低評価日は 1/2、中間日は 3 です。
+- 高評価5件・低評価5件は、可能な限り偏らないように抽出します。不足時はその件数でフォールバックします。
+- diary 本文 / 過去 diary 本文は使いません。
+- 日本語自由記述として使うのは `notes` のみです。
+- `location summary` は構造化コンテキストとして使ってよい設計です。
+- `meal / done / drop / spend / sleep / notes / 記録有無 / location summary` を広く入力に含めます。
+- mini モデル → 上位モデルの Pattern B を維持しています。
+- debug summary には、過去30日件数・高評価/低評価サンプル件数・notes 使用件数・diary 不使用・token 数を出します。
+
+#### sleep insights の入力ルール
+- `trend_values` を常に構築し、値がなければ `null` のまま扱います。
+- 少なくとも 7日平均 / 前日比 / 直近3日トレンド / 直近平均との差分 を含めます。
+- sleep prompt には Today advice 向けの文言を入れません。
+- sleep debug は full input dump と summary dump を分けて保存します。
+- 入力が最低限しかない場合も、そのことが debug summary に残ります。
+
+#### notify フラグ
+- `email_disabled` のときは `mark_diary_notified` しません。
+- 実際に通知送信が成功したときだけ notified フラグを立てる設計です。
+- `already_notified` では notify だけをスキップし、生成ロジックは先に動きます。
+- `missing_page_url` や送信失敗時も notified は更新しません。
+
+### Phase D: publish mail
+- `publish/render_mail.py` が payload に `today_advice` / sleep 系 / Diary を渡します。
+- `publish/email_templates.py` は値があるセクションだけ描画します。
+- メール本文の表示順は次のとおりです。
+  1. `Today advice`
+  2. `Sleep Analysis JP`
+  3. `Today Condition Forecast JP`
+  4. `就寝時間`
+  5. `起床時間`
+  6. `睡眠時間`
+  7. `Diary`
+  8. `Summary`
+  9. `Expenses / Done / Drop / Meal`
+
+## Daily Log DB に必要な sleep 系プロパティ
 
 - `Sleep Start`
 - `Sleep End`
@@ -56,54 +100,17 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
 - `Today Condition Forecast JP`
 - `Today advice`
 
-## 生成テキストの役割分担
-
-- `Sleep Analysis JP`: 昨夜の睡眠データを中心にした**簡易分析**。
-- `Today Condition Forecast JP`: 睡眠データを中心にした、今日の状態の**簡易予測**。
-- `Today advice`: sleep 系 2 件とは別責務の助言文。Stage 1 の判定JSONと Stage 2 の本文生成に分かれ、diary / 過去日記 / location summary は使わず、自由記述は notes のみ参照します。最終出力は見出しなし・短め・高密度の日本語本文です。
-
-## Secrets
-
-### ingest workflow に必要な secrets
-
-- `TASKS_CLOSED_URL`
-- `DAILY_LOG_UPSERT_URL`
-- `WORKERS_BEARER_TOKEN`
-
-※ ingest workflow ではメール送信用 secret は不要です。
-
-### publish workflow に必要な secrets
-
-- `MAIL_FROM`
-- `MAIL_TO`
-- `GMAIL_APP_PASSWORD`
-- `DAILY_LOG_UPSERT_URL`
-- `WORKERS_BEARER_TOKEN`
-- `PUBLIC_BASE_URL`
-- `MAIL_LINK_SECRET`
-
-### generate diary / sleep insights workflow で必要な secrets
-
-- `DAILY_LOG_UPSERT_URL`
-- `WORKERS_BEARER_TOKEN`
-- `OPENAI_API_KEY`
-- 必要に応じて `OPENAI_MODEL`, `TODAY_ADVICE_MINI_MODEL`, `TODAY_ADVICE_FINAL_MODEL`
-
 ## 実装メモ
 
 - `publish/read_daily_log.py` は sleep 系・Today advice 系プロパティを `DailyLogSummary` に揃えて返します。
-- `scripts/daily_job.py` は sleep insights の保存後に Daily Log を再読込し、後続の diary / mail で同じフィールドを安全に参照します。
-- `publish/render_mail.py` はテンプレート payload に sleep / readiness / advice 系フィールドを渡します。
-- `publish/email_templates.py` は値があるセクションだけを表示し、睡眠時間は `7時間15分` の形式で表示します。
-- `Today advice` は一般論ではなく、直近7日〜14日の傾向、当日の睡眠/行動データ、前日比、直近平均との差分、良い日/悪い日の近さ、notes シグナルなど、実際に取得できた根拠に基づいて生成します。データ不足の項目は無理に補完しません。
-- today advice の debug summary には `stage`, `diary_used=false`, `past_diary_used=false`, `location_summary_used=false`, `notes_used`, `evidence_used`, `input_tokens`, `token_counting_method` を含めます。
+- `scripts/daily_job.py` は Phase C の各保存後に Daily Log を再読込します。
+- `scripts/diary_generator.py` の `event_date / done_date` ルールは維持しています。future event を当日実施と誤認しません。
+- 現在の設計では **Today advice は当日 diary を参照しません**。`notes` は使いますが `diary` は使いません。
 
+## Debug ログの見方
 
-## today advice のデバッグ方法
-
-- Workflow 03（`Daily Diary 03 - Generate Diary & Sleep Insights`）実行時に、today advice を生成する直前の入力データと最終プロンプトを `print` で出力します。GitHub Actions のログ上では、`=== TODAY ADVICE ... START ===` / `=== TODAY ADVICE ... END ===` のマーカーで区間を確認できます。
-- sleep 系の today advice 生成では `scripts/sleep_condition_generator.py` が `today_values` / `trend_values` / `supporting_context` を JSON で出力し、主要項目サマリ・使用モデル名・対象日・最終プロンプト全文も続けて出力します。
-- mood 側の `Today advice` 生成では `scripts/mood_advice_generator.py` が Stage 1（judgment）/ Stage 2（final）の両方について、入力 JSON・主要項目サマリ・使用モデル名・対象日・最終プロンプト全文を出力します。
-- 可能な環境では同じ内容を `debug/` ディレクトリ配下の JSON ファイルにも保存します。ファイル保存に失敗しても warning ログのみに留め、既存処理は継続します。
-- JSON 出力は `ensure_ascii=False` と `default=str` を使うため、日本語をそのまま保持しつつ、`datetime` など JSON 化できない値が含まれてもデバッグ出力で処理が落ちないようにしています。
-- API key や secrets は debug payload に含めていないため、機密情報は出力されません。
+- Phase C のログプレフィックスは `phase_c_sleep_*` / `phase_c_today_advice_*` / `phase_c_diary_*` / `phase_c_notify_*` で統一しています。
+- skip 理由は固定語彙で出します。主に `no_daily_log`, `no_sleep_signal`, `existing_today_advice`, `existing_diary`, `missing_page_url`, `already_notified`, `email_disabled` を使います。
+- sleep insights debug は `debug/sleep_insights_*_full_YYYY-MM-DD.json` と `debug/sleep_insights_*_summary_YYYY-MM-DD.json` に分かれます。
+- Today advice debug は stage ごとに input dump / summary / prompt を出します。
+- いずれも secrets は含めません。

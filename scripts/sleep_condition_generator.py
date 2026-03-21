@@ -83,10 +83,8 @@ def build_sleep_insight_context(
             for value in (_collect_numeric(item, field_name) for item in history_summaries)
             if value is not None
         ]
-        if not values:
-            continue
-        avg = sum(values) / len(values)
-        trend_values[f"{field_name}_7d_avg"] = round(avg, 2)
+        avg = round(sum(values) / len(values), 2) if values else None
+        trend_values[f"{field_name}_7d_avg"] = avg
 
     # Only the following numeric fields receive a today-vs-7d delta in trend_values.
     delta_fields = [
@@ -98,9 +96,11 @@ def build_sleep_insight_context(
     for field_name in delta_fields:
         today_value = today_values.get(field_name)
         avg_value = trend_values.get(f"{field_name}_7d_avg")
-        if today_value is None or avg_value is None:
-            continue
-        trend_values[f"{field_name}_delta_vs_7d"] = round(today_value - avg_value, 2)
+        trend_values[f"{field_name}_delta_vs_7d"] = (
+            round(today_value - avg_value, 2)
+            if today_value is not None and avg_value is not None
+            else None
+        )
 
     yesterday = history_summaries[0] if history_summaries else None
     recent_3 = list(history_summaries[:3])
@@ -114,6 +114,21 @@ def build_sleep_insight_context(
             return "down"
         return None
 
+    recent_3day_trend = {
+        "sleep_duration_min": _trend([item.sleep_duration_min for item in recent_3]),
+        "sleep_score": _trend([item.sleep_score for item in recent_3]),
+        "readiness_hrv": _trend([item.readiness_hrv for item in recent_3]),
+        "readiness_bpm": _trend([item.readiness_bpm for item in recent_3]),
+    }
+    vs_yesterday = {
+        "sleep_duration_min_delta": round((today_values["sleep_duration_min"] - yesterday.sleep_duration_min), 2) if yesterday and today_values["sleep_duration_min"] is not None and yesterday.sleep_duration_min is not None else None,
+        "sleep_score_delta": round((today_values["sleep_score"] - yesterday.sleep_score), 2) if yesterday and today_values["sleep_score"] is not None and yesterday.sleep_score is not None else None,
+        "readiness_hrv_delta": round((today_values["readiness_hrv"] - yesterday.readiness_hrv), 2) if yesterday and today_values["readiness_hrv"] is not None and yesterday.readiness_hrv is not None else None,
+        "readiness_bpm_delta": round((today_values["readiness_bpm"] - yesterday.readiness_bpm), 2) if yesterday and today_values["readiness_bpm"] is not None and yesterday.readiness_bpm is not None else None,
+    }
+    trend_values["vs_yesterday"] = vs_yesterday
+    trend_values["recent_3day_trend"] = recent_3day_trend
+
     supporting_context = {
         "mood": _safe_text(today_summary.mood),
         "notes": _safe_text(today_summary.notes),
@@ -125,18 +140,8 @@ def build_sleep_insight_context(
         "drop_count": today_summary.drop_count,
         "done_tasks": list(today_summary.done_tasks),
         "drop_tasks": list(today_summary.drop_tasks),
-        "vs_yesterday": {
-            "sleep_duration_min_delta": round((today_values["sleep_duration_min"] - yesterday.sleep_duration_min), 2) if yesterday and today_values["sleep_duration_min"] is not None and yesterday.sleep_duration_min is not None else None,
-            "sleep_score_delta": round((today_values["sleep_score"] - yesterday.sleep_score), 2) if yesterday and today_values["sleep_score"] is not None and yesterday.sleep_score is not None else None,
-            "readiness_hrv_delta": round((today_values["readiness_hrv"] - yesterday.readiness_hrv), 2) if yesterday and today_values["readiness_hrv"] is not None and yesterday.readiness_hrv is not None else None,
-            "readiness_bpm_delta": round((today_values["readiness_bpm"] - yesterday.readiness_bpm), 2) if yesterday and today_values["readiness_bpm"] is not None and yesterday.readiness_bpm is not None else None,
-        },
-        "recent_3day_trend": {
-            "sleep_duration_min": _trend([item.sleep_duration_min for item in recent_3]),
-            "sleep_score": _trend([item.sleep_score for item in recent_3]),
-            "readiness_hrv": _trend([item.readiness_hrv for item in recent_3]),
-            "readiness_bpm": _trend([item.readiness_bpm for item in recent_3]),
-        },
+        "vs_yesterday": vs_yesterday,
+        "recent_3day_trend": recent_3day_trend,
     }
 
     return SleepInsightContext(
@@ -169,38 +174,39 @@ def load_recent_daily_logs(
 
 
 
-def _dump_today_advice_debug_log(*,
+def _dump_sleep_insights_debug_log(
+    *,
     debug_kind: str,
     target_date: str,
     model: str,
-    advice_input: Mapping[str, Any],
-    advice_input_summary: Mapping[str, Any],
+    full_input: Mapping[str, Any],
+    input_summary: Mapping[str, Any],
     prompt_text: str,
 ) -> None:
     try:
-        advice_input_json = json.dumps(advice_input, ensure_ascii=False, indent=2, default=str)
-        advice_summary_json = json.dumps(advice_input_summary, ensure_ascii=False, indent=2, default=str)
-        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA START ===")
-        print(advice_input_json)
-        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA END ===")
+        full_input_json = json.dumps(full_input, ensure_ascii=False, indent=2, default=str)
+        advice_summary_json = json.dumps(input_summary, ensure_ascii=False, indent=2, default=str)
+        print(f"=== SLEEP INSIGHTS {debug_kind} FULL INPUT START ===")
+        print(full_input_json)
+        print(f"=== SLEEP INSIGHTS {debug_kind} FULL INPUT END ===")
         print()
-        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY START ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} INPUT SUMMARY START ===")
         print(advice_summary_json)
-        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY END ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} INPUT SUMMARY END ===")
         print()
-        print(f"=== TODAY ADVICE {debug_kind} MODEL START ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} MODEL START ===")
         print(model)
-        print(f"=== TODAY ADVICE {debug_kind} MODEL END ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} MODEL END ===")
         print()
-        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE START ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} TARGET DATE START ===")
         print(target_date)
-        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE END ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} TARGET DATE END ===")
         print()
-        print(f"=== TODAY ADVICE {debug_kind} PROMPT START ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} PROMPT START ===")
         print(prompt_text)
-        print(f"=== TODAY ADVICE {debug_kind} PROMPT END ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} PROMPT END ===")
     except Exception as exc:
-        logging.warning("today_advice_debug_print_failed kind=%s error=%s", debug_kind, exc)
+        logging.warning("sleep_insights_debug_print_failed kind=%s error=%s", debug_kind, exc)
 
     try:
         debug_dir = os.path.join(os.getcwd(), "debug")
@@ -208,18 +214,21 @@ def _dump_today_advice_debug_log(*,
         debug_payload = {
             "target_date": target_date,
             "model": model,
-            "advice_input": advice_input,
-            "advice_input_summary": advice_input_summary,
+            "full_input": full_input,
+            "input_summary": input_summary,
             "prompt_text": prompt_text,
         }
-        debug_path = os.path.join(debug_dir, f"today_advice_{debug_kind.lower()}_{target_date}.json")
+        debug_path = os.path.join(debug_dir, f"sleep_insights_{debug_kind.lower()}_full_{target_date}.json")
         with open(debug_path, "w", encoding="utf-8") as debug_file:
             json.dump(debug_payload, debug_file, ensure_ascii=False, indent=2, default=str)
-        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE START ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} DEBUG FILE START ===")
         print(debug_path)
-        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE END ===")
+        print(f"=== SLEEP INSIGHTS {debug_kind} DEBUG FILE END ===")
+        summary_path = os.path.join(debug_dir, f"sleep_insights_{debug_kind.lower()}_summary_{target_date}.json")
+        with open(summary_path, "w", encoding="utf-8") as summary_file:
+            json.dump(input_summary, summary_file, ensure_ascii=False, indent=2, default=str)
     except Exception as exc:
-        logging.warning("today_advice_debug_file_failed kind=%s error=%s", debug_kind, exc)
+        logging.warning("sleep_insights_debug_file_failed kind=%s error=%s", debug_kind, exc)
 
 
 def _build_sleep_advice_debug_summary(*, context: SleepInsightContext) -> dict[str, Any]:
@@ -228,6 +237,7 @@ def _build_sleep_advice_debug_summary(*, context: SleepInsightContext) -> dict[s
         "today_values_present_count": sum(1 for value in context.today_values.values() if value not in (None, "")),
         "trend_values_keys": sorted(context.trend_values.keys()),
         "trend_values_present_count": sum(1 for value in context.trend_values.values() if value not in (None, "")),
+        "minimal_sleep_signal": sum(1 for value in context.today_values.values() if value not in (None, "")) <= 2,
         "supporting_context_keys": sorted(context.supporting_context.keys()),
         "done_tasks_count": len(context.supporting_context.get("done_tasks", [])),
         "drop_tasks_count": len(context.supporting_context.get("drop_tasks", [])),
@@ -242,22 +252,19 @@ def _build_prompts(target_date: str, context: SleepInsightContext) -> tuple[str,
     system_prompt = (
         "あなたは睡眠データから日本語の分析文を作るアシスタントです。\n"
         "出力はJSONのみで返してください。\n"
-        "キーは sleep_analysis_jp・today_condition_forecast_jp・today_advice の3つです。\n"
+        "キーは sleep_analysis_jp・today_condition_forecast_jp の2つです。\n"
         "sleep_analysis_jp は2〜4文で、昨夜の睡眠データの分析を書いてください。\n"
         "today_condition_forecast_jp は2〜4文で、今日の体調・集中力・疲労感・判断力の見通しを書いてください。\n"
-        "today_advice は400〜700字程度で、必ず `Today advice`、`直近の傾向`、`本日の状態`、`本日の進め方`、`総括` の順で構成してください。\n"
-        "today_advice の各セクションは箇条書きではなく3〜5文程度の自然な連続文で書き、総括のみ最後に1文で締めてください。\n"
-        "today_advice では一般論を避け、直近7日平均、前日比、直近平均との差分、直近3日連続の傾向、予定や未処理タスクなど使えるデータを優先して、事実→解釈→行動提案の順で自然につないでください。\n"
         "データから言えないことは断定せず、未入力の項目は無理に使わず、推測で補わないでください。\n"
         "『バランスの良い食事を心がけましょう』『適度に休憩しましょう』『無理せず過ごしましょう』のような抽象的な一般論は禁止です。\n"
-        "sleep_analysis_jp は分析、today_condition_forecast_jp は予測、today_advice はその日の進め方の助言、という役割を厳密に分けてください。"
+        "sleep_analysis_jp は分析、today_condition_forecast_jp は予測として扱い、助言文やメール冒頭向け本文は絶対に生成しないでください。"
     )
     user_prompt = (
         f"target_date: {target_date}\n"
         f"today_values: {context.today_values}\n"
         f"trend_values: {context.trend_values}\n"
         f"supporting_context: {context.supporting_context}\n"
-        "today_condition_forecast_jp には今日の見通しを反映し、today_advice にはメール冒頭にそのまま載せられる品質の長めの助言文を書いてください。"
+        "today_condition_forecast_jp には今日の見通しを反映してください。today_advice のような助言文は出力しないでください。"
     )
     return system_prompt, user_prompt
 
@@ -279,18 +286,18 @@ def generate_sleep_insights(
         raise RuntimeError("OPENAI_API_KEY is missing")
 
     system_prompt, user_prompt = _build_prompts(target_date, context)
-    advice_input = {
+    full_input = {
         "today_values": context.today_values,
         "trend_values": context.trend_values,
         "supporting_context": context.supporting_context,
     }
     prompt_text = f"[system]\n{system_prompt}\n\n[user]\n{user_prompt}"
-    _dump_today_advice_debug_log(
+    _dump_sleep_insights_debug_log(
         debug_kind="SLEEP",
         target_date=target_date,
         model=model,
-        advice_input=advice_input,
-        advice_input_summary=_build_sleep_advice_debug_summary(context=context),
+        full_input=full_input,
+        input_summary=_build_sleep_advice_debug_summary(context=context),
         prompt_text=prompt_text,
     )
     response = requests.post(
@@ -321,31 +328,11 @@ def generate_sleep_insights(
     parsed = json.loads(content)
     sleep_analysis = _safe_text(parsed.get("sleep_analysis_jp"))
     today_forecast = _safe_text(parsed.get("today_condition_forecast_jp"))
-    today_advice = _safe_text(parsed.get("today_advice"))
-    if not today_advice and (sleep_analysis or today_forecast):
-        fragments = []
-        duration = context.today_values.get("sleep_duration_min")
-        if duration is not None:
-            try:
-                duration_minutes = int(round(float(duration)))
-            except (TypeError, ValueError):
-                duration_minutes = 0
-            if duration_minutes and duration_minutes < 420:
-                fragments.append("午前中は最重要の1件に絞り、昼に10〜15分だけ休憩を入れてください。")
-        readiness_bpm = context.today_values.get("readiness_bpm")
-        baseline_bpm = context.today_values.get("baseline_waking_bpm")
-        if readiness_bpm is not None and baseline_bpm is not None and readiness_bpm - baseline_bpm >= 3:
-            fragments.append("移動や会議の合間に深呼吸を入れ、午後前半は判断の重い作業を詰め込みすぎないでください。")
-        if not fragments:
-            fragments.append("午前中の早い時間に最優先の1件を終わらせ、午後はこまめに小休憩を入れてペースを整えてください。")
-        today_advice = " ".join(fragments[:2])
     result: dict[str, str] = {}
     if sleep_analysis:
         result["sleep_analysis_jp"] = sleep_analysis
     if today_forecast:
         result["today_condition_forecast_jp"] = today_forecast
-    if today_advice:
-        result["today_advice"] = today_advice
     return result
 
 
@@ -364,7 +351,7 @@ def maybe_generate_sleep_insights(
     )
     if not has_today_signal:
         logging.info(
-            "Skipping sleep insight generation because no sleep signal is available. target_date=%s",
+            "phase_c_sleep_skipped target_date=%s skip_reason=no_sleep_signal generated_properties=[]",
             target_date,
         )
         return {}
@@ -372,11 +359,18 @@ def maybe_generate_sleep_insights(
         result = generate_sleep_insights(target_date=target_date, context=context)
         if result:
             logging.info(
-                "Generated sleep insights for overwrite save. target_date=%s keys=%s",
+                "phase_c_sleep_generated target_date=%s generated_properties=%s today_values_present_count=%s trend_values_present_count=%s",
                 target_date,
                 sorted(result.keys()),
+                sum(1 for value in context.today_values.values() if value not in (None, "")),
+                sum(1 for value in context.trend_values.values() if value not in (None, "")),
+            )
+        else:
+            logging.info(
+                "phase_c_sleep_skipped target_date=%s skip_reason=no_sleep_signal generated_properties=[]",
+                target_date,
             )
         return result
     except Exception:
-        logging.exception("Failed to generate sleep insights. target_date=%s", target_date)
+        logging.exception("phase_c_sleep_failed target_date=%s", target_date)
         return {}
