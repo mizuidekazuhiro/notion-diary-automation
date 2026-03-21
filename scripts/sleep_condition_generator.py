@@ -101,6 +101,18 @@ def build_sleep_insight_context(
             continue
         trend_values[f"{field_name}_delta_vs_7d"] = round(today_value - avg_value, 2)
 
+    yesterday = history_summaries[0] if history_summaries else None
+    recent_3 = list(history_summaries[:3])
+    def _trend(values: Sequence[Optional[float]]) -> Optional[str]:
+        nums = [float(v) for v in reversed(values) if v is not None]
+        if len(nums) < 3:
+            return None
+        if nums[0] < nums[1] < nums[2]:
+            return "up"
+        if nums[0] > nums[1] > nums[2]:
+            return "down"
+        return None
+
     supporting_context = {
         "mood": _safe_text(today_summary.mood),
         "notes": _safe_text(today_summary.notes),
@@ -112,6 +124,18 @@ def build_sleep_insight_context(
         "drop_count": today_summary.drop_count,
         "done_tasks": list(today_summary.done_tasks),
         "drop_tasks": list(today_summary.drop_tasks),
+        "vs_yesterday": {
+            "sleep_duration_min_delta": round((today_values["sleep_duration_min"] - yesterday.sleep_duration_min), 2) if yesterday and today_values["sleep_duration_min"] is not None and yesterday.sleep_duration_min is not None else None,
+            "sleep_score_delta": round((today_values["sleep_score"] - yesterday.sleep_score), 2) if yesterday and today_values["sleep_score"] is not None and yesterday.sleep_score is not None else None,
+            "readiness_hrv_delta": round((today_values["readiness_hrv"] - yesterday.readiness_hrv), 2) if yesterday and today_values["readiness_hrv"] is not None and yesterday.readiness_hrv is not None else None,
+            "readiness_bpm_delta": round((today_values["readiness_bpm"] - yesterday.readiness_bpm), 2) if yesterday and today_values["readiness_bpm"] is not None and yesterday.readiness_bpm is not None else None,
+        },
+        "recent_3day_trend": {
+            "sleep_duration_min": _trend([item.sleep_duration_min for item in recent_3]),
+            "sleep_score": _trend([item.sleep_score for item in recent_3]),
+            "readiness_hrv": _trend([item.readiness_hrv for item in recent_3]),
+            "readiness_bpm": _trend([item.readiness_bpm for item in recent_3]),
+        },
     }
 
     return SleepInsightContext(
@@ -144,22 +168,24 @@ def load_recent_daily_logs(
 
 def _build_prompts(target_date: str, context: SleepInsightContext) -> tuple[str, str]:
     system_prompt = (
-        "あなたは睡眠データから日本語の短い分析文を作るアシスタントです。\n"
+        "あなたは睡眠データから日本語の分析文を作るアシスタントです。\n"
         "出力はJSONのみで返してください。\n"
         "キーは sleep_analysis_jp・today_condition_forecast_jp・today_advice の3つです。\n"
         "sleep_analysis_jp は2〜4文で、昨夜の睡眠データの分析を書いてください。\n"
         "today_condition_forecast_jp は2〜4文で、今日の体調・集中力・疲労感・判断力の見通しを書いてください。\n"
-        "today_advice は日本語1〜3文で、今日すぐ実行できる短い具体行動だけを書いてください。\n"
-        "sleep_analysis_jp は分析、today_condition_forecast_jp は予測、today_advice は具体行動、という役割を厳密に分けてください。\n"
-        "医療断定や過剰な断定は避け、推測で補わないでください。\n"
-        "未入力の項目は無理に使わず、推測で補わないでください。"
+        "today_advice は400〜700字程度で、必ず `Today advice`、`直近の傾向`、`本日の状態`、`本日の進め方`、`総括` の順で構成してください。\n"
+        "today_advice の各セクションは箇条書きではなく3〜5文程度の自然な連続文で書き、総括のみ最後に1文で締めてください。\n"
+        "today_advice では一般論を避け、直近7日平均、前日比、直近平均との差分、直近3日連続の傾向、予定や未処理タスクなど使えるデータを優先して、事実→解釈→行動提案の順で自然につないでください。\n"
+        "データから言えないことは断定せず、未入力の項目は無理に使わず、推測で補わないでください。\n"
+        "『バランスの良い食事を心がけましょう』『適度に休憩しましょう』『無理せず過ごしましょう』のような抽象的な一般論は禁止です。\n"
+        "sleep_analysis_jp は分析、today_condition_forecast_jp は予測、today_advice はその日の進め方の助言、という役割を厳密に分けてください。"
     )
     user_prompt = (
         f"target_date: {target_date}\n"
         f"today_values: {context.today_values}\n"
         f"trend_values: {context.trend_values}\n"
         f"supporting_context: {context.supporting_context}\n"
-        "差分がある場合は today_condition_forecast_jp に反映してください。today_advice では今朝の状態と補助コンテキストを踏まえて、その日に直結する短い行動提案を1つか2つに絞ってください。"
+        "today_condition_forecast_jp には今日の見通しを反映し、today_advice にはメール冒頭にそのまま載せられる品質の長めの助言文を書いてください。"
     )
     return system_prompt, user_prompt
 
