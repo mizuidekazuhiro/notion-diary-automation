@@ -138,3 +138,63 @@ def test_build_today_state_includes_comparison_context() -> None:
     assert state["comparisons"]["vs_recent_7d_avg"]["sleep_score_delta"] == 5.0
     assert state["recent_3day_trend"]["sleep_duration_min"] == "up"
     assert state["recent_3day_trend"]["drop_count"] is None
+
+
+
+def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None:
+    from scripts.mood_advice_generator import _build_structured_comparison
+
+    history = []
+    for day in range(30):
+        mood = "★★★★★" if day < 5 else "★" if 5 <= day < 10 else "★★★"
+        history.append(
+            _summary(
+                target_date=f"2026-03-{30 - day:02d}",
+                mood=mood,
+                diary=f"diary-{day}",
+                notes=f"note-{day}" if day % 2 == 0 else None,
+                meal_summary=f"meal-{day}",
+                sleep_score=90 - day,
+                sleep_duration_min=420 + day,
+                done_count=5 - (day % 3),
+                drop_count=day % 2,
+                expenses_total=1000 + day * 10,
+            )
+        )
+
+    structured = _build_structured_comparison(history)
+
+    assert structured["counts"]["last_30_days_count"] == 30
+    assert structured["counts"]["top_good_days_count"] == 5
+    assert structured["counts"]["top_bad_days_count"] == 5
+    assert structured["counts"]["diary_used"] is False
+    assert len(structured["last_30_days_summary"]["daily_records"]) == 30
+    assert len(structured["top_good_days"]) == 5
+    assert len(structured["top_bad_days"]) == 5
+    assert set(structured["top_good_days"][0].keys()) == {
+        "date",
+        "sleep_start",
+        "sleep_end",
+        "sleep_duration_min",
+        "sleep_score",
+        "meal_summary",
+        "meal_logged",
+        "done_count",
+        "drop_count",
+        "spend_total",
+        "notes",
+        "daily_score",
+    }
+    assert "diary" not in structured["top_good_days"][0]
+    assert "diary" not in structured["last_30_days_summary"]["daily_records"][0]
+
+
+def test_count_input_tokens_returns_estimate_without_tiktoken() -> None:
+    from scripts.mood_advice_generator import _build_chat_messages, _count_input_tokens
+
+    messages = _build_chat_messages(system_prompt="sys", user_prompt="user")
+    count, method = _count_input_tokens(model="gpt-4.1", messages=messages)
+
+    assert count is not None
+    assert count > 0
+    assert method in {"tiktoken", "estimated_chars_div4"}
