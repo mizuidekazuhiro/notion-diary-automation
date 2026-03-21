@@ -58,6 +58,7 @@ def _summary(**overrides: object) -> DailyLogSummary:
         rem_duration_min=None,
         sleep_analysis_jp=None,
         today_condition_forecast_jp=None,
+        today_advice=None,
         page_url=None,
         diary_notification_sent=None,
     )

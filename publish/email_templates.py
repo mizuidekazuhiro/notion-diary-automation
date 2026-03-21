@@ -249,6 +249,9 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     today_condition_forecast_jp = _optional_text(
         payload.get("today_condition_forecast_jp") if isinstance(payload, Mapping) else None
     )
+    today_advice = _optional_text(
+        payload.get("today_advice") if isinstance(payload, Mapping) else None
+    )
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
     )
@@ -257,6 +260,14 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
         payload.get("sleep_duration_min") if isinstance(payload, Mapping) else None
     )
     mood_notes_url = str(payload.get("mood_notes_url") or "")
+    today_advice_html = ""
+    if today_advice:
+        today_advice_html = (
+            "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;\">"
+            "<div style=\"font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;\">Today advice</div>"
+            f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(today_advice)}</div>"
+            "</div>"
+        )
 
     diary_html = html.escape(diary).replace("\n", "<br />")
     meal_summary_html = html.escape(meal_summary).replace("\n", "<br />")
@@ -400,6 +411,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <p style=\"margin: 0; font-size: 13px; color: #6b7280;\">Run ID: {html.escape(run_id)}</p>
               </td>
             </tr>
+            {today_advice_html}
 
             <!-- Reorder sections for daily log readability; font stack set for consistent mail rendering. -->
             <tr>
@@ -554,6 +566,9 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     today_condition_forecast_jp = _optional_text(
         payload.get("today_condition_forecast_jp") if isinstance(payload, Mapping) else None
     )
+    today_advice = _optional_text(
+        payload.get("today_advice") if isinstance(payload, Mapping) else None
+    )
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
     )
@@ -576,9 +591,25 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     else:
         expenses_lines.append("—")
 
-    lines = [
+    lines: List[str] = [
         f"Daily Log | {target_date}",
         f"Run ID: {run_id}",
+    ]
+    if today_advice:
+        lines += ["", "Today advice", today_advice]
+
+    sleep_lines = [
+        ("Sleep Analysis JP", sleep_analysis_jp),
+        ("Today Condition Forecast JP", today_condition_forecast_jp),
+        ("就寝時間", sleep_start),
+        ("起床時間", sleep_end),
+        ("睡眠時間", sleep_duration),
+    ]
+    visible_sleep_lines = [f"- {label}: {value}" for label, value in sleep_lines if value]
+    if visible_sleep_lines:
+        lines += ["", "Sleep & Condition", *visible_sleep_lines]
+
+    lines += [
         "",
         "Diary",
         diary or "—",
@@ -605,19 +636,5 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         *([f"- {url}" for url in meal_photos] if meal_photos else ["- —"]),
     ]
     if mood_notes_url:
-        lines += [
-            "",
-            "Mood / Notes",
-            mood_notes_url,
-        ]
-    sleep_lines = [
-        ("Sleep Analysis JP", sleep_analysis_jp),
-        ("Today Condition Forecast JP", today_condition_forecast_jp),
-        ("就寝時間", sleep_start),
-        ("起床時間", sleep_end),
-        ("睡眠時間", sleep_duration),
-    ]
-    visible_sleep_lines = [f"- {label}: {value}" for label, value in sleep_lines if value]
-    if visible_sleep_lines:
-        lines[6:6] = ["Sleep & Condition", *visible_sleep_lines, ""]
+        lines += ["", "Mood / Notes", mood_notes_url]
     return "\n".join(lines).strip() + "\n"

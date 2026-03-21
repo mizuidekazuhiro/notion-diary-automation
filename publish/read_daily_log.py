@@ -172,6 +172,7 @@ class DailyLogSummary:
     rem_duration_min: Optional[float]
     sleep_analysis_jp: Optional[str]
     today_condition_forecast_jp: Optional[str]
+    today_advice: Optional[str]
     page_url: Optional[str]
     diary_notification_sent: Optional[bool]
 
@@ -266,6 +267,7 @@ def read_daily_log(
         rem_duration_min=_safe_float(_get_sleep_value(payload, "rem_duration_min")),
         sleep_analysis_jp=_safe_text(_get_sleep_value(payload, "sleep_analysis_jp")),
         today_condition_forecast_jp=_safe_text(_get_sleep_value(payload, "today_condition_forecast_jp")),
+        today_advice=_safe_text(_get_case_insensitive_value(payload, "Today advice", "today_advice")),
         page_url=_safe_text(payload.get("page_url")),
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
     )

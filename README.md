@@ -1,6 +1,6 @@
 # notion-diary-automation
 
-Notion Daily Log を中心に、Tasks / Expenses / Meal / Location summary / Publish / Mail の既存フローを維持したまま、実際の Daily Log DB に存在する睡眠系プロパティ名へ合わせて最小差分で運用するためのリポジトリです。
+Notion Daily Log を中心に、Tasks / Expenses / Meal / Location summary / Publish / Mail の既存フローを維持しつつ、朝レビュー用の `Today advice`、睡眠分析、Diary 生成を段階的に更新するリポジトリです。
 
 ## ワークフロー実行順
 
@@ -12,6 +12,22 @@ GitHub Actions は次の順番で実行されます。
 | 02 | `Daily Diary 02 - Generate Location Summary` | `workflow_run` from `Daily Diary 01 - Ingest Daily Log` |
 | 03 | `Daily Diary 03 - Generate Diary & Sleep Insights` | `workflow_run` from `Daily Diary 02 - Generate Location Summary` |
 | 04 | `Daily Diary 04 - Publish Daily Mail` | `workflow_run` from `Daily Diary 03 - Generate Diary & Sleep Insights` |
+
+## Today advice 機能
+
+- 新しい Daily Log プロパティとして **`Today advice`** を追加して使います。
+- 実行タイミングは朝のショートカット起点フローの **Phase C (Notify Diary / 生成系フェーズ)** です。睡眠など必要データが反映された後、当日データがまだ未完成の前提で生成します。
+- 参照期間は **過去30日** です。
+- Mood は **高評価日=4/5、低評価日=1/2、中間日=3** として扱います。
+- 比較は狭い集計だけで閉じず、以下の3層を GPT に渡します。
+  - **A. 今日朝の状態**: 今朝の睡眠、直近数日の睡眠推移、昨日までの Done / Drop / 支出 / PFC / Notes 記録状況、当日未完成である旨。
+  - **B. 過去30日の構造化比較**: 高評価日数・低評価日数・中間日数、睡眠/Done/Drop/支出/PFC/Notes 記録率などの基本比較。
+  - **C. 生データの日次サンプル**: 高評価日5件、低評価日5件をできるだけ偏らせずに抽出し、Notes / Diary / Location summary を含む主要項目を要約せずにそのまま渡します。不足時は取得できた件数でフォールバックします。
+- **Pattern B** で実装しています。
+  - mini 系モデル: 過去30日の材料整理、差分観察、Notes / Diary / Location summary / 記録状況のシグナル抽出。
+  - 上位モデル: mini の整理結果と今朝の状態を読んで、当日に効きそうな論点を選び、自然な日本語の `Today advice` を生成。
+- 生成した `Today advice` は **Daily Log の `Today advice` に保存** し、**朝メール本文の一番最初** に表示します。
+- 睡眠分析や Diary 生成とは責務を分け、実装は `scripts/mood_advice_generator.py` に切り出しています。
 
 ## 睡眠系プロパティの正式ルール
 
@@ -34,6 +50,7 @@ GitHub Actions は次の順番で実行されます。
 - Sleep Source
 - Sleep Start
 - Today Condition Forecast JP
+- Today advice
 
 ### Notion 表示名 ↔ 内部名 対応表
 
@@ -51,91 +68,43 @@ GitHub Actions は次の順番で実行されます。
 | `readiness_hrv` | Readiness HRV |
 | `readiness_bpm` | Readiness BPM |
 | `baseline_hrv` | Baseline HRV |
-| `baseline_waking_bpm` | Baseline Waking BPM |
 | `sleep_analysis_jp` | Sleep Analysis JP |
 | `today_condition_forecast_jp` | Today Condition Forecast JP |
-
-### 旧名からの置換
-
-| 旧名 | 現在の扱い |
-| --- | --- |
-| Sleep Analysis | 読み取り alias は許容、書き込み先は必ず `Sleep Analysis JP` |
-| Today Condition Forecast | 読み取り alias は許容、書き込み先は必ず `Today Condition Forecast JP` |
-| Baseline Waking BPM | 正式対象。sleep GPT の `today_values` に含める |
-
-## 実装ルール
-
-- property 名比較は case-insensitive です。
-- 前後空白、スペース、`_`、`-` の揺れを吸収して比較します。
-- 書き込み時は DB に実在する正式プロパティ名を使います。
-- normalize 後に複数候補へ一致した場合は warning を出して skip します。
-- `Sleep Analysis JP` と `Today Condition Forecast JP` は既存値が入っていても Notify 実行のたびに再生成・上書きします。
-- sleep 系入力が本当に無い日は insight 生成だけ gracefully skip します。
-- JST 基準の `target_date` 処理は維持します。
+| `today_advice` | Today advice |
 
 ## フロー
 
 1. **Phase A (Ingest)**
    - Daily Log を ensure します。
    - Tasks / Expenses / Health を ingest します。
-   - Health DB の sleep internal name を Daily Log の正式表示名へ保存します。
 2. **Location Summary Writer**
    - 既存どおり `Location summary (GPT)` を更新します。
-3. **Phase C (Notify Diary)**
+3. **Phase C (Notify Diary / 生成フェーズ)**
    - Daily Log を読み出します。
    - sleep 入力があれば `Sleep Analysis JP` / `Today Condition Forecast JP` を毎回再生成して保存します。
-   - Sleep GPT には「当日値」と「一部項目のみの 7 日平均 / 差分」を渡します。
+   - `scripts/mood_advice_generator.py` が過去30日の Daily Log を収集し、Mood 正規化、高評価/低評価抽出、mini 向け材料整理、上位モデルによる `Today advice` 生成を実行します。
+   - `Today advice` を Daily Log に保存します。
    - 同じ Daily Log を diary prompt に渡して Diary を生成します。
 4. **Phase B (Publish)**
-   - メール / publish では `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Analysis JP` / `Today Condition Forecast JP` のうち値があるものだけ表示します。
+   - メール本文では `Today advice` を最初に表示し、その後に既存の Diary / Sleep / Summary などを続けます。
+
+## Today advice 実装メモ
+
+- 実装ファイル: `scripts/mood_advice_generator.py`
+- 主な責務:
+  - 過去30日の Daily Log 取得
+  - Mood の星表現正規化
+  - 高評価日 / 低評価日 / 中間日の仕分け
+  - 今朝の状態と直近数日の流れの整理
+  - mini 向け入力構築と構造化出力取得
+  - 上位モデル向け入力構築と `Today advice` 生成
+  - Daily Log 更新用返却値の生成
+- 記録漏れ(PFC未記録、Notes未記録など)は欠損ではなく生活管理のシグナルとして扱いますが、コード側では因果を断定しません。
+- 高評価日/低評価日が5件未満の場合は、取得できた範囲でサンプルを渡します。
 
 ## 動作確認の要点
 
-1. Health DB に `sleep_start` などの内部名列が入っていることを確認します。
-2. Daily Log DB に正式表示名の列があることを確認します。
-3. Phase A 実行後、Daily Log に正式表示名の sleep 値が入ることを確認します。
-4. Phase C を 2 回実行し、`Sleep Analysis JP` と `Today Condition Forecast JP` が毎回更新されることを確認します。
-5. Phase B 実行後、メールに sleep セクションが必要な項目だけ表示されることを確認します。
-
-## Sleep GPT に渡す項目
-
-`scripts/sleep_condition_generator.py` では、「13項目を ingest すること」と、「平均・差分を付与する項目」は別管理です。
-
-### `today_values` に渡す全項目
-
-- `sleep_start`
-- `sleep_end`
-- `sleep_duration_min`
-- `sleep_score`
-- `sleep_source`
-- `readiness_stars`
-- `readiness_hrv`
-- `readiness_bpm`
-- `baseline_hrv`
-- `baseline_waking_bpm`
-- `sleep_heart_rate`
-- `deep_duration_min`
-- `rem_duration_min`
-
-### 直近7日平均 (`*_7d_avg`) を計算する項目
-
-- `sleep_duration_min`
-- `sleep_score`
-- `readiness_hrv`
-- `readiness_bpm`
-- `deep_duration_min`
-- `rem_duration_min`
-
-### 当日値との差分 (`*_delta_vs_7d`) を計算する項目
-
-- `sleep_duration_min`
-- `sleep_score`
-- `readiness_hrv`
-- `readiness_bpm`
-
-> 補足: README 上の「当日値 + 直近7日平均 + 差分」は、全13項目すべてに平均・差分を付ける意味ではありません。平均・差分は上記の一部項目のみに付与されます。
-
-## 補足
-
-- workflow の Node 24 警告対応として、対象 workflow は `actions/checkout@v5` と `actions/setup-python@v6` を利用します。
-- `Daily LogSummary`、Workers schema validation、generate_diary 保存、publish / mail 表示はすべて上記正式名へ揃えてあります。
+1. Daily Log DB に `Today advice` を追加します。
+2. 朝フローの Phase C 実行後、Daily Log に `Today advice` が保存されることを確認します。
+3. 同日の Publish 実行後、メール本文冒頭に `Today advice` が出ることを確認します。
+4. 睡眠系の既存生成と Diary 生成が従来どおり動くことを確認します。

@@ -1,5 +1,8 @@
-"""Shared test doubles placeholder.
+from __future__ import annotations
 
-This repository's current automated tests are TypeScript-based.
-When Python-side tests are added, centralize shared mocks in this file.
-"""
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
