@@ -304,6 +304,11 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         available_sleep_inputs,
     )
 
+    logging.info(
+        "phase_c_sleep_insights_start target_date(JST)=%s run_id=%s",
+        target_date,
+        run_id,
+    )
     sleep_payload = maybe_generate_sleep_insights(
         target_date=target_date,
         today_summary=summary,
@@ -316,7 +321,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             config.bearer_token,
         )
         logging.info(
-            "Sleep insights saved via worker endpoint. target_date(JST)=%s run_id=%s updated=%s reason=%s properties=%s",
+            "phase_c_sleep_insights_saved target_date(JST)=%s run_id=%s updated=%s reason=%s properties=%s",
             summary.target_date,
             run_id,
             save_result.get("updated"),
@@ -330,30 +335,81 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         )
         if refreshed_summary:
             summary = refreshed_summary
+    else:
+        logging.info(
+            "phase_c_sleep_insights_skipped target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
 
+    logging.info(
+        "phase_c_today_advice_start target_date(JST)=%s run_id=%s diary_used=%s",
+        target_date,
+        run_id,
+        False,
+    )
     if not (summary.today_advice or "").strip():
+        advice_result = None
+        today_advice_failure_stage: Optional[str] = None
         try:
+            logging.info(
+                "phase_c_today_advice_stage_start target_date(JST)=%s run_id=%s stage=judgment",
+                summary.target_date,
+                run_id,
+            )
             advice_result = generate_today_advice(
                 daily_log_read_url=config.daily_log_read_url,
                 bearer_token=config.bearer_token,
                 target_date=summary.target_date,
             )
-        except Exception:
-            logging.exception(
-                "Failed to generate Today advice. target_date(JST)=%s run_id=%s",
+            logging.info(
+                "phase_c_today_advice_stage_done target_date(JST)=%s run_id=%s stage=judgment evidence_used=%s",
                 summary.target_date,
                 run_id,
+                advice_result.judgment_json.get("evidence_used", []) if advice_result else [],
+            )
+            logging.info(
+                "phase_c_today_advice_stage_start target_date(JST)=%s run_id=%s stage=final",
+                summary.target_date,
+                run_id,
+            )
+            logging.info(
+                "phase_c_today_advice_stage_done target_date(JST)=%s run_id=%s stage=final chars=%s",
+                summary.target_date,
+                run_id,
+                len(advice_result.today_advice.strip()) if advice_result else 0,
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "stage 1" in message or "judgment" in message:
+                today_advice_failure_stage = "judgment"
+            elif "stage 2" in message or "final writing" in message:
+                today_advice_failure_stage = "final"
+            else:
+                today_advice_failure_stage = "unknown"
+            logging.exception(
+                "Failed to generate Today advice. target_date(JST)=%s run_id=%s failed_stage=%s",
+                summary.target_date,
+                run_id,
+                today_advice_failure_stage,
             )
             advice_result = None
 
         if advice_result and advice_result.today_advice.strip():
+            logging.info(
+                "phase_c_today_advice_save_start target_date(JST)=%s run_id=%s stage1_ready=%s stage2_ready=%s",
+                summary.target_date,
+                run_id,
+                bool(advice_result.judgment_json),
+                True,
+            )
             save_result = post_json(
                 config.diary_generate_url,
                 {"target_date": summary.target_date, "today_advice": advice_result.today_advice},
                 config.bearer_token,
             )
             logging.info(
-                "Today advice saved via worker endpoint. target_date(JST)=%s run_id=%s updated=%s reason=%s history_days=%s high_samples=%s low_samples=%s",
+                "Today advice saved via worker endpoint. target_date(JST)=%s run_id=%s updated=%s reason=%s history_days=%s high_samples=%s low_samples=%s evidence_used=%s",
                 summary.target_date,
                 run_id,
                 save_result.get("updated"),
@@ -361,6 +417,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
                 advice_result.history_count,
                 advice_result.high_mood_sample_count,
                 advice_result.low_mood_sample_count,
+                advice_result.judgment_json.get("evidence_used", []),
             )
             refreshed_summary = read_daily_log(
                 daily_log_read_url=config.daily_log_read_url,
@@ -369,6 +426,19 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             )
             if refreshed_summary:
                 summary = refreshed_summary
+        elif today_advice_failure_stage:
+            logging.warning(
+                "phase_c_today_advice_save_skipped target_date(JST)=%s run_id=%s failed_stage=%s",
+                summary.target_date,
+                run_id,
+                today_advice_failure_stage,
+            )
+    else:
+        logging.info(
+            "phase_c_today_advice_skipped_existing target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
 
     diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
     if not diary_input_fields:

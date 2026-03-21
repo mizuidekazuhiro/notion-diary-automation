@@ -22,8 +22,9 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
    - `Location summary (GPT)` を更新します。
 3. **Generate Diary & Sleep Insights**
    - Daily Log を再読込します。
-   - sleep 系入力があれば `scripts/sleep_condition_generator.py` が当日値・7日平均・平均との差分・既存コンテキストを使って、`Sleep Analysis JP` / `Today Condition Forecast JP` / `Today advice` を生成します。
-   - `today_advice` が sleep 生成結果で得られない場合は `scripts/mood_advice_generator.py` で補完生成します。
+   - sleep 系入力があれば `scripts/sleep_condition_generator.py` が当日値・7日平均・平均との差分・既存コンテキストを使って、`Sleep Analysis JP` / `Today Condition Forecast JP` を生成します。
+   - `Today advice` は別責務として `scripts/mood_advice_generator.py` が生成します。Stage 1 で判定JSONを作り、Stage 2 で短めかつ密度の高い本文を生成します。
+   - `Today advice` の入力には diary / 過去日記 / location summary を使わず、自由記述は notes のみ参照します。
    - その後、同じ Daily Log の内容から Diary を生成します。
 4. **Publish Daily Mail**
    - メール本文の表示順は次のとおりです。
@@ -57,9 +58,9 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
 
 ## 生成テキストの役割分担
 
-- `Sleep Analysis JP`: 昨夜の睡眠データの**分析**。
-- `Today Condition Forecast JP`: 今日の体調・集中力・疲労感などの**予測**。
-- `Today advice`: 直近の傾向・本日の状態・本日の進め方・総括を含む、400〜700字程度の実用的な助言文。`Today advice` の見出しで始まり、メール本文の最上部に表示。
+- `Sleep Analysis JP`: 昨夜の睡眠データを中心にした**簡易分析**。
+- `Today Condition Forecast JP`: 睡眠データを中心にした、今日の状態の**簡易予測**。
+- `Today advice`: sleep 系 2 件とは別責務の助言文。Stage 1 の判定JSONと Stage 2 の本文生成に分かれ、diary / 過去日記 / location summary は使わず、自由記述は notes のみ参照します。最終出力は見出しなし・短め・高密度の日本語本文です。
 
 ## Secrets
 
@@ -94,14 +95,15 @@ Notion の Daily Log を中心に、前日のデータ ingest → Location summa
 - `scripts/daily_job.py` は sleep insights の保存後に Daily Log を再読込し、後続の diary / mail で同じフィールドを安全に参照します。
 - `publish/render_mail.py` はテンプレート payload に sleep / readiness / advice 系フィールドを渡します。
 - `publish/email_templates.py` は値があるセクションだけを表示し、睡眠時間は `7時間15分` の形式で表示します。
-- `Today advice` は一般論ではなく、直近7日〜14日の傾向、当日の睡眠/行動データ、前日比、直近平均との差分、直近3日連続の流れなど、実際に取得できた根拠に基づいて生成します。データ不足の項目は無理に補完しません。
+- `Today advice` は一般論ではなく、直近7日〜14日の傾向、当日の睡眠/行動データ、前日比、直近平均との差分、良い日/悪い日の近さ、notes シグナルなど、実際に取得できた根拠に基づいて生成します。データ不足の項目は無理に補完しません。
+- today advice の debug summary には `stage`, `diary_used=false`, `past_diary_used=false`, `location_summary_used=false`, `notes_used`, `evidence_used`, `input_tokens`, `token_counting_method` を含めます。
 
 
 ## today advice のデバッグ方法
 
 - Workflow 03（`Daily Diary 03 - Generate Diary & Sleep Insights`）実行時に、today advice を生成する直前の入力データと最終プロンプトを `print` で出力します。GitHub Actions のログ上では、`=== TODAY ADVICE ... START ===` / `=== TODAY ADVICE ... END ===` のマーカーで区間を確認できます。
 - sleep 系の today advice 生成では `scripts/sleep_condition_generator.py` が `today_values` / `trend_values` / `supporting_context` を JSON で出力し、主要項目サマリ・使用モデル名・対象日・最終プロンプト全文も続けて出力します。
-- mood 補完の today advice 生成では `scripts/mood_advice_generator.py` が mini 整理用と final 生成用の両方について、入力 JSON・主要項目サマリ・使用モデル名・対象日・最終プロンプト全文を出力します。
+- mood 側の `Today advice` 生成では `scripts/mood_advice_generator.py` が Stage 1（judgment）/ Stage 2（final）の両方について、入力 JSON・主要項目サマリ・使用モデル名・対象日・最終プロンプト全文を出力します。
 - 可能な環境では同じ内容を `debug/` ディレクトリ配下の JSON ファイルにも保存します。ファイル保存に失敗しても warning ログのみに留め、既存処理は継続します。
 - JSON 出力は `ensure_ascii=False` と `default=str` を使うため、日本語をそのまま保持しつつ、`datetime` など JSON 化できない値が含まれてもデバッグ出力で処理が落ちないようにしています。
 - API key や secrets は debug payload に含めていないため、機密情報は出力されません。
