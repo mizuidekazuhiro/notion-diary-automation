@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime
 import re
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Tuple
@@ -48,6 +49,42 @@ def _normalize_photo_urls(value: object) -> List[str]:
         if url:
             urls.append(url)
     return urls
+
+
+def _optional_text(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _format_sleep_clock(value: object) -> Optional[str]:
+    text = _optional_text(value)
+    if not text:
+        return None
+    try:
+        normalized = text.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized).strftime("%H:%M")
+    except ValueError:
+        match = re.search(r"(\d{2}):(\d{2})", text)
+        if match:
+            return f"{match.group(1)}:{match.group(2)}"
+    return None
+
+
+def _format_sleep_duration(value: object) -> Optional[str]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        minutes = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    if minutes <= 0:
+        return None
+    hours, remain = divmod(minutes, 60)
+    if hours <= 0:
+        return f"{remain}分"
+    return f"{hours}時間{remain}分"
 
 
 def _normalize_expenses(payload: Mapping[str, object]) -> Tuple[float, int, List[dict], int]:
@@ -206,11 +243,57 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     )
     mood = _normalize_text(payload.get("mood") if isinstance(payload, Mapping) else None)
     weight = _normalize_number(payload.get("weight") if isinstance(payload, Mapping) else None)
+    sleep_analysis_jp = _optional_text(
+        payload.get("sleep_analysis_jp") if isinstance(payload, Mapping) else None
+    )
+    today_condition_forecast_jp = _optional_text(
+        payload.get("today_condition_forecast_jp") if isinstance(payload, Mapping) else None
+    )
+    sleep_start = _format_sleep_clock(
+        payload.get("sleep_start") if isinstance(payload, Mapping) else None
+    )
+    sleep_end = _format_sleep_clock(payload.get("sleep_end") if isinstance(payload, Mapping) else None)
+    sleep_duration = _format_sleep_duration(
+        payload.get("sleep_duration_min") if isinstance(payload, Mapping) else None
+    )
     mood_notes_url = str(payload.get("mood_notes_url") or "")
 
     diary_html = html.escape(diary).replace("\n", "<br />")
     meal_summary_html = html.escape(meal_summary).replace("\n", "<br />")
     location_html = html.escape(location_summary).replace("\n", "<br />")
+    sleep_lines = [
+        ("Sleep Analysis JP", sleep_analysis_jp),
+        ("Today Condition Forecast JP", today_condition_forecast_jp),
+        ("就寝時間", sleep_start),
+        ("起床時間", sleep_end),
+        ("睡眠時間", sleep_duration),
+    ]
+    visible_sleep_lines = [(label, value) for label, value in sleep_lines if value]
+    sleep_condition_html = ""
+    if visible_sleep_lines:
+        sleep_condition_rows = []
+        for label, value in visible_sleep_lines:
+            rendered = html.escape(value).replace("\n", "<br />")
+            sleep_condition_rows.append(
+            "<tr>"
+            f"<td style=\"padding: 6px 0; font-size: 13px; color: #6b7280; vertical-align: top;\">{html.escape(label)}</td>"
+            f"<td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{rendered}</td>"
+            "</tr>"
+            )
+        sleep_condition_html = (
+            "<tr>"
+            "<td style=\"padding: 0 24px 16px 24px;\">"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" "
+            "style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">"
+            "<tr><td>"
+            "<h2 style=\"margin: 0 0 12px 0; font-size: 16px;\">Sleep &amp; Condition</h2>"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">"
+            f"{''.join(sleep_condition_rows)}"
+            "</table>"
+            "</td></tr></table>"
+            "</td>"
+            "</tr>"
+        )
 
     expenses_list_html = ""
     if expenses_top:
@@ -331,6 +414,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 </table>
               </td>
             </tr>
+            {sleep_condition_html}
 
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
@@ -464,6 +548,19 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     )
     mood = _normalize_text(payload.get("mood") if isinstance(payload, Mapping) else None)
     weight = _normalize_number(payload.get("weight") if isinstance(payload, Mapping) else None)
+    sleep_analysis_jp = _optional_text(
+        payload.get("sleep_analysis_jp") if isinstance(payload, Mapping) else None
+    )
+    today_condition_forecast_jp = _optional_text(
+        payload.get("today_condition_forecast_jp") if isinstance(payload, Mapping) else None
+    )
+    sleep_start = _format_sleep_clock(
+        payload.get("sleep_start") if isinstance(payload, Mapping) else None
+    )
+    sleep_end = _format_sleep_clock(payload.get("sleep_end") if isinstance(payload, Mapping) else None)
+    sleep_duration = _format_sleep_duration(
+        payload.get("sleep_duration_min") if isinstance(payload, Mapping) else None
+    )
     mood_notes_url = str(payload.get("mood_notes_url") or "")
 
     expenses_lines: List[str] = []
@@ -513,4 +610,14 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             "Mood / Notes",
             mood_notes_url,
         ]
+    sleep_lines = [
+        ("Sleep Analysis JP", sleep_analysis_jp),
+        ("Today Condition Forecast JP", today_condition_forecast_jp),
+        ("就寝時間", sleep_start),
+        ("起床時間", sleep_end),
+        ("睡眠時間", sleep_duration),
+    ]
+    visible_sleep_lines = [f"- {label}: {value}" for label, value in sleep_lines if value]
+    if visible_sleep_lines:
+        lines[6:6] = ["Sleep & Condition", *visible_sleep_lines, ""]
     return "\n".join(lines).strip() + "\n"

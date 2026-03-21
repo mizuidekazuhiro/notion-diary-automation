@@ -65,6 +65,11 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "location_summary": summary.location_summary,
         "mood": summary.mood,
         "weight": summary.weight,
+        "sleep_analysis_jp": summary.sleep_analysis_jp,
+        "today_condition_forecast_jp": summary.today_condition_forecast_jp,
+        "sleep_start": summary.sleep_start,
+        "sleep_end": summary.sleep_end,
+        "sleep_duration_min": summary.sleep_duration_min,
         "mood_notes_url": "",
     }
     plain_text = render_daily_log_text(payload)
