@@ -71,6 +71,16 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "sleep_start": summary.sleep_start,
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.sleep_duration_min,
+        "sleep_score": summary.sleep_score,
+        "readiness_stars": summary.readiness_stars,
+        "readiness_hrv": summary.readiness_hrv,
+        "readiness_bpm": summary.readiness_bpm,
+        "baseline_hrv": summary.baseline_hrv,
+        "baseline_waking_bpm": summary.baseline_waking_bpm,
+        "sleep_heart_rate": summary.sleep_heart_rate,
+        "deep_duration_min": summary.deep_duration_min,
+        "rem_duration_min": summary.rem_duration_min,
+        "sleep_source": summary.sleep_source,
         "mood_notes_url": "",
     }
     plain_text = render_daily_log_text(payload)

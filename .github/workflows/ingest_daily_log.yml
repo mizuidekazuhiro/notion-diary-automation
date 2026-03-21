@@ -24,8 +24,6 @@ jobs:
 
       - name: Run ingest phase
         env:
-          INBOX_JSON_URL: ${{ secrets.INBOX_JSON_URL }}
-          TASKS_JSON_URL: ${{ secrets.TASKS_JSON_URL }}
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}

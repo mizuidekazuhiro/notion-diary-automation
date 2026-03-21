@@ -18,6 +18,7 @@ DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 class SleepInsightContext:
     today_values: dict[str, Any]
     trend_values: dict[str, Any]
+    supporting_context: dict[str, Any]
 
 
 def _safe_text(value: object) -> Optional[str]:
@@ -100,7 +101,24 @@ def build_sleep_insight_context(
             continue
         trend_values[f"{field_name}_delta_vs_7d"] = round(today_value - avg_value, 2)
 
-    return SleepInsightContext(today_values=today_values, trend_values=trend_values)
+    supporting_context = {
+        "mood": _safe_text(today_summary.mood),
+        "notes": _safe_text(today_summary.notes),
+        "diary": _safe_text(today_summary.diary),
+        "location_summary": _safe_text(today_summary.location_summary),
+        "activity_summary": _safe_text(today_summary.activity_summary),
+        "meal_summary": _safe_text(today_summary.meal_summary),
+        "done_count": today_summary.done_count,
+        "drop_count": today_summary.drop_count,
+        "done_tasks": list(today_summary.done_tasks),
+        "drop_tasks": list(today_summary.drop_tasks),
+    }
+
+    return SleepInsightContext(
+        today_values=today_values,
+        trend_values=trend_values,
+        supporting_context=supporting_context,
+    )
 
 
 def load_recent_daily_logs(
@@ -128,17 +146,20 @@ def _build_prompts(target_date: str, context: SleepInsightContext) -> tuple[str,
     system_prompt = (
         "あなたは睡眠データから日本語の短い分析文を作るアシスタントです。\n"
         "出力はJSONのみで返してください。\n"
-        "キーは sleep_analysis_jp と today_condition_forecast_jp の2つです。\n"
-        "sleep_analysis_jp は2〜4文で、昨夜の睡眠の要約を書いてください。\n"
+        "キーは sleep_analysis_jp・today_condition_forecast_jp・today_advice の3つです。\n"
+        "sleep_analysis_jp は2〜4文で、昨夜の睡眠データの分析を書いてください。\n"
         "today_condition_forecast_jp は2〜4文で、今日の体調・集中力・疲労感・判断力の見通しを書いてください。\n"
-        "医療断定や過剰な断定は避け、軽い行動提案は可です。\n"
+        "today_advice は日本語1〜3文で、今日すぐ実行できる短い具体行動だけを書いてください。\n"
+        "sleep_analysis_jp は分析、today_condition_forecast_jp は予測、today_advice は具体行動、という役割を厳密に分けてください。\n"
+        "医療断定や過剰な断定は避け、推測で補わないでください。\n"
         "未入力の項目は無理に使わず、推測で補わないでください。"
     )
     user_prompt = (
         f"target_date: {target_date}\n"
         f"today_values: {context.today_values}\n"
         f"trend_values: {context.trend_values}\n"
-        "差分がある場合は today_condition_forecast_jp に反映してください。"
+        f"supporting_context: {context.supporting_context}\n"
+        "差分がある場合は today_condition_forecast_jp に反映してください。today_advice では今朝の状態と補助コンテキストを踏まえて、その日に直結する短い行動提案を1つか2つに絞ってください。"
     )
     return system_prompt, user_prompt
 
@@ -188,11 +209,31 @@ def generate_sleep_insights(
     parsed = json.loads(content)
     sleep_analysis = _safe_text(parsed.get("sleep_analysis_jp"))
     today_forecast = _safe_text(parsed.get("today_condition_forecast_jp"))
+    today_advice = _safe_text(parsed.get("today_advice"))
+    if not today_advice and (sleep_analysis or today_forecast):
+        fragments = []
+        duration = context.today_values.get("sleep_duration_min")
+        if duration is not None:
+            try:
+                duration_minutes = int(round(float(duration)))
+            except (TypeError, ValueError):
+                duration_minutes = 0
+            if duration_minutes and duration_minutes < 420:
+                fragments.append("午前中は最重要の1件に絞り、昼に10〜15分だけ休憩を入れてください。")
+        readiness_bpm = context.today_values.get("readiness_bpm")
+        baseline_bpm = context.today_values.get("baseline_waking_bpm")
+        if readiness_bpm is not None and baseline_bpm is not None and readiness_bpm - baseline_bpm >= 3:
+            fragments.append("移動や会議の合間に深呼吸を入れ、午後前半は判断の重い作業を詰め込みすぎないでください。")
+        if not fragments:
+            fragments.append("午前中の早い時間に最優先の1件を終わらせ、午後はこまめに小休憩を入れてペースを整えてください。")
+        today_advice = " ".join(fragments[:2])
     result: dict[str, str] = {}
     if sleep_analysis:
         result["sleep_analysis_jp"] = sleep_analysis
     if today_forecast:
         result["today_condition_forecast_jp"] = today_forecast
+    if today_advice:
+        result["today_advice"] = today_advice
     return result
 
 
