@@ -168,6 +168,20 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Mood", type: "select" },
     { name: "Source", type: "select" },
     { name: "Weight", type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName, type: "date" },
+    { name: SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName, type: "date" },
+    { name: SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.displayName, type: "number" },
+    { name: SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName, type: "rich_text" },
+    { name: SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName, type: "rich_text" },
   ];
 }
 
@@ -1150,6 +1164,39 @@ function getResolvedProperty<T>(
   return resolvedName ? properties[resolvedName] : undefined;
 }
 
+
+function resolvePropertyNameOrWarn(
+  properties: Record<string, any>,
+  desiredName: string,
+  context: string,
+): string | null {
+  const resolvedName = resolvePropertyName(properties, desiredName, context);
+  if (!resolvedName) {
+    console.warn(`[property_resolver] missing match context=${context} desired=${desiredName}`);
+    return null;
+  }
+  return resolvedName;
+}
+
+function canUseProperty(
+  properties: Record<string, any>,
+  desiredName: string,
+  type: NotionPropertyType,
+  context: string,
+): string | null {
+  const resolvedName = resolvePropertyNameOrWarn(properties, desiredName, context);
+  if (!resolvedName) {
+    return null;
+  }
+  const schema = properties[resolvedName];
+  if (!schema || schema.type !== type) {
+    console.warn(
+      `[property_resolver] type mismatch context=${context} desired=${desiredName} resolved=${resolvedName} expected=${type} actual=${schema?.type ?? "missing"}`,
+    );
+    return null;
+  }
+  return resolvedName;
+}
 function parseBooleanEnv(value?: string): boolean {
   if (!value) {
     return false;
@@ -1225,6 +1272,29 @@ type DailyLogHealthPropertyNames = {
   todayConditionForecastJp: string;
 };
 
+type SleepPropertyMapping = {
+  displayName: string;
+  internalName: string;
+};
+
+const SLEEP_PROPERTY_MAPPINGS: Record<string, SleepPropertyMapping> = {
+  sleepStart: { displayName: "Sleep Start", internalName: "sleep_start" },
+  sleepEnd: { displayName: "Sleep End", internalName: "sleep_end" },
+  sleepDurationMin: { displayName: "Sleep Duration", internalName: "sleep_duration_min" },
+  sleepScore: { displayName: "Sleep Score", internalName: "sleep_score" },
+  sleepSource: { displayName: "Sleep Source", internalName: "sleep_source" },
+  sleepHeartRate: { displayName: "Sleep Heart Rate", internalName: "sleep_heart_rate" },
+  deepDurationMin: { displayName: "Deep Duration", internalName: "deep_duration_min" },
+  remDurationMin: { displayName: "REM Duration", internalName: "rem_duration_min" },
+  readinessStars: { displayName: "Readiness Stars", internalName: "readiness_stars" },
+  readinessHrv: { displayName: "Readiness HRV", internalName: "readiness_hrv" },
+  readinessBpm: { displayName: "Readiness BPM", internalName: "readiness_bpm" },
+  baselineHrv: { displayName: "Baseline HRV", internalName: "baseline_hrv" },
+  baselineWakingBpm: { displayName: "Baseline Waking BPM", internalName: "baseline_waking_bpm" },
+  sleepAnalysisJp: { displayName: "Sleep Analysis", internalName: "sleep_analysis_jp" },
+  todayConditionForecastJp: { displayName: "Today Condition Forecast", internalName: "today_condition_forecast_jp" },
+};
+
 type ExpensesPropertyNames = {
   date: string;
   amount: string;
@@ -1247,19 +1317,19 @@ function getHealthPropertyNames(env: Env): HealthPropertyNames {
     weight: env.HEALTH_WEIGHT_PROPERTY_NAME || "Weight",
     mealPhoto: env.HEALTH_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
     source: env.HEALTH_SOURCE_PROPERTY_NAME || "Source",
-    sleepStart: "sleep_start",
-    sleepEnd: "sleep_end",
-    sleepDurationMin: "sleep_duration_min",
-    sleepScore: "sleep_score",
-    sleepSource: "sleep_source",
-    readinessStars: "readiness_stars",
-    readinessHrv: "readiness_hrv",
-    readinessBpm: "readiness_bpm",
-    baselineHrv: "baseline_hrv",
-    baselineWakingBpm: "baseline_waking_bpm",
-    sleepHeartRate: "sleep_heart_rate",
-    deepDurationMin: "deep_duration_min",
-    remDurationMin: "rem_duration_min",
+    sleepStart: SLEEP_PROPERTY_MAPPINGS.sleepStart.internalName,
+    sleepEnd: SLEEP_PROPERTY_MAPPINGS.sleepEnd.internalName,
+    sleepDurationMin: SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.internalName,
+    sleepScore: SLEEP_PROPERTY_MAPPINGS.sleepScore.internalName,
+    sleepSource: SLEEP_PROPERTY_MAPPINGS.sleepSource.internalName,
+    readinessStars: SLEEP_PROPERTY_MAPPINGS.readinessStars.internalName,
+    readinessHrv: SLEEP_PROPERTY_MAPPINGS.readinessHrv.internalName,
+    readinessBpm: SLEEP_PROPERTY_MAPPINGS.readinessBpm.internalName,
+    baselineHrv: SLEEP_PROPERTY_MAPPINGS.baselineHrv.internalName,
+    baselineWakingBpm: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.internalName,
+    sleepHeartRate: SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.internalName,
+    deepDurationMin: SLEEP_PROPERTY_MAPPINGS.deepDurationMin.internalName,
+    remDurationMin: SLEEP_PROPERTY_MAPPINGS.remDurationMin.internalName,
   };
 }
 
@@ -1271,21 +1341,21 @@ function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
     kcal: env.DAILY_LOG_KCAL_PROPERTY_NAME || "Kcal",
     weight: env.DAILY_LOG_WEIGHT_PROPERTY_NAME || "Weight",
     mealPhoto: env.DAILY_LOG_MEAL_PHOTO_PROPERTY_NAME || "Meal Photos",
-    sleepStart: "Sleep Start",
-    sleepEnd: "Sleep End",
-    sleepDurationMin: "Sleep Duration",
-    sleepScore: "Sleep Score",
-    sleepSource: "Sleep Source",
-    readinessStars: "Readiness Stars",
-    readinessHrv: "Readiness HRV",
-    readinessBpm: "Readiness BPM",
-    baselineHrv: "Baseline HRV",
-    baselineWakingBpm: "Baseline Waking BPM",
-    sleepHeartRate: "Sleep Heart Rate",
-    deepDurationMin: "Deep Duration",
-    remDurationMin: "REM Duration",
-    sleepAnalysisJp: "Sleep Analysis",
-    todayConditionForecastJp: "Today Condition Forecast",
+    sleepStart: SLEEP_PROPERTY_MAPPINGS.sleepStart.displayName,
+    sleepEnd: SLEEP_PROPERTY_MAPPINGS.sleepEnd.displayName,
+    sleepDurationMin: SLEEP_PROPERTY_MAPPINGS.sleepDurationMin.displayName,
+    sleepScore: SLEEP_PROPERTY_MAPPINGS.sleepScore.displayName,
+    sleepSource: SLEEP_PROPERTY_MAPPINGS.sleepSource.displayName,
+    readinessStars: SLEEP_PROPERTY_MAPPINGS.readinessStars.displayName,
+    readinessHrv: SLEEP_PROPERTY_MAPPINGS.readinessHrv.displayName,
+    readinessBpm: SLEEP_PROPERTY_MAPPINGS.readinessBpm.displayName,
+    baselineHrv: SLEEP_PROPERTY_MAPPINGS.baselineHrv.displayName,
+    baselineWakingBpm: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.displayName,
+    sleepHeartRate: SLEEP_PROPERTY_MAPPINGS.sleepHeartRate.displayName,
+    deepDurationMin: SLEEP_PROPERTY_MAPPINGS.deepDurationMin.displayName,
+    remDurationMin: SLEEP_PROPERTY_MAPPINGS.remDurationMin.displayName,
+    sleepAnalysisJp: SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName,
+    todayConditionForecastJp: SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName,
   };
 }
 
@@ -2186,19 +2256,23 @@ async function handleDailyLogHealthIngest(
   } else {
     console.warn('Daily_Log missing rich_text property "Meal summary", skipping.');
   }
-  if (
-    hasNonEmptyValue(sleepStart) &&
-    hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepStart, "date")
-  ) {
-    updateProperties[dailyLogHealthPropertyNames.sleepStart] =
-      createDateProperty(sleepStart as string);
+  const sleepStartPropertyName = canUseProperty(
+    dailyLogProperties,
+    dailyLogHealthPropertyNames.sleepStart,
+    "date",
+    "health_ingest:daily_log_sleep_start",
+  );
+  if (hasNonEmptyValue(sleepStart) && sleepStartPropertyName) {
+    updateProperties[sleepStartPropertyName] = createDateProperty(sleepStart as string);
   }
-  if (
-    hasNonEmptyValue(sleepEnd) &&
-    hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepEnd, "date")
-  ) {
-    updateProperties[dailyLogHealthPropertyNames.sleepEnd] =
-      createDateProperty(sleepEnd as string);
+  const sleepEndPropertyName = canUseProperty(
+    dailyLogProperties,
+    dailyLogHealthPropertyNames.sleepEnd,
+    "date",
+    "health_ingest:daily_log_sleep_end",
+  );
+  if (hasNonEmptyValue(sleepEnd) && sleepEndPropertyName) {
+    updateProperties[sleepEndPropertyName] = createDateProperty(sleepEnd as string);
   }
   const optionalNumberFields: Array<[string, number | null | undefined]> = [
     [dailyLogHealthPropertyNames.sleepDurationMin, sleepDurationMin],
@@ -2216,20 +2290,36 @@ async function handleDailyLogHealthIngest(
     if (!hasNonEmptyValue(value)) {
       continue;
     }
-    if (!hasPropertyType(dailyLogProperties, propertyName, "number")) {
+    const resolvedPropertyName = canUseProperty(
+      dailyLogProperties,
+      propertyName,
+      "number",
+      `health_ingest:${propertyName}`,
+    );
+    if (!resolvedPropertyName) {
       continue;
     }
-    updateProperties[propertyName] = createNumberProperty(value);
+    updateProperties[resolvedPropertyName] = createNumberProperty(value);
   }
   if (hasNonEmptyValue(sleepSource)) {
-    if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepSource, "rich_text")) {
-      updateProperties[dailyLogHealthPropertyNames.sleepSource] = createRichTextProperty(
+    const sleepSourceRichTextPropertyName = canUseProperty(
+      dailyLogProperties,
+      dailyLogHealthPropertyNames.sleepSource,
+      "rich_text",
+      "health_ingest:daily_log_sleep_source_rich_text",
+    );
+    const sleepSourceSelectPropertyName = canUseProperty(
+      dailyLogProperties,
+      dailyLogHealthPropertyNames.sleepSource,
+      "select",
+      "health_ingest:daily_log_sleep_source_select",
+    );
+    if (sleepSourceRichTextPropertyName) {
+      updateProperties[sleepSourceRichTextPropertyName] = createRichTextProperty(
         sleepSource as string,
       );
-    } else if (
-      hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepSource, "select")
-    ) {
-      updateProperties[dailyLogHealthPropertyNames.sleepSource] = createSelectProperty(
+    } else if (sleepSourceSelectPropertyName) {
+      updateProperties[sleepSourceSelectPropertyName] = createSelectProperty(
         sleepSource as string,
       );
     }
@@ -3342,23 +3432,29 @@ async function handleDailyLogGenerateDiary(
     updateProperties.Diary = createRichTextPropertyWithLimit(diary, DIARY_RICH_TEXT_LIMIT);
   }
   const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
-  if (
-    sleepAnalysisJp &&
-    hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.sleepAnalysisJp, "rich_text")
-  ) {
-    updateProperties[dailyLogHealthPropertyNames.sleepAnalysisJp] =
-      createRichTextPropertyWithLimit(sleepAnalysisJp, DIARY_RICH_TEXT_LIMIT);
+  const sleepAnalysisPropertyName = canUseProperty(
+    dailyLogProperties,
+    dailyLogHealthPropertyNames.sleepAnalysisJp,
+    "rich_text",
+    "generate_diary:sleep_analysis",
+  );
+  if (sleepAnalysisJp && sleepAnalysisPropertyName) {
+    updateProperties[sleepAnalysisPropertyName] = createRichTextPropertyWithLimit(
+      sleepAnalysisJp,
+      DIARY_RICH_TEXT_LIMIT,
+    );
   }
-  if (
-    todayConditionForecastJp &&
-    hasPropertyType(
-      dailyLogProperties,
-      dailyLogHealthPropertyNames.todayConditionForecastJp,
-      "rich_text",
-    )
-  ) {
-    updateProperties[dailyLogHealthPropertyNames.todayConditionForecastJp] =
-      createRichTextPropertyWithLimit(todayConditionForecastJp, DIARY_RICH_TEXT_LIMIT);
+  const todayConditionForecastPropertyName = canUseProperty(
+    dailyLogProperties,
+    dailyLogHealthPropertyNames.todayConditionForecastJp,
+    "rich_text",
+    "generate_diary:today_condition_forecast",
+  );
+  if (todayConditionForecastJp && todayConditionForecastPropertyName) {
+    updateProperties[todayConditionForecastPropertyName] = createRichTextPropertyWithLimit(
+      todayConditionForecastJp,
+      DIARY_RICH_TEXT_LIMIT,
+    );
   }
 
   const generatedAtPropertyName = getDiaryGeneratedAtPropertyName(env);

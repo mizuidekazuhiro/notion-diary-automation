@@ -67,3 +67,9 @@ Phase B (Publish)
 - Ingest は睡眠値がない場合でも成功扱いで継続します。
 - Notify Diary は睡眠 signal が無ければ sleep insight 生成を skip します。
 - Publish / mail は値がある項目だけ表示します。
+
+## 6) 上書き更新の仕様
+
+- `scripts/daily_job.py` は Notify 実行のたびに `scripts/sleep_condition_generator.py` を呼びます。
+- sleep signal がある日は `Sleep Analysis` / `Today Condition Forecast` を再生成し、Workers の `generate_diary` endpoint 経由で毎回上書き保存します。
+- 既存値があっても保護しません。同じ入力なら再実行可能という意味で冪等です。

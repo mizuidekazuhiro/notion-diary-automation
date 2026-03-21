@@ -14,7 +14,7 @@ Notion Daily Log を中心に、Tasks / Expenses / Meal / Location summary / Mai
    - 既存どおり Location summary を更新します。
 3. **Phase C (Notify Diary)**
    - Daily Log を読み出します。
-   - `Sleep Analysis` または `Today Condition Forecast` が未入力なら sleep insights を生成します。
+   - sleep input signal があれば、`Sleep Analysis` と `Today Condition Forecast` を毎回再生成して上書き保存します。
    - diary prompt に睡眠情報も渡し、日記を生成します。
 4. **Phase B (Publish)**
    - 毎朝メール / publish で睡眠要約を必要十分な範囲で表示します。
@@ -108,7 +108,7 @@ publish / mail
 
 - Health 側に睡眠データがなければ、既存の Daily Log ingest は継続します。
 - 個別プロパティが欠損していても、その項目だけ skip します。
-- `Sleep Analysis` または `Today Condition Forecast` が未入力でも、今日データに睡眠 signal が無ければ gracefully skip します。
+- `Sleep Analysis` / `Today Condition Forecast` は既存値の有無に関係なく再生成対象ですが、今日データに睡眠 signal が無ければ gracefully skip します。
 - OpenAI 呼び出しに失敗しても diary automation 全体は停止させません。
 - 既存の JST 基準 target_date 運用は維持します。
 
@@ -134,7 +134,7 @@ publish / mail
 1. Health DB に対象日の睡眠データを 1 件入れます。
 2. Phase A を実行し、Daily Log に睡眠値が入ることを確認します。
 3. Location Summary Writer を実行します。
-4. Phase C を実行し、`Sleep Analysis` / `Today Condition Forecast` が必要時のみ保存されることを確認します。
+4. Phase C を実行し、`Sleep Analysis` / `Today Condition Forecast` が毎回再生成・毎回上書き保存されることを確認します。
 5. 同じ Daily Log から diary が生成されることを確認します。
 6. Phase B を実行し、メールに以下が表示されることを確認します。
    - 就寝時間
@@ -150,6 +150,7 @@ publish / mail
 - sleep insights は保存されるが read API が旧 property 名を見ていて取得できない。
 - property 名の大文字小文字や `_` / `-` / space の不一致で更新できない。
 - `Sleep Duration Min` や `Sleep Analysis JP` のような旧名を残してしまう。
+- 既存値があるから sleep insights は更新されないと思い込んでしまう。
 
 ## 再発防止のための運用ポイント
 
