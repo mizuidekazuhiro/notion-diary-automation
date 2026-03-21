@@ -79,6 +79,10 @@ def test_build_sleep_insight_context_partial_history():
     assert context.trend_values["readiness_hrv_7d_avg"] == 55
     assert context.trend_values["readiness_bpm_delta_vs_7d"] == 0
     assert context.today_values["baseline_waking_bpm"] == 49
+    assert "vs_yesterday" in context.trend_values
+    assert "recent_3day_trend" in context.trend_values
+    assert context.trend_values["sleep_score_7d_avg"] == 80
+    assert context.trend_values["rem_duration_min_7d_avg"] is None
 
 
 def test_render_mail_sleep_section_only_when_values_exist():

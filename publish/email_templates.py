@@ -433,7 +433,8 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             </tr>
             {today_advice_html}
 
-            <!-- Reorder sections for daily log readability; font stack set for consistent mail rendering. -->
+            {sleep_condition_html}
+
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
@@ -446,7 +447,6 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 </table>
               </td>
             </tr>
-            {sleep_condition_html}
 
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">

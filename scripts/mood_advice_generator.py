@@ -27,9 +27,10 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 必須ルール:
 - 出力は必ず JSON オブジェクト 1 個のみ。前置きや補足文は禁止
 - 最終本文、見出し、メール文面は絶対に書かない
-- 当日の diary 本文、過去の日記本文、location summary、diary由来要約、location summary由来要約は使わない
+- 当日の diary 本文、過去の日記本文、diary由来要約は使わない
 - 日本語の自由記述として参照してよいのは notes のみ
-- 睡眠、食事、done、drop、spend、記録有無、notes、過去30日比較、top_good_days、top_bad_days のみで判断する
+- location summary は構造化された行動コンテキストとして参照してよい
+- 睡眠、食事、done、drop、spend、記録有無、notes、location summary、過去30日比較、top_good_days、top_bad_days のみで判断する
 - 因果は断定しない。相関は「傾向」「近さ」「可能性」に留める
 - 支出から感情を安易に推測しない
 - 食事記録がない場合は未記録シグナルとして扱ってよいが、健康状態を断定しない
@@ -64,8 +65,9 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 - 読後に「今日は何を優先する日か」が明確に残るようにする
 
 入力制約:
-- 当日の diary 本文、過去の日記本文、location summary は使わない
+- 当日の diary 本文、過去の日記本文は使わない
 - notes 以外の自由記述を捏造しない
+- location summary は事実コンテキストとして参照してよい
 - 判定JSONにない論点を勝手に増やしすぎない
 - 支出から感情を断定しない
 - 食事未記録から健康状態を断定しない
@@ -161,7 +163,7 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
         "notes_used_count": counts.get("notes_used_count") if isinstance(counts, Mapping) else None,
         "diary_used": False,
         "past_diary_used": False,
-        "location_summary_used": False,
+        "location_summary_used": True,
         "notes_used": notes_used,
         "evidence_used": list(evidence_used),
         "input_tokens": prompt_tokens,
@@ -322,6 +324,7 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "sleep_score": today_summary.sleep_score,
         },
         "today_activity_context": {
+            "location_summary": today_summary.location_summary,
             "meal_logged": bool(_safe_text(today_summary.meal_summary) or today_summary.meal_photos),
             "done_count": today_summary.done_count,
             "drop_count": today_summary.drop_count,
@@ -364,6 +367,8 @@ def _build_day_record(summary: DailyLogSummary) -> dict[str, Any]:
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.sleep_duration_min,
         "sleep_score": summary.sleep_score,
+        "location_summary": summary.location_summary,
+        "meal_summary": summary.meal_summary,
         "meal_logged": bool(_safe_text(summary.meal_summary) or summary.meal_photos),
         "done_count": summary.done_count,
         "drop_count": summary.drop_count,
@@ -382,11 +387,25 @@ def _select_top_days(items: Sequence[DailyLogSummary], *, descending: bool, limi
         scored_items.append((item, score, _safe_float(item.sleep_score) or -1.0, _safe_float(item.done_count) or -1.0, item.target_date))
     if descending:
         filtered = [entry for entry in scored_items if entry[1] >= 4]
-        filtered.sort(key=lambda entry: (entry[1], entry[2], entry[3], entry[4]), reverse=True)
+        filtered.sort(key=lambda entry: (-entry[1], -(entry[2]), -(entry[3]), entry[4]))
     else:
         filtered = [entry for entry in scored_items if entry[1] <= 2]
         filtered.sort(key=lambda entry: (entry[1], -(entry[2]), -(entry[3]), entry[4]))
-    return [item for item, *_ in filtered[:limit]]
+    if len(filtered) <= limit:
+        return [item for item, *_ in filtered]
+    step = max(1, len(filtered) // limit)
+    selected: list[DailyLogSummary] = []
+    for index in range(0, len(filtered), step):
+        selected.append(filtered[index][0])
+        if len(selected) >= limit:
+            break
+    if len(selected) < limit:
+        for item, *_ in filtered:
+            if item not in selected:
+                selected.append(item)
+            if len(selected) >= limit:
+                break
+    return selected[:limit]
 
 
 def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str, Any]:
@@ -591,7 +610,7 @@ def generate_today_advice(
         "input_policy": {
             "diary_used": False,
             "past_diary_used": False,
-            "location_summary_used": False,
+            "location_summary_used": True,
             "notes_used": notes_used,
         },
     }
@@ -621,7 +640,7 @@ E. 悪い日サンプル
         mini_model,
         False,
         False,
-        False,
+        True,
         notes_used,
         judgment_prompt_tokens,
         judgment_token_method,
@@ -667,7 +686,7 @@ E. 悪い日サンプル
         "input_policy": {
             "diary_used": False,
             "past_diary_used": False,
-            "location_summary_used": False,
+            "location_summary_used": True,
             "notes_used": notes_used,
         },
     }
@@ -688,7 +707,7 @@ E. 悪い日サンプル
         final_model,
         False,
         False,
-        False,
+        True,
         notes_used,
         final_prompt_tokens,
         final_token_method,

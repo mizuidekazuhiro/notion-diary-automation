@@ -20,7 +20,7 @@ Phase A (Ingest)
   ├─ Expenses ingest
   └─ Health ingest (sleep / nutrition / meal photo)
         ↓
-Location Summary Writer
+Daily Diary 02 - Generate Location Summary
         ↓
 Phase C (Notify Diary)
   ├─ Daily Log read
@@ -70,7 +70,7 @@ Phase B (Publish)
 
 ## 5. overwrite 仕様
 
-- `scripts/daily_job.py` は Notify 実行ごとに sleep insight 生成を試みます。
+- `scripts/daily_job.py` は Phase C で sleep insights → Today advice → Diary → notify 判定を直列実行します。
 - sleep signal がある日は `Sleep Analysis JP` / `Today Condition Forecast JP` を毎回再生成して上書き保存します。
 - diary 保存とは独立して sleep 系のみ保存しても失敗しないようにしています。
 - Publish / Mail は `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Analysis JP` / `Today Condition Forecast JP` のうち値があるものだけを表示します。

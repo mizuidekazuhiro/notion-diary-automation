@@ -253,294 +253,296 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
     return used, skipped, " | ".join(overview_parts)
 
 
-def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
-    summary = read_daily_log(
+def _refresh_daily_log_summary(config: Config, target_date: str) -> Optional["DailyLogSummary"]:
+    return read_daily_log(
         daily_log_read_url=config.daily_log_read_url,
         target_date=target_date,
         bearer_token=config.bearer_token,
     )
-    if not summary:
-        logging.info(
-            "Daily_Log not found; skipping notify_diary. target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
-        return
 
-    logging.info(
-        "diary update triggered by Daily Log fields. target_date(JST)=%s run_id=%s",
-        target_date,
-        run_id,
+
+def _save_daily_log_fields(
+    config: Config,
+    *,
+    target_date: str,
+    payload: dict[str, object],
+) -> dict:
+    return post_json(
+        config.diary_generate_url,
+        {"target_date": target_date, **payload},
+        config.bearer_token,
     )
 
+
+def _generate_and_save_sleep_insights(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
     history_summaries = load_recent_daily_logs(
         daily_log_read_url=config.daily_log_read_url,
         bearer_token=config.bearer_token,
-        target_date=target_date,
+        target_date=summary.target_date,
         days=7,
     )
     sleep_signal_fields = {
-        "Sleep Start": summary.sleep_start,
-        "Sleep End": summary.sleep_end,
-        "Sleep Duration": summary.sleep_duration_min,
-        "Sleep Score": summary.sleep_score,
-        "Sleep Source": summary.sleep_source,
-        "Sleep Heart Rate": summary.sleep_heart_rate,
-        "Deep Duration": summary.deep_duration_min,
-        "REM Duration": summary.rem_duration_min,
-        "Readiness Stars": summary.readiness_stars,
-        "Readiness HRV": summary.readiness_hrv,
-        "Readiness BPM": summary.readiness_bpm,
-        "Baseline HRV": summary.baseline_hrv,
-        "Baseline Waking BPM": summary.baseline_waking_bpm,
+        "sleep_start": summary.sleep_start,
+        "sleep_end": summary.sleep_end,
+        "sleep_duration_min": summary.sleep_duration_min,
+        "sleep_score": summary.sleep_score,
+        "sleep_source": summary.sleep_source,
+        "sleep_heart_rate": summary.sleep_heart_rate,
+        "deep_duration_min": summary.deep_duration_min,
+        "rem_duration_min": summary.rem_duration_min,
+        "readiness_stars": summary.readiness_stars,
+        "readiness_hrv": summary.readiness_hrv,
+        "readiness_bpm": summary.readiness_bpm,
+        "baseline_hrv": summary.baseline_hrv,
+        "baseline_waking_bpm": summary.baseline_waking_bpm,
     }
-    available_sleep_inputs = sorted(
-        name for name, value in sleep_signal_fields.items() if value not in (None, "")
-    )
+    available_sleep_inputs = sorted(name for name, value in sleep_signal_fields.items() if value not in (None, ""))
+    logging.info("phase_c_sleep_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     logging.info(
-        "Sleep input availability. target_date(JST)=%s run_id=%s available=%s",
-        target_date,
+        "phase_c_sleep_input_summary target_date(JST)=%s run_id=%s available_sleep_input_count=%s available_sleep_inputs=%s existing_sleep_properties=%s",
+        summary.target_date,
         run_id,
+        len(available_sleep_inputs),
         available_sleep_inputs,
-    )
-
-    logging.info(
-        "phase_c_sleep_insights_start target_date(JST)=%s run_id=%s",
-        target_date,
-        run_id,
+        sorted(
+            key
+            for key, value in {
+                "sleep_analysis_jp": summary.sleep_analysis_jp,
+                "today_condition_forecast_jp": summary.today_condition_forecast_jp,
+            }.items()
+            if (value or "").strip()
+        ),
     )
     sleep_payload = maybe_generate_sleep_insights(
-        target_date=target_date,
+        target_date=summary.target_date,
         today_summary=summary,
         history_summaries=history_summaries,
     )
-    if sleep_payload:
-        save_result = post_json(
-            config.diary_generate_url,
-            {"target_date": summary.target_date, **sleep_payload},
-            config.bearer_token,
-        )
+    if not sleep_payload:
         logging.info(
-            "phase_c_sleep_insights_saved target_date(JST)=%s run_id=%s updated=%s reason=%s properties=%s",
+            "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_sleep_signal generated_properties=[]",
             summary.target_date,
             run_id,
-            save_result.get("updated"),
-            save_result.get("reason"),
-            sorted(sleep_payload.keys()),
+            False,
         )
-        refreshed_summary = read_daily_log(
-            daily_log_read_url=config.daily_log_read_url,
-            target_date=target_date,
-            bearer_token=config.bearer_token,
-        )
-        if refreshed_summary:
-            summary = refreshed_summary
-    else:
-        logging.info(
-            "phase_c_sleep_insights_skipped target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
 
     logging.info(
-        "phase_c_today_advice_start target_date(JST)=%s run_id=%s diary_used=%s",
-        target_date,
+        "phase_c_sleep_generated target_date(JST)=%s run_id=%s generated_properties=%s",
+        summary.target_date,
         run_id,
-        False,
+        sorted(sleep_payload.keys()),
     )
-    if not (summary.today_advice or "").strip():
-        advice_result = None
-        today_advice_failure_stage: Optional[str] = None
-        try:
-            logging.info(
-                "phase_c_today_advice_stage_start target_date(JST)=%s run_id=%s stage=judgment",
-                summary.target_date,
-                run_id,
-            )
-            advice_result = generate_today_advice(
-                daily_log_read_url=config.daily_log_read_url,
-                bearer_token=config.bearer_token,
-                target_date=summary.target_date,
-            )
-            logging.info(
-                "phase_c_today_advice_stage_done target_date(JST)=%s run_id=%s stage=judgment evidence_used=%s",
-                summary.target_date,
-                run_id,
-                advice_result.judgment_json.get("evidence_used", []) if advice_result else [],
-            )
-            logging.info(
-                "phase_c_today_advice_stage_start target_date(JST)=%s run_id=%s stage=final",
-                summary.target_date,
-                run_id,
-            )
-            logging.info(
-                "phase_c_today_advice_stage_done target_date(JST)=%s run_id=%s stage=final chars=%s",
-                summary.target_date,
-                run_id,
-                len(advice_result.today_advice.strip()) if advice_result else 0,
-            )
-        except Exception as exc:
-            message = str(exc).lower()
-            if "stage 1" in message or "judgment" in message:
-                today_advice_failure_stage = "judgment"
-            elif "stage 2" in message or "final writing" in message:
-                today_advice_failure_stage = "final"
-            else:
-                today_advice_failure_stage = "unknown"
-            logging.exception(
-                "Failed to generate Today advice. target_date(JST)=%s run_id=%s failed_stage=%s",
-                summary.target_date,
-                run_id,
-                today_advice_failure_stage,
-            )
-            advice_result = None
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=sleep_payload)
+    logging.info(
+        "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        sorted(sleep_payload.keys()),
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
 
-        if advice_result and advice_result.today_advice.strip():
-            logging.info(
-                "phase_c_today_advice_save_start target_date(JST)=%s run_id=%s stage1_ready=%s stage2_ready=%s",
-                summary.target_date,
-                run_id,
-                bool(advice_result.judgment_json),
-                True,
-            )
-            save_result = post_json(
-                config.diary_generate_url,
-                {"target_date": summary.target_date, "today_advice": advice_result.today_advice},
-                config.bearer_token,
-            )
-            logging.info(
-                "Today advice saved via worker endpoint. target_date(JST)=%s run_id=%s updated=%s reason=%s history_days=%s high_samples=%s low_samples=%s evidence_used=%s",
-                summary.target_date,
-                run_id,
-                save_result.get("updated"),
-                save_result.get("reason"),
-                advice_result.history_count,
-                advice_result.high_mood_sample_count,
-                advice_result.low_mood_sample_count,
-                advice_result.judgment_json.get("evidence_used", []),
-            )
-            refreshed_summary = read_daily_log(
-                daily_log_read_url=config.daily_log_read_url,
-                target_date=target_date,
-                bearer_token=config.bearer_token,
-            )
-            if refreshed_summary:
-                summary = refreshed_summary
-        elif today_advice_failure_stage:
-            logging.warning(
-                "phase_c_today_advice_save_skipped target_date(JST)=%s run_id=%s failed_stage=%s",
-                summary.target_date,
-                run_id,
-                today_advice_failure_stage,
-            )
-    else:
+
+def _generate_and_save_today_advice(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    logging.info("phase_c_today_advice_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+    logging.info(
+        "phase_c_today_advice_input_summary target_date(JST)=%s run_id=%s has_today_advice=%s has_notes=%s has_location_summary=%s has_diary=%s",
+        summary.target_date,
+        run_id,
+        bool((summary.today_advice or "").strip()),
+        bool((summary.notes or "").strip()),
+        bool((summary.location_summary or "").strip()),
+        bool((summary.diary or "").strip()),
+    )
+    if (summary.today_advice or "").strip():
         logging.info(
-            "phase_c_today_advice_skipped_existing target_date(JST)=%s run_id=%s",
-            target_date,
+            "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=existing_today_advice generated_properties=[]",
+            summary.target_date,
             run_id,
+            False,
         )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
 
+    advice_result = generate_today_advice(
+        daily_log_read_url=config.daily_log_read_url,
+        bearer_token=config.bearer_token,
+        target_date=summary.target_date,
+    )
+    if not advice_result or not advice_result.today_advice.strip():
+        logging.info(
+            "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]",
+            summary.target_date,
+            run_id,
+            False,
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
+    logging.info(
+        "phase_c_today_advice_generated target_date(JST)=%s run_id=%s generated_properties=%s history_days=%s high_samples=%s low_samples=%s evidence_used=%s",
+        summary.target_date,
+        run_id,
+        ["today_advice"],
+        advice_result.history_count,
+        advice_result.high_mood_sample_count,
+        advice_result.low_mood_sample_count,
+        advice_result.judgment_json.get("evidence_used", []),
+    )
+    save_result = _save_daily_log_fields(
+        config,
+        target_date=summary.target_date,
+        payload={"today_advice": advice_result.today_advice},
+    )
+    logging.info(
+        "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        ["today_advice"],
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
+
+
+def _generate_and_save_diary(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    logging.info("phase_c_diary_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
+    logging.info(
+        "phase_c_diary_input_summary target_date(JST)=%s run_id=%s used_fields=%s skipped_fields=%s input_overview=%s",
+        summary.target_date,
+        run_id,
+        sorted(diary_input_fields.keys()),
+        skipped_fields,
+        input_overview,
+    )
     if not diary_input_fields:
         logging.info(
-            "No diary input fields available; skipping notify_diary. target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
-        return
-
-    diary_text = (summary.diary or "").strip()
-    if not diary_text:
-        logging.info(
-            "Diary generation input fields: %s",
-            list(diary_input_fields.keys()),
-        )
-        logging.info(
-            "Diary generation skipped empty fields: %s",
-            skipped_fields,
-        )
-        logging.info(
-            "Diary generation input overview: %s",
-            input_overview,
-        )
-        logging.info(
-            "Generating diary from Daily Log properties via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
+            "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]",
             summary.target_date,
             run_id,
-            config.openai_model,
+            False,
         )
-        try:
-            generated_diary = generate_diary_from_daily_log(
-                diary_input_fields,
-                summary.target_date,
-            )
-        except Exception:
-            logging.exception(
-                "Failed to generate diary from Daily Log properties via Python OpenAI... target_date(JST)=%s run_id=%s model=%s",
-                summary.target_date,
-                run_id,
-                config.openai_model,
-            )
-            return
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
 
-        save_result = post_json(
-            config.diary_generate_url,
-            {"target_date": summary.target_date, "diary": generated_diary},
-            config.bearer_token,
-        )
+    if (summary.diary or "").strip():
         logging.info(
-            "Diary saved via worker endpoint... target_date(JST)=%s run_id=%s updated=%s reason=%s",
+            "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=existing_diary generated_properties=[]",
             summary.target_date,
             run_id,
-            save_result.get("updated"),
-            save_result.get("reason"),
+            False,
         )
-        refreshed_summary = read_daily_log(
-            daily_log_read_url=config.daily_log_read_url,
-            target_date=target_date,
-            bearer_token=config.bearer_token,
-        )
-        if refreshed_summary:
-            summary = refreshed_summary
-            diary_text = (summary.diary or "").strip()
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
 
-    if not diary_text:
-        logging.warning(
-            "Diary is empty after Python generation; skipping notify_diary... target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
-        return
-
-    if summary.diary_notification_sent is True:
-        logging.info(
-            "Diary already notified; skipping notify_diary. target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
-        return
-
-    page_url = (summary.page_url or "").strip()
-    if not page_url:
-        logging.warning(
-            "Missing page_url; skipping notify_diary. target_date(JST)=%s run_id=%s",
-            target_date,
-            run_id,
-        )
-        return
-
-    logging.info("phase_c_email_disabled")
-
-    post_json(
-        config.diary_mark_notified_url,
-        {"target_date": summary.target_date},
-        config.bearer_token,
+    generated_diary = generate_diary_from_daily_log(diary_input_fields, summary.target_date)
+    logging.info(
+        "phase_c_diary_generated target_date(JST)=%s run_id=%s generated_properties=%s chars=%s",
+        summary.target_date,
+        run_id,
+        ["diary"],
+        len(generated_diary.strip()),
+    )
+    save_result = _save_daily_log_fields(
+        config,
+        target_date=summary.target_date,
+        payload={"diary": generated_diary},
     )
     logging.info(
-        "Diary notified and marked. target_date(JST)=%s run_id=%s",
+        "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        ["diary"],
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
+
+
+def _notify_phase_c(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> bool:
+    logging.info("phase_c_notify_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+    if summary.diary_notification_sent is True:
+        logging.info(
+            "phase_c_notify_skipped_already_sent target_date(JST)=%s run_id=%s skip_reason=already_notified",
+            summary.target_date,
+            run_id,
+        )
+        return False
+    page_url = (summary.page_url or "").strip()
+    if not page_url:
+        logging.info(
+            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=missing_page_url",
+            summary.target_date,
+            run_id,
+        )
+        return False
+    logging.info(
+        "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=email_disabled",
         summary.target_date,
         run_id,
     )
+    return False
+
+
+def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
+    summary = _refresh_daily_log_summary(config, target_date)
+    if not summary:
+        logging.info("phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]", target_date, run_id, False)
+        return
+    summary = _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _generate_and_save_diary(config, summary=summary, run_id=run_id)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+
+    if not (summary.diary or "").strip():
+        logging.info(
+            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=no_daily_log",
+            summary.target_date,
+            run_id,
+        )
+        return
+    sent = _notify_phase_c(config, summary=summary, run_id=run_id)
+    if sent:
+        post_json(
+            config.diary_mark_notified_url,
+            {"target_date": summary.target_date},
+            config.bearer_token,
+        )
+        logging.info(
+            "phase_c_notify_sent target_date(JST)=%s run_id=%s notified_updated=%s",
+            summary.target_date,
+            run_id,
+            True,
+        )
 
 
 def parse_args() -> argparse.Namespace:

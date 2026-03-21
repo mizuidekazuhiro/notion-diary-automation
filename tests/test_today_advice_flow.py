@@ -102,6 +102,7 @@ def test_render_daily_log_html_includes_today_advice_section() -> None:
     html = render_daily_log_html(_payload(summary))
     assert "Today advice" in html
     assert summary.today_advice in html
+    assert html.index("Today advice") < html.index("Sleep &amp; Condition") < html.index("Diary")
 
 
 def test_render_daily_log_text_includes_sleep_sections_in_order() -> None:
@@ -177,6 +178,7 @@ def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None
         "sleep_end",
         "sleep_duration_min",
         "sleep_score",
+        "location_summary",
         "meal_summary",
         "meal_logged",
         "done_count",
