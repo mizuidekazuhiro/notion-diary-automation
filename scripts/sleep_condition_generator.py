@@ -203,8 +203,24 @@ def maybe_generate_sleep_insights(
         today_summary=today_summary,
         history_summaries=history_summaries,
     )
+    has_today_signal = any(
+        value is not None and value != "" for value in context.today_values.values()
+    )
+    if not has_today_signal:
+        logging.info(
+            "Skipping sleep insight generation because no sleep signal is available. target_date=%s",
+            target_date,
+        )
+        return {}
     try:
-        return generate_sleep_insights(target_date=target_date, context=context)
+        result = generate_sleep_insights(target_date=target_date, context=context)
+        if result:
+            logging.info(
+                "Generated sleep insights for overwrite save. target_date=%s keys=%s",
+                target_date,
+                sorted(result.keys()),
+            )
+        return result
     except Exception:
         logging.exception("Failed to generate sleep insights. target_date=%s", target_date)
         return {}
