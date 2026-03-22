@@ -21,6 +21,18 @@ RECENT_WINDOW_DAYS = 14
 SHORT_WINDOW_DAYS = 7
 SAMPLE_DAYS_PER_BUCKET = 5
 
+
+MEAL_NUMERIC_FIELDS = ("kcal", "protein", "fat", "carb")
+NOTES_SIGNAL_PATTERNS = {
+    "fatigue": ["疲れ", "だる", "しんど", "倦怠", "疲労"],
+    "sleep_issue": ["寝不足", "眠い", "眠気", "寝なかった", "寝れてない", "睡眠不足", "夜更かし"],
+    "overeating": ["食べすぎ", "食べ過ぎ", "夜食", "食べすぎた", "食欲暴走", "食べ過ぎた"],
+    "stress": ["喧嘩", "後悔", "ストレス", "イライラ", "不安", "焦り"],
+    "focus": ["集中できた", "集中", "はかど", "捗", "進んだ", "没頭"],
+    "exercise": ["ジム", "運動", "ランニング", "筋トレ", "散歩", "ストレッチ"],
+    "recovery": ["体調が良い", "回復", "調子が良い", "元気", "持ち直", "楽になった"],
+}
+LOCATION_PATTERN_KEYS = ("home_heavy_day", "office_heavy_day", "outing_heavy_day", "late_outing_day", "multi_stop_day")
 MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前段整理アシスタントです。
 役割は、当日の sleep 系データと過去実績だけから判断材料を整理し、最終本文の元になる判定JSONだけを作ることです。
 
@@ -43,7 +55,7 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 - 「今日はメモがない」「今日はタスク完了ゼロ」「今日は食事記録がない」など当日値ベースの断定は禁止
 - recommended_actions は 1 個または 2 個の短い文字列に絞る
 - evidence_used には本文生成に使う根拠を簡潔な配列で残す
-- evidence_used には sleep 根拠と recent behavior pattern 根拠の両方を残す
+- evidence_used には sleep 根拠 / recent 7-day behavior 根拠 / good-bad comparison 根拠を残す
 - 必ず recent 7-day behavior pattern を 1 つ以上 judgment に残す
 
 必須キー:
@@ -55,6 +67,10 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 - bad_pattern_similarity
 - notes_signal
 - recording_signal
+- meal_signal
+- notes_pattern_signal
+- location_pattern_signal
+- good_bad_behavior_gap
 - evidence_used
 - recommended_actions
 - sleep_signal
@@ -190,6 +206,13 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
         "past_diary_used": False,
         "location_summary_used": True,
         "notes_used": notes_used,
+        "recent_7d_summary": structured.get("comparisons", {}).get("recent_7d") if isinstance(structured.get("comparisons", {}), Mapping) else None,
+        "recent_14d_summary": structured.get("comparisons", {}).get("recent_14d") if isinstance(structured.get("comparisons", {}), Mapping) else None,
+        "recent_30d_summary": structured.get("comparisons", {}).get("recent_30d") if isinstance(structured.get("comparisons", {}), Mapping) else None,
+        "good_vs_bad_delta": structured.get("comparisons", {}).get("good_vs_bad_delta") if isinstance(structured.get("comparisons", {}), Mapping) else None,
+        "notes_signal_comparison": structured.get("comparisons", {}).get("notes_signal_comparison") if isinstance(structured.get("comparisons", {}), Mapping) else None,
+        "meal_mood_comparison": structured.get("comparisons", {}).get("meal_mood_comparison") if isinstance(structured.get("comparisons", {}), Mapping) else None,
+        "location_pattern_comparison": structured.get("comparisons", {}).get("location_pattern_comparison") if isinstance(structured.get("comparisons", {}), Mapping) else None,
         "evidence_used": list(evidence_used),
         "input_tokens": prompt_tokens,
         "token_counting_method": token_counting_method,
@@ -336,6 +359,76 @@ def _trend_direction(values: Sequence[Optional[float]]) -> Optional[str]:
     if nums[0] > nums[1] > nums[2]:
         return "down"
     return None
+def _meal_metric_avg(items: Sequence[DailyLogSummary], field_name: str) -> Optional[float]:
+    return _mean([_safe_float(getattr(item, field_name, None)) for item in items])
+
+
+def _extract_notes_signals(note: Optional[str]) -> dict[str, bool]:
+    text = _safe_text(note)
+    if not text:
+        return {key: False for key in NOTES_SIGNAL_PATTERNS}
+    lowered = text.lower()
+    return {key: any(keyword in text or keyword in lowered for keyword in keywords) for key, keywords in NOTES_SIGNAL_PATTERNS.items()}
+
+
+def _notes_signal_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
+    if not items:
+        return {f"{key}_rate": None for key in NOTES_SIGNAL_PATTERNS}
+    counts = {key: 0 for key in NOTES_SIGNAL_PATTERNS}
+    for item in items:
+        signals = _extract_notes_signals(item.notes)
+        for key, matched in signals.items():
+            if matched:
+                counts[key] += 1
+    return {f"{key}_rate": round(counts[key] / len(items), 2) for key in NOTES_SIGNAL_PATTERNS}
+
+
+def _extract_location_patterns(summary: Optional[str]) -> dict[str, bool]:
+    text = _safe_text(summary) or ""
+    home = any(keyword in text for keyword in ["自宅", "家", "在宅", "家中心"])
+    office = any(keyword in text for keyword in ["オフィス", "出社", "会社", "職場"])
+    outing = any(keyword in text for keyword in ["外出", "移動", "外", "買い物", "カフェ", "出かけ"])
+    late = any(keyword in text for keyword in ["深夜", "夜遅", "終電", "22:", "23:", "24:", "夜まで"])
+    multi = any(keyword in text for keyword in ["→", "→", "巡", "複数", "移動多", "立ち寄", "はしご"]) or text.count("・") >= 2
+    return {
+        "home_heavy_day": home and not office,
+        "office_heavy_day": office,
+        "outing_heavy_day": outing,
+        "late_outing_day": late,
+        "multi_stop_day": multi,
+    }
+
+
+def _location_pattern_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
+    if not items:
+        return {f"{key}_rate": None for key in LOCATION_PATTERN_KEYS}
+    counts = {key: 0 for key in LOCATION_PATTERN_KEYS}
+    for item in items:
+        patterns = _extract_location_patterns(item.location_summary)
+        for key, matched in patterns.items():
+            if matched:
+                counts[key] += 1
+    return {f"{key}_rate": round(counts[key] / len(items), 2) for key in LOCATION_PATTERN_KEYS}
+
+
+def _build_behavior_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Any]:
+    snapshot = {
+        **_build_metric_snapshot(items),
+        "notes_recording_rate": _recording_rate(items, lambda item: item.notes),
+        "meal_logged_rate": _recording_rate(items, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
+    }
+    for field in MEAL_NUMERIC_FIELDS:
+        snapshot[f"{field}_avg"] = _meal_metric_avg(items, field)
+    snapshot["notes_signals"] = _notes_signal_rates(items)
+    snapshot["location_patterns"] = _location_pattern_rates(items)
+    return snapshot
+
+
+def _delta_map(current: Mapping[str, Optional[float]], base: Mapping[str, Optional[float]]) -> dict[str, Optional[float]]:
+    keys = set(current.keys()) | set(base.keys())
+    return {key: _delta(current.get(key), base.get(key)) for key in sorted(keys)}
+
+
 
 
 def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequence[DailyLogSummary]) -> dict[str, Any]:
@@ -406,6 +499,11 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
                 "drop_count": _trend_direction([_safe_float(item.drop_count) for item in reversed(recent_summaries[:14])]),
                 "spend_total": _trend_direction([_safe_float(item.expenses_total) for item in reversed(recent_summaries[:14])]),
             },
+            "meal_mood_comparison": {
+                "recent_7d": {f"{field}_avg": _meal_metric_avg(recent_7, field) for field in MEAL_NUMERIC_FIELDS},
+                "recent_14d": {f"{field}_avg": _meal_metric_avg(recent_14, field) for field in MEAL_NUMERIC_FIELDS},
+                "recent_30d": {f"{field}_avg": _meal_metric_avg(recent_30, field) for field in MEAL_NUMERIC_FIELDS},
+            },
         },
         "historical_recording_patterns": {
             "notes_recording_rate_7d": _recording_rate(recent_7, lambda item: item.notes),
@@ -419,6 +517,12 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "recent_7d_location_samples": [item.location_summary for item in recent_7 if _safe_text(item.location_summary)],
             "recent_notes_samples": [item.notes for item in recent_14 if _safe_text(item.notes)][:5],
             "historical_daily_score_avg": _mean([normalize_mood_to_score(item.mood) for item in recent_30]),
+            "notes_signal_comparison": {
+                "recent_7d": _notes_signal_rates(recent_7),
+            },
+            "location_pattern_comparison": {
+                "recent_7d": _location_pattern_rates(recent_7),
+            },
         },
     }
 
@@ -437,6 +541,10 @@ def _build_day_record(summary: DailyLogSummary) -> dict[str, Any]:
         "drop_count": summary.drop_count,
         "spend_total": summary.expenses_total,
         "notes": summary.notes,
+        "kcal": summary.kcal,
+        "protein": summary.protein,
+        "fat": summary.fat,
+        "carb": summary.carb,
         "daily_score": normalize_mood_to_score(summary.mood),
     }
 
@@ -485,9 +593,7 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
     def compare(items: Sequence[DailyLogSummary]) -> dict[str, Any]:
         return {
             "count": len(items),
-            **_build_metric_snapshot(items),
-            "notes_recording_rate": _recording_rate(items, lambda item: item.notes),
-            "meal_logged_rate": _recording_rate(items, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
+            **_build_behavior_snapshot(items),
         }
 
     notes_used_count = sum(1 for item in history if _safe_text(item.notes))
@@ -509,15 +615,46 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
         "comparisons": {
             "recent_7d": compare(recent_7),
             "recent_14d": compare(recent_14),
+            "recent_30d": compare(history[:LOOKBACK_DAYS]),
             "high_mood": compare(high),
             "low_mood": compare(low),
             "middle_mood": compare(middle),
+            "meal_mood_comparison": {
+                "high_mood": {f"{field}_avg": _meal_metric_avg(high, field) for field in MEAL_NUMERIC_FIELDS},
+                "low_mood": {f"{field}_avg": _meal_metric_avg(low, field) for field in MEAL_NUMERIC_FIELDS},
+                "middle_mood": {f"{field}_avg": _meal_metric_avg(middle, field) for field in MEAL_NUMERIC_FIELDS},
+                "recent_7d": {f"{field}_avg": _meal_metric_avg(recent_7, field) for field in MEAL_NUMERIC_FIELDS},
+                "recent_14d": {f"{field}_avg": _meal_metric_avg(recent_14, field) for field in MEAL_NUMERIC_FIELDS},
+                "recent_30d": {f"{field}_avg": _meal_metric_avg(history[:LOOKBACK_DAYS], field) for field in MEAL_NUMERIC_FIELDS},
+                "good_vs_bad_delta": {
+                    "kcal": _delta(_meal_metric_avg(top_good_days, "kcal"), _meal_metric_avg(top_bad_days, "kcal")),
+                    "protein": _delta(_meal_metric_avg(top_good_days, "protein"), _meal_metric_avg(top_bad_days, "protein")),
+                    "fat": _delta(_meal_metric_avg(top_good_days, "fat"), _meal_metric_avg(top_bad_days, "fat")),
+                    "carb": _delta(_meal_metric_avg(top_good_days, "carb"), _meal_metric_avg(top_bad_days, "carb")),
+                },
+            },
+            "notes_signal_comparison": {
+                "high_mood": _notes_signal_rates(high),
+                "low_mood": _notes_signal_rates(low),
+                "recent_7d": _notes_signal_rates(recent_7),
+                "good_vs_bad_delta": _delta_map(_notes_signal_rates(top_good_days), _notes_signal_rates(top_bad_days)),
+            },
+            "location_pattern_comparison": {
+                "high_mood": _location_pattern_rates(high),
+                "low_mood": _location_pattern_rates(low),
+                "recent_7d": _location_pattern_rates(recent_7),
+                "good_vs_bad_delta": _delta_map(_location_pattern_rates(top_good_days), _location_pattern_rates(top_bad_days)),
+            },
             "good_vs_bad_delta": {
                 "sleep_duration_min": _delta(_build_metric_snapshot(top_good_days)["sleep_duration_min_avg"], _build_metric_snapshot(top_bad_days)["sleep_duration_min_avg"]),
                 "sleep_score": _delta(_build_metric_snapshot(top_good_days)["sleep_score_avg"], _build_metric_snapshot(top_bad_days)["sleep_score_avg"]),
                 "done_count": _delta(_build_metric_snapshot(top_good_days)["done_count_avg"], _build_metric_snapshot(top_bad_days)["done_count_avg"]),
                 "drop_count": _delta(_build_metric_snapshot(top_good_days)["drop_count_avg"], _build_metric_snapshot(top_bad_days)["drop_count_avg"]),
                 "spend_total": _delta(_build_metric_snapshot(top_good_days)["expenses_total_avg"], _build_metric_snapshot(top_bad_days)["expenses_total_avg"]),
+                "kcal": _delta(_meal_metric_avg(top_good_days, "kcal"), _meal_metric_avg(top_bad_days, "kcal")),
+                "protein": _delta(_meal_metric_avg(top_good_days, "protein"), _meal_metric_avg(top_bad_days, "protein")),
+                "fat": _delta(_meal_metric_avg(top_good_days, "fat"), _meal_metric_avg(top_bad_days, "fat")),
+                "carb": _delta(_meal_metric_avg(top_good_days, "carb"), _meal_metric_avg(top_bad_days, "carb")),
             },
         },
         "last_30_days_summary": {
@@ -683,7 +820,12 @@ def _normalize_judgment_json(payload: Mapping[str, Any]) -> dict[str, Any]:
         "recording_signal",
         "sleep_signal",
         "recent_behavior_pattern",
+        "recording_pattern",
         "priority_action",
+        "meal_signal",
+        "notes_pattern_signal",
+        "location_pattern_signal",
+        "good_bad_behavior_gap",
     ):
         value = normalized.get(key)
         normalized[key] = "" if value is None else str(value).strip()
@@ -699,7 +841,7 @@ recommended_actions は 1〜2 個、evidence_used は本文生成に使う根拠
 - non-sleep historical only
 - must include recent 7-day trend
 - 必ず recent 7-day behavior pattern を 1 つ以上 judgment に残す
-- evidence_used には睡眠根拠と行動傾向根拠の両方を含める
+- evidence_used には sleep 根拠 / recent 7-day behavior 根拠 / good-bad comparison 根拠の3系統を含める
 制約:
 - 当日データとして参照するのは sleep 系のみ
 - それ以外は historical data only

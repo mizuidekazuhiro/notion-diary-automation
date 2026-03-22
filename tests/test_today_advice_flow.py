@@ -170,6 +170,10 @@ def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None
                 sleep_duration_min=420 + day,
                 done_count=5 - (day % 3),
                 drop_count=day % 2,
+                kcal=1800 + day * 10,
+                protein=90 + day,
+                fat=50 + day,
+                carb=200 + day * 2,
                 expenses_total=1000 + day * 10,
             )
         )
@@ -196,8 +200,15 @@ def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None
         "drop_count",
         "spend_total",
         "notes",
+        "kcal",
+        "protein",
+        "fat",
+        "carb",
         "daily_score",
     }
+    assert structured["comparisons"]["meal_mood_comparison"]["high_mood"]["protein_avg"] is not None
+    assert "focus_rate" in structured["comparisons"]["notes_signal_comparison"]["high_mood"]
+    assert "office_heavy_day_rate" in structured["comparisons"]["location_pattern_comparison"]["recent_7d"]
     assert "diary" not in structured["top_good_days"][0]
     assert "diary" not in structured["last_30_days_summary"]["daily_records"][0]
 
@@ -461,3 +472,112 @@ def test_count_input_tokens_returns_estimate_without_tiktoken() -> None:
     assert count is not None
     assert count > 0
     assert method in {"tiktoken", "estimated_chars_div4"}
+
+
+def test_structured_comparison_includes_meal_notes_location_signals() -> None:
+    from scripts.mood_advice_generator import _build_structured_comparison
+
+    history = [
+        _summary(target_date="2026-03-19", mood="★★★★★", kcal=2200, protein=140, fat=55, carb=250, notes="集中できたしジムにも行けた", location_summary="出社中心・カフェ", done_count=4),
+        _summary(target_date="2026-03-18", mood="★★★★", kcal=2100, protein=130, fat=50, carb=240, notes="はかどった、回復感あり", location_summary="オフィス中心", done_count=3),
+        _summary(target_date="2026-03-17", mood="★", kcal=1500, protein=70, fat=80, carb=160, notes="寝不足で眠いし夜食、ストレスあり", location_summary="自宅中心・夜まで外出", done_count=1),
+        _summary(target_date="2026-03-16", mood="★★", kcal=1600, protein=75, fat=78, carb=170, notes="疲れと後悔で食べ過ぎ", location_summary="自宅中心→買い物→カフェ", done_count=1),
+    ]
+
+    structured = _build_structured_comparison(history)
+
+    meal = structured["comparisons"]["meal_mood_comparison"]
+    assert meal["high_mood"]["protein_avg"] == 135.0
+    assert meal["low_mood"]["fat_avg"] == 79.0
+    assert structured["comparisons"]["good_vs_bad_delta"]["protein"] == 62.5
+
+    notes = structured["comparisons"]["notes_signal_comparison"]
+    assert notes["high_mood"]["focus_rate"] == 1.0
+    assert notes["low_mood"]["sleep_issue_rate"] == 0.5
+    assert notes["good_vs_bad_delta"]["overeating_rate"] is not None
+
+    location = structured["comparisons"]["location_pattern_comparison"]
+    assert location["high_mood"]["office_heavy_day_rate"] == 1.0
+    assert location["low_mood"]["home_heavy_day_rate"] == 1.0
+    assert location["low_mood"]["late_outing_day_rate"] == 0.5
+
+
+def test_generation_context_adds_structured_non_sleep_comparisons() -> None:
+    from scripts.mood_advice_generator import build_today_advice_generation_context
+    import scripts.mood_advice_generator as generator
+
+    today = _summary(target_date="2026-03-20", sleep_score=72, sleep_duration_min=420, notes=None, meal_summary=None, location_summary="当日")
+    history = [
+        today,
+        _summary(target_date="2026-03-19", mood="★★★★★", kcal=2200, protein=140, fat=55, carb=250, notes="集中できた", location_summary="出社中心"),
+        _summary(target_date="2026-03-18", mood="★", kcal=1500, protein=70, fat=80, carb=160, notes="寝不足で眠い", location_summary="自宅中心・夜まで外出"),
+    ]
+    original = generator.load_daily_logs_for_period
+    generator.load_daily_logs_for_period = lambda **kwargs: history
+    try:
+        context = build_today_advice_generation_context(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    finally:
+        generator.load_daily_logs_for_period = original
+
+    assert context is not None
+    structured = context["judgment_input"]["structured_historical_comparison"]["comparisons"]
+    assert "meal_mood_comparison" in structured
+    assert "notes_signal_comparison" in structured
+    assert "location_pattern_comparison" in structured
+    assert "today_sleep" in context["judgment_input"]
+    assert "当日" not in json.dumps(context["judgment_input"], ensure_ascii=False)
+
+
+def test_generate_today_advice_requires_recent_and_good_bad_evidence(monkeypatch) -> None:
+    import scripts.mood_advice_generator as generator
+
+    today = _summary(target_date="2026-03-20", sleep_score=60, sleep_duration_min=330, notes=None, meal_summary=None, location_summary=None)
+    history = [
+        today,
+        _summary(target_date="2026-03-19", mood="★★★★★", kcal=2200, protein=140, fat=55, carb=250, notes="集中できたし運動した", location_summary="出社中心"),
+        _summary(target_date="2026-03-18", mood="★★★★", kcal=2100, protein=130, fat=50, carb=240, notes="はかどった", location_summary="オフィス中心"),
+        _summary(target_date="2026-03-17", mood="★", kcal=1500, protein=70, fat=80, carb=160, notes="寝不足で眠いし夜食", location_summary="自宅中心・夜まで外出"),
+        _summary(target_date="2026-03-16", mood="★★", kcal=1600, protein=75, fat=78, carb=170, notes="ストレスで食べ過ぎ", location_summary="自宅中心"),
+        _summary(target_date="2026-03-15", mood="★★★", kcal=1800, protein=90, fat=65, carb=200, notes="普通", location_summary="外出"),
+        _summary(target_date="2026-03-14", mood="★★★★", kcal=2050, protein=120, fat=58, carb=225, notes="集中できた", location_summary="出社中心"),
+        _summary(target_date="2026-03-13", mood="★★", kcal=1550, protein=72, fat=82, carb=165, notes="疲れと眠気", location_summary="自宅中心"),
+    ]
+
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
+    responses = iter([
+        json.dumps({
+            "day_type": "recovery",
+            "main_bottleneck": "sleep debt",
+            "priority_theme": "朝の負荷調整",
+            "primary_risk": "午後の失速",
+            "good_pattern_similarity": "良い日は出社寄りで集中メモが多い",
+            "bad_pattern_similarity": "悪い日は自宅寄りで睡眠問題や夜食メモが重なりやすい",
+            "notes_signal": "直近7日でもfocus系メモがある一方、sleep_issue系も混在",
+            "recording_signal": "直近7日でnotesとmealの記録は継続",
+            "meal_signal": "良い日は高タンパク寄り、悪い日は脂質高めに寄る傾向",
+            "notes_pattern_signal": "悪い日はsleep_issueとovereating、良い日はfocusとexerciseが重なりやすい",
+            "location_pattern_signal": "良い日はoffice_heavy、悪い日はhome_heavyが多い傾向",
+            "good_bad_behavior_gap": "done数だけでなく食事・メモ・場所の差もある",
+            "sleep_signal": "睡眠時間330分で短め",
+            "recent_behavior_pattern": "直近7日ではdone数は維持しつつ、focus系メモとsleep_issue系メモが混在している",
+            "recording_pattern": "直近7日の記録率は維持",
+            "priority_action": "朝に最重要1件を出社前提の場所で始める",
+            "evidence_used": ["sleep: 睡眠時間330分で短め", "recent_7d: focus系メモとsleep_issue系メモが混在", "good_bad: 良い日は高タンパク・出社寄り、悪い日は夜食と自宅寄りが重なる"],
+            "recommended_actions": ["午前の早い段階で最重要1件に着手", "昼前に短いメモで状態を固定"],
+        }),
+        "今日は睡眠時間が330分と短く、朝の立ち上がりは慎重に見たほうがよさそうです。直近7日ではfocus系メモとsleep_issue系メモが混在しつつ、良い日は高タンパク寄りで出社中心、悪い日は夜食や自宅中心が重なりやすい傾向があるため、今日はその差が広がりにくい流れを選ぶのが合いそうです。まず午前の早い段階で最重要1件に着手し、昼前に短いメモで状態を固定してください。",
+    ])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: next(responses))
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+
+    assert result is not None
+    assert "直近7日" in result.today_advice
+    assert "高タンパク寄り" in result.today_advice
+    assert "午前の早い段階で最重要1件" in result.today_advice
+    assert any(item.startswith("sleep:") for item in result.judgment_json["evidence_used"])
+    assert any(item.startswith("recent_7d:") for item in result.judgment_json["evidence_used"])
+    assert any(item.startswith("good_bad:") for item in result.judgment_json["evidence_used"])
+    assert result.judgment_json["meal_signal"]
+    assert result.judgment_json["notes_pattern_signal"]
+    assert result.judgment_json["location_pattern_signal"]
