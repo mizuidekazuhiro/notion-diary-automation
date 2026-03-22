@@ -22,19 +22,24 @@ SHORT_WINDOW_DAYS = 7
 SAMPLE_DAYS_PER_BUCKET = 5
 
 MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前段整理アシスタントです。
-役割は、過去30日比較と当日状態から判断材料を整理し、最終本文の元になる判定JSONだけを作ることです。
+役割は、当日の sleep 系データと過去実績だけから判断材料を整理し、最終本文の元になる判定JSONだけを作ることです。
 
 必須ルール:
 - 出力は必ず JSON オブジェクト 1 個のみ。前置きや補足文は禁止
 - 最終本文、見出し、メール文面は絶対に書かない
+- Today advice で当日参照してよいのは sleep 系のみ
+- 行動・支出・食事・メモ・位置情報系は当日値を使わず、過去実績のみから評価する
 - 当日の diary 本文、過去の日記本文、diary由来要約は使わない
-- 日本語の自由記述として参照してよいのは notes のみ
-- location summary は構造化された行動コンテキストとして参照してよい
-- 睡眠、食事、done、drop、spend、記録有無、notes、location summary、過去30日比較、top_good_days、top_bad_days のみで判断する
+- diary 本文 / 過去 diary 本文は使わない
+- 日本語の自由記述として使ってよいのは過去履歴に含まれる notes のみ
+- location summary は過去履歴の構造化コンテキストとしてのみ参照してよい
+- 当日の未入力や未完了は評価対象にしない
+- 当日の sleep と、過去7日・14日・30日、および mood 高低日の比較から判断する
+- 当日の meal / done / drop / spend / notes / location summary / 記録有無 を根拠に解釈しない
 - 因果は断定しない。相関は「傾向」「近さ」「可能性」に留める
 - 支出から感情を安易に推測しない
-- 食事記録がない場合は未記録シグナルとして扱ってよいが、健康状態を断定しない
-- タスクが少ない場合も、進捗不足とは断定せず、done/drop/open から言える範囲に留める
+- 当日の食事未記録、メモ未記録、タスク未完了、支出ゼロをネガティブ評価しない
+- 「今日はメモがない」「今日はタスク完了ゼロ」「今日は食事記録がない」など当日値ベースの断定は禁止
 - recommended_actions は 1 個または 2 個の短い文字列に絞る
 - evidence_used には本文生成に使う根拠を簡潔な配列で残す
 
@@ -52,10 +57,11 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 """
 
 FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice 本文を書くアシスタントです。
-役割は、判定JSONと当日の最小限の事実だけを使い、短めでも密度の高い日本語本文を書くことです。
+役割は、判定JSONと当日の sleep 系事実、そして過去実績だけを使い、短めでも密度の高い日本語本文を書くことです。
 
 最優先要件:
 - 出力は日本語本文のみ。見出し、タイトル、箇条書き、JSONは禁止
+- 3文構成を基本とし、内容順は「今日の睡眠状態から見たコンディション」→「過去実績から見た行動上の注意点」→「今日まず取るべき具体行動」
 - 2段落以内
 - 220〜380字程度
 - 一般論は禁止
@@ -65,18 +71,27 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 - 読後に「今日は何を優先する日か」が明確に残るようにする
 
 入力制約:
+- Today advice で当日参照してよいのは sleep 系のみ
+- 行動・支出・食事・メモ・位置情報系は当日値を使わず、過去実績のみから評価する
+- 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
+- 当日の未入力や未完了は評価対象にしない
 - 当日の diary 本文、過去の日記本文は使わない
 - notes 以外の自由記述を捏造しない
-- location summary は事実コンテキストとして参照してよい
+- location summary は過去実績の事実コンテキストとしてのみ参照してよい
 - 判定JSONにない論点を勝手に増やしすぎない
 - 支出から感情を断定しない
 - 食事未記録から健康状態を断定しない
+- 「把握が難しい」「低調」「停滞」などを、当日未記録や当日ゼロ件を根拠に断定しない
 
 禁止例:
 - バランスの良い食事を心がけましょう
 - 適度に休憩しましょう
 - 無理せず過ごしましょう
 - 規則正しい生活を意識しましょう
+- メモの記録がなく、気分や課題の把握が難しい
+- 今日はタスク完了がゼロで低調
+- 支出が少ない/多いので今日は〜
+- 食事記録がないため〜
 
 文体:
 - メール冒頭にそのまま置ける自然な日本語
@@ -155,8 +170,9 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
         "low_mood_days": counts.get("low_mood_days") if isinstance(counts, Mapping) else None,
         "today_state_keys": sorted(today_state.keys()) if isinstance(today_state, Mapping) else [],
         "today_sleep_keys": sorted(today_state.get("today_sleep", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_sleep"), Mapping) else [],
-        "today_activity_keys": sorted(today_state.get("today_activity_context", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("today_activity_context"), Mapping) else [],
-        "comparison_keys": sorted(today_state.get("comparisons", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("comparisons"), Mapping) else [],
+        "historical_behavior_pattern_keys": sorted(today_state.get("historical_behavior_patterns", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("historical_behavior_patterns"), Mapping) else [],
+        "historical_recording_pattern_keys": sorted(today_state.get("historical_recording_patterns", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("historical_recording_patterns"), Mapping) else [],
+        "historical_context_keys": sorted(today_state.get("historical_context", {}).keys()) if isinstance(today_state, Mapping) and isinstance(today_state.get("historical_context"), Mapping) else [],
         "last_30_days_count": counts.get("last_30_days_count") if isinstance(counts, Mapping) else None,
         "top_good_days_count": counts.get("top_good_days_count") if isinstance(counts, Mapping) else None,
         "top_bad_days_count": counts.get("top_bad_days_count") if isinstance(counts, Mapping) else None,
@@ -307,10 +323,12 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
     yesterday = recent_summaries[0] if recent_summaries else None
     recent_7 = list(recent_summaries[:SHORT_WINDOW_DAYS])
     recent_14 = list(recent_summaries[:RECENT_WINDOW_DAYS])
+    recent_30 = list(recent_summaries[:LOOKBACK_DAYS])
     recent_3_chronological = list(reversed(recent_summaries[:3]))
 
     recent_7_metrics = _build_metric_snapshot(recent_7)
     recent_14_metrics = _build_metric_snapshot(recent_14)
+    recent_30_metrics = _build_metric_snapshot(recent_30)
 
     today_sleep_duration = _safe_float(today_summary.sleep_duration_min)
     today_sleep_score = _safe_float(today_summary.sleep_score)
@@ -318,44 +336,64 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
     return {
         "today_is_morning_incomplete": True,
         "today_sleep": {
+            "sleep_analysis_jp": today_summary.sleep_analysis_jp,
+            "today_condition_forecast_jp": today_summary.today_condition_forecast_jp,
             "sleep_start": today_summary.sleep_start or "未記録",
             "sleep_end": today_summary.sleep_end or "未記録",
             "sleep_duration_min": today_summary.sleep_duration_min,
             "sleep_score": today_summary.sleep_score,
-        },
-        "today_activity_context": {
-            "location_summary": today_summary.location_summary,
-            "meal_logged": bool(_safe_text(today_summary.meal_summary) or today_summary.meal_photos),
-            "done_count": today_summary.done_count,
-            "drop_count": today_summary.drop_count,
-            "spend_total": today_summary.expenses_total,
-            "notes": today_summary.notes,
-            "daily_score": normalize_mood_to_score(today_summary.mood),
-        },
-        "comparisons": {
-            "vs_yesterday": {
-                "sleep_duration_min_delta": _delta(today_sleep_duration, _safe_float(yesterday.sleep_duration_min) if yesterday else None),
-                "sleep_score_delta": _delta(today_sleep_score, _safe_float(yesterday.sleep_score) if yesterday else None),
-                "done_count_delta": _delta(_safe_float(today_summary.done_count), _safe_float(yesterday.done_count) if yesterday else None),
-                "drop_count_delta": _delta(_safe_float(today_summary.drop_count), _safe_float(yesterday.drop_count) if yesterday else None),
-                "spend_total_delta": _delta(_safe_float(today_summary.expenses_total), _safe_float(yesterday.expenses_total) if yesterday else None),
+            "sleep_heart_rate": today_summary.sleep_heart_rate,
+            "deep_duration_min": today_summary.deep_duration_min,
+            "rem_duration_min": today_summary.rem_duration_min,
+            "readiness_stars": today_summary.readiness_stars,
+            "readiness_hrv": today_summary.readiness_hrv,
+            "readiness_bpm": today_summary.readiness_bpm,
+            "baseline_hrv": today_summary.baseline_hrv,
+            "baseline_waking_bpm": today_summary.baseline_waking_bpm,
+            "comparisons": {
+                "vs_yesterday": {
+                    "sleep_duration_min_delta": _delta(today_sleep_duration, _safe_float(yesterday.sleep_duration_min) if yesterday else None),
+                    "sleep_score_delta": _delta(today_sleep_score, _safe_float(yesterday.sleep_score) if yesterday else None),
+                },
+                "vs_recent_7d_avg": {
+                    "sleep_duration_min_delta": _delta(today_sleep_duration, recent_7_metrics["sleep_duration_min_avg"]),
+                    "sleep_score_delta": _delta(today_sleep_score, recent_7_metrics["sleep_score_avg"]),
+                },
+                "recent_7d_avg": {
+                    "sleep_duration_min_avg": recent_7_metrics["sleep_duration_min_avg"],
+                    "sleep_score_avg": recent_7_metrics["sleep_score_avg"],
+                },
+                "recent_14d_avg": {
+                    "sleep_duration_min_avg": recent_14_metrics["sleep_duration_min_avg"],
+                    "sleep_score_avg": recent_14_metrics["sleep_score_avg"],
+                },
             },
-            "vs_recent_7d_avg": {
-                "sleep_duration_min_delta": _delta(today_sleep_duration, recent_7_metrics["sleep_duration_min_avg"]),
-                "sleep_score_delta": _delta(today_sleep_score, recent_7_metrics["sleep_score_avg"]),
-                "done_count_delta": _delta(_safe_float(today_summary.done_count), recent_7_metrics["done_count_avg"]),
-                "drop_count_delta": _delta(_safe_float(today_summary.drop_count), recent_7_metrics["drop_count_avg"]),
-                "spend_total_delta": _delta(_safe_float(today_summary.expenses_total), recent_7_metrics["expenses_total_avg"]),
+            "recent_3day_trend": {
+                "sleep_duration_min": _trend_direction([item.sleep_duration_min for item in recent_3_chronological]),
+                "sleep_score": _trend_direction([item.sleep_score for item in recent_3_chronological]),
             },
+        },
+        "historical_behavior_patterns": {
             "recent_7d_avg": recent_7_metrics,
             "recent_14d_avg": recent_14_metrics,
+            "recent_30d_avg": recent_30_metrics,
+            "recent_14d_trend": {
+                "done_count": _trend_direction([_safe_float(item.done_count) for item in reversed(recent_summaries[:14])]),
+                "drop_count": _trend_direction([_safe_float(item.drop_count) for item in reversed(recent_summaries[:14])]),
+                "spend_total": _trend_direction([_safe_float(item.expenses_total) for item in reversed(recent_summaries[:14])]),
+            },
         },
-        "recent_3day_trend": {
-            "sleep_duration_min": _trend_direction([item.sleep_duration_min for item in recent_3_chronological]),
-            "sleep_score": _trend_direction([item.sleep_score for item in recent_3_chronological]),
-            "done_count": _trend_direction([_safe_float(item.done_count) for item in recent_3_chronological]),
-            "drop_count": _trend_direction([_safe_float(item.drop_count) for item in recent_3_chronological]),
-            "spend_total": _trend_direction([_safe_float(item.expenses_total) for item in recent_3_chronological]),
+        "historical_recording_patterns": {
+            "notes_recording_rate_7d": _recording_rate(recent_7, lambda item: item.notes),
+            "notes_recording_rate_14d": _recording_rate(recent_14, lambda item: item.notes),
+            "meal_logged_rate_7d": _recording_rate(recent_7, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
+            "meal_logged_rate_14d": _recording_rate(recent_14, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
+            "location_recording_rate_14d": _recording_rate(recent_14, lambda item: item.location_summary),
+        },
+        "historical_context": {
+            "recent_7d_location_samples": [item.location_summary for item in recent_7 if _safe_text(item.location_summary)],
+            "recent_notes_samples": [item.notes for item in recent_14 if _safe_text(item.notes)][:5],
+            "historical_daily_score_avg": _mean([normalize_mood_to_score(item.mood) for item in recent_30]),
         },
     }
 
@@ -490,13 +528,17 @@ def build_today_advice_generation_context(
         return None
 
     today_summary = next((item for item in history if item.target_date == target_date), history[0])
-    structured = _build_structured_comparison(history)
-    recent_prior_days = [item for item in history if item.target_date != target_date][:RECENT_WINDOW_DAYS]
+    historical_summaries = [item for item in history if item.target_date != target_date]
+    structured = _build_structured_comparison(historical_summaries)
+    recent_prior_days = historical_summaries[:RECENT_WINDOW_DAYS]
     today_state = _build_today_state(today_summary, recent_prior_days)
-    notes_used = bool(_safe_text(today_summary.notes))
+    notes_used = any(_safe_text(item.notes) for item in historical_summaries)
     judgment_input = {
-        "today_state": today_state,
-        "structured_comparison": {
+        "today_sleep": today_state["today_sleep"],
+        "historical_behavior_patterns": today_state["historical_behavior_patterns"],
+        "historical_recording_patterns": today_state["historical_recording_patterns"],
+        "historical_context": today_state["historical_context"],
+        "structured_historical_comparison": {
             "counts": structured["counts"],
             "comparisons": structured["comparisons"],
             "last_30_days_summary": structured["last_30_days_summary"],
@@ -512,6 +554,7 @@ def build_today_advice_generation_context(
     }
     return {
         "history": history,
+        "historical_summaries": historical_summaries,
         "today_summary": today_summary,
         "structured": structured,
         "today_state": today_state,
@@ -645,20 +688,34 @@ def generate_today_advice(
     judgment_user_prompt = f"""以下の材料から、Today advice の本文を書く前段として判定JSONだけを返してください。
 出力は JSON オブジェクト 1 個のみで、本文・見出し・説明は禁止です。
 recommended_actions は 1〜2 個、evidence_used は本文生成に使う根拠だけを短く列挙してください。
+制約:
+- 当日データとして参照するのは sleep 系のみ
+- それ以外は historical data only
+- 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
+- 当日未入力や未完了をネガティブ評価しない
 
-A. 今日の状態
-{json.dumps(today_state, ensure_ascii=False, indent=2)}
+A. 今日の sleep
+{json.dumps(judgment_input["today_sleep"], ensure_ascii=False, indent=2)}
 
-B. 過去30日比較
+B. 過去の行動パターン
+{json.dumps(judgment_input["historical_behavior_patterns"], ensure_ascii=False, indent=2)}
+
+C. 過去の記録パターン
+{json.dumps(judgment_input["historical_recording_patterns"], ensure_ascii=False, indent=2)}
+
+D. 過去コンテキスト
+{json.dumps(judgment_input["historical_context"], ensure_ascii=False, indent=2)}
+
+E. 過去30日比較
 {json.dumps(structured["comparisons"], ensure_ascii=False, indent=2)}
 
-C. 過去30日の集計サマリ
+F. 過去30日の集計サマリ
 {json.dumps(structured["last_30_days_summary"], ensure_ascii=False, indent=2)}
 
-D. 良い日サンプル
+G. 良い日サンプル
 {json.dumps(structured["top_good_days"], ensure_ascii=False, indent=2)}
 
-E. 悪い日サンプル
+H. 悪い日サンプル
 {json.dumps(structured["top_bad_days"], ensure_ascii=False, indent=2)}"""
     judgment_messages = _build_chat_messages(system_prompt=MINI_SYSTEM_PROMPT, user_prompt=judgment_user_prompt)
     judgment_prompt_tokens, judgment_token_method = _count_input_tokens(model=mini_model, messages=judgment_messages)
@@ -707,9 +764,9 @@ E. 悪い日サンプル
         "judgment_json": judgment_json,
         "today_facts": {
             "today_sleep": today_state.get("today_sleep", {}),
-            "today_activity_context": today_state.get("today_activity_context", {}),
-            "comparisons": today_state.get("comparisons", {}),
-            "recent_3day_trend": today_state.get("recent_3day_trend", {}),
+            "historical_behavior_patterns": today_state.get("historical_behavior_patterns", {}),
+            "historical_recording_patterns": today_state.get("historical_recording_patterns", {}),
+            "historical_context": today_state.get("historical_context", {}),
         },
         "input_policy": {
             "diary_used": False,
@@ -721,6 +778,15 @@ E. 悪い日サンプル
     final_user_prompt = f"""以下の判定JSONと当日の最小限の事実だけを使って、Today advice の本文を書いてください。
 出力は見出しなしの日本語本文のみ、2段落以内、220〜380字程度です。
 事実 → 解釈 → 今日の優先行動 の順で、行動提案は recommended_actions にある 1〜2 個へ絞ってください。
+構成は次の3要素を自然文で必ず含めてください。
+1. 今日の睡眠状態から見たコンディション
+2. 過去実績から見た行動上の注意点
+3. 今日まず取るべき具体行動
+制約:
+- 当日データとして参照するのは sleep 系のみ
+- それ以外は historical data only
+- 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
+- 当日未入力や未完了を根拠に「把握が難しい」「低調」「停滞」などと断定しない
 
 判定JSON:
 {json.dumps(judgment_json, ensure_ascii=False, indent=2)}
