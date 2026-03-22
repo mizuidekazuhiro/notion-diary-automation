@@ -42,17 +42,25 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `scripts/mood_advice_generator.py` は **`today_advice` だけ**生成します。
 - `scripts/diary_generator.py` は Diary だけを生成します。
 - Diary は後段で sleep insights と Today advice を参照できますが、責務としては「後段参照」のみです。
+- `scripts/mood_advice_generator.py` の Today advice 入力は **`today_sleep` / `historical_behavior_patterns` / `historical_recording_patterns` / `historical_context`** に役割分離されます。
 
 #### Today advice の入力ルール
+- 当日参照してよいのは **sleep 系のみ** です。
+- 当日参照に含めるのは `sleep_analysis_jp` / `today_condition_forecast_jp` / `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Score` / `Sleep Heart Rate` / `Deep Duration` / `REM Duration` / `Readiness Stars` / `Readiness HRV` / `Readiness BPM` / `Baseline HRV` / `Baseline Waking BPM` など、sleep insights 系の構造化データだけです。
+- `meal / done / drop / spend / notes / 記録有無 / location summary` は **当日値を使わず**、過去7日・14日・30日や mood 高低日の差分比較などの **過去実績のみ**で扱います。
+- 当日の未入力・未完了・ゼロ件は評価対象にしません。
+- Today advice は **「今日の睡眠コンディション × 過去の行動実績パターン」** だけで作ります。
 - 過去30日を使います。
 - 高評価日は mood 4/5、低評価日は 1/2、中間日は 3 です。
 - 高評価5件・低評価5件は、可能な限り偏らないように抽出します。不足時はその件数でフォールバックします。
 - diary 本文 / 過去 diary 本文は使いません。
-- 日本語自由記述として使うのは `notes` のみです。
-- `location summary` は構造化コンテキストとして使ってよい設計です。
-- `meal / done / drop / spend / sleep / notes / 記録有無 / location summary` を広く入力に含めます。
+- diary 本文 / 過去 diary 本文 / diary 由来要約は使いません。
+- `notes` は **過去履歴のみ** で使います。当日 notes は使いません。
+- `location summary` は **過去履歴のみ** の構造化コンテキストとして使います。当日 location summary は使いません。
+- 当日 `meal / done / drop / spend / notes / location summary` は LLM 入力に含めません。
 - `Diary` / 過去 `Diary` は引き続き入力に含めません。
 - mini モデル → 上位モデルの Pattern B を維持しています。
+- 「最近の傾向」は当日値ではなく、過去7日・14日・30日の集計と比較から判断します。
 - debug summary には、過去30日件数・高評価/低評価サンプル件数・notes 使用件数・diary 不使用・token 数を出します。
 
 #### Phase C の再実行ルール

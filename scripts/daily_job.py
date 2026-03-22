@@ -453,9 +453,9 @@ def _generate_and_save_today_advice(
         "judgment_input": context["judgment_input"],
         "today_facts": {
             "today_sleep": today_state.get("today_sleep", {}),
-            "today_activity_context": today_state.get("today_activity_context", {}),
-            "comparisons": today_state.get("comparisons", {}),
-            "recent_3day_trend": today_state.get("recent_3day_trend", {}),
+            "historical_behavior_patterns": today_state.get("historical_behavior_patterns", {}),
+            "historical_recording_patterns": today_state.get("historical_recording_patterns", {}),
+            "historical_context": today_state.get("historical_context", {}),
         },
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(today_advice_hash_payload)
@@ -471,10 +471,9 @@ def _generate_and_save_today_advice(
         "sample_days": structured["counts"].get("last_30_days_count"),
         "high_samples": structured.get("high_mood_sample_count"),
         "low_samples": structured.get("low_mood_sample_count"),
-        "notes_present": bool((summary.notes or "").strip()),
-        "meal_photo_count": len(summary.meal_photos),
-        "done_count": summary.done_count or 0,
-        "drop_count": summary.drop_count or 0,
+        "today_sleep_fields": sorted(today_state.get("today_sleep", {}).keys()),
+        "historical_behavior_fields": sorted(today_state.get("historical_behavior_patterns", {}).keys()),
+        "historical_recording_fields": sorted(today_state.get("historical_recording_patterns", {}).keys()),
         "expense_count": summary.expenses.count if summary.expenses else 0,
         "hash_input_summary": normalized_hash_payload,
     }
@@ -501,8 +500,7 @@ def _generate_and_save_today_advice(
                     "sample_days": structured["counts"].get("last_30_days_count"),
                     "high_samples": structured.get("high_mood_sample_count"),
                     "low_samples": structured.get("low_mood_sample_count"),
-                    "done_count": summary.done_count or 0,
-                    "drop_count": summary.drop_count or 0,
+                    "today_sleep_fields": sorted(today_state.get("today_sleep", {}).keys()),
                     "expense_count": summary.expenses.count if summary.expenses else 0,
                 },
                 ensure_ascii=False,

@@ -228,21 +228,21 @@ def test_today_advice_existing_with_same_hash_skips(monkeypatch) -> None:
     fake_context = {
         "today_state": {
             "today_sleep": {"sleep_duration_min": 450},
-            "today_activity_context": {"notes": "午前は眠気あり"},
-            "comparisons": {"vs_yesterday": {"sleep_duration_min_delta": 20}},
-            "recent_3day_trend": {"sleep_duration_min": "up"},
+            "historical_behavior_patterns": {"recent_7d_avg": {"done_count_avg": 2}},
+            "historical_recording_patterns": {"notes_recording_rate_7d": 0.6},
+            "historical_context": {"recent_7d_location_samples": ["自宅中心"]},
         },
         "structured": {"counts": {"last_30_days_count": 3}, "high_mood_sample_count": 1, "low_mood_sample_count": 1},
-        "judgment_input": {"today_state": {"a": 1}, "structured_comparison": {"b": 2}, "top_good_days": [], "top_bad_days": [], "input_policy": {"diary_used": False}},
+        "judgment_input": {"today_sleep": {"a": 1}, "structured_historical_comparison": {"b": 2}, "top_good_days": [], "top_bad_days": [], "input_policy": {"diary_used": False}},
     }
     current_hash, _, _ = daily_job._build_input_hash(
         {
             "judgment_input": fake_context["judgment_input"],
             "today_facts": {
                 "today_sleep": fake_context["today_state"]["today_sleep"],
-                "today_activity_context": fake_context["today_state"]["today_activity_context"],
-                "comparisons": fake_context["today_state"]["comparisons"],
-                "recent_3day_trend": fake_context["today_state"]["recent_3day_trend"],
+                "historical_behavior_patterns": fake_context["today_state"]["historical_behavior_patterns"],
+                "historical_recording_patterns": fake_context["today_state"]["historical_recording_patterns"],
+                "historical_context": fake_context["today_state"]["historical_context"],
             },
         }
     )
@@ -266,12 +266,12 @@ def test_today_advice_existing_with_changed_hash_regenerates(monkeypatch) -> Non
     fake_context = {
         "today_state": {
             "today_sleep": {"sleep_duration_min": 450},
-            "today_activity_context": {"notes": "午前は眠気あり"},
-            "comparisons": {"vs_yesterday": {"sleep_duration_min_delta": 20}},
-            "recent_3day_trend": {"sleep_duration_min": "up"},
+            "historical_behavior_patterns": {"recent_7d_avg": {"done_count_avg": 2}},
+            "historical_recording_patterns": {"notes_recording_rate_7d": 0.6},
+            "historical_context": {"recent_7d_location_samples": ["自宅中心"]},
         },
         "structured": {"counts": {"last_30_days_count": 3}, "high_mood_sample_count": 1, "low_mood_sample_count": 1},
-        "judgment_input": {"today_state": {"a": 1}, "structured_comparison": {"b": 2}, "top_good_days": [], "top_bad_days": [], "input_policy": {"diary_used": False}},
+        "judgment_input": {"today_sleep": {"a": 1}, "structured_historical_comparison": {"b": 2}, "top_good_days": [], "top_bad_days": [], "input_policy": {"diary_used": False}},
     }
     advice_result = MoodAdviceResult(
         today_advice="regenerated advice",

@@ -139,10 +139,13 @@ def test_build_today_state_includes_comparison_context() -> None:
 
     state = _build_today_state(today, recent)
 
-    assert state["comparisons"]["vs_yesterday"]["sleep_duration_min_delta"] == 30
-    assert state["comparisons"]["vs_recent_7d_avg"]["sleep_score_delta"] == 5.0
-    assert state["recent_3day_trend"]["sleep_duration_min"] == "up"
-    assert state["recent_3day_trend"]["drop_count"] is None
+    assert state["today_sleep"]["comparisons"]["vs_yesterday"]["sleep_duration_min_delta"] == 30
+    assert state["today_sleep"]["comparisons"]["vs_recent_7d_avg"]["sleep_score_delta"] == 5.0
+    assert state["today_sleep"]["recent_3day_trend"]["sleep_duration_min"] == "up"
+    assert "done_count" not in state["today_sleep"]
+    assert "recent_7d_avg" in state["historical_behavior_patterns"]
+    assert "notes_recording_rate_7d" in state["historical_recording_patterns"]
+    assert "recent_7d_location_samples" in state["historical_context"]
 
 
 
@@ -193,6 +196,132 @@ def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None
     }
     assert "diary" not in structured["top_good_days"][0]
     assert "diary" not in structured["last_30_days_summary"]["daily_records"][0]
+
+
+def test_generation_context_excludes_today_non_sleep_fields_from_inputs() -> None:
+    from scripts.mood_advice_generator import build_today_advice_generation_context
+
+    today = _summary(
+        target_date="2026-03-20",
+        notes=None,
+        done_count=0,
+        drop_count=0,
+        expenses_total=0,
+        meal_summary=None,
+        meal_photos=[],
+        location_summary="今日はここ",
+        sleep_score=70,
+    )
+    yesterday = _summary(
+        target_date="2026-03-19",
+        notes="過去メモ",
+        done_count=3,
+        drop_count=1,
+        expenses_total=2500,
+        meal_summary="定食",
+        location_summary="自宅中心",
+        sleep_score=80,
+    )
+
+    import scripts.mood_advice_generator as generator
+
+    def fake_loader(**kwargs):
+        return [today, yesterday]
+
+    original = generator.load_daily_logs_for_period
+    generator.load_daily_logs_for_period = fake_loader
+    try:
+        context = build_today_advice_generation_context(
+            daily_log_read_url="read",
+            bearer_token=None,
+            target_date="2026-03-20",
+        )
+    finally:
+        generator.load_daily_logs_for_period = original
+
+    assert context is not None
+    judgment_input = context["judgment_input"]
+    assert "today_sleep" in judgment_input
+    assert "historical_behavior_patterns" in judgment_input
+    assert "historical_recording_patterns" in judgment_input
+    assert "historical_context" in judgment_input
+    assert "today_state" not in judgment_input
+    assert "notes" not in judgment_input["today_sleep"]
+    assert judgment_input["structured_historical_comparison"]["counts"]["history_days"] == 1
+    assert judgment_input["top_good_days"][0]["notes"] == "過去メモ"
+
+
+def test_prompt_constraints_require_today_sleep_only() -> None:
+    from scripts.mood_advice_generator import FINAL_SYSTEM_PROMPT, MINI_SYSTEM_PROMPT
+
+    for prompt in (MINI_SYSTEM_PROMPT, FINAL_SYSTEM_PROMPT):
+        assert "Today advice で当日参照してよいのは sleep 系のみ" in prompt
+        assert "historical data only" in prompt or "過去実績のみ" in prompt
+        assert "当日の meal / done / drop / spend / notes / location summary" in prompt or "当日の done / drop / spend / meal / notes / location summary" in prompt
+
+
+def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) -> None:
+    import scripts.mood_advice_generator as generator
+
+    today = _summary(
+        target_date="2026-03-20",
+        notes=None,
+        done_count=0,
+        drop_count=0,
+        expenses_total=0,
+        meal_summary=None,
+        meal_photos=[],
+        location_summary="当日の場所",
+        sleep_analysis_jp="睡眠が浅めです。",
+        today_condition_forecast_jp="午前は省エネ推奨です。",
+        sleep_score=68,
+    )
+    history = [
+        today,
+        _summary(target_date="2026-03-19", notes="過去メモ", done_count=4, expenses_total=2200, meal_summary="パスタ", location_summary="自宅中心"),
+        _summary(target_date="2026-03-18", notes="別の過去メモ", done_count=3, expenses_total=1800, meal_summary="定食", location_summary="外出多め"),
+    ]
+    prompts: list[str] = []
+
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
+
+    def fake_chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str:
+        prompts.append(user_prompt)
+        if len(prompts) == 1:
+            return '{"day_type":"sleep","main_bottleneck":"sleep debt","priority_theme":"pace","primary_risk":"afternoon dip","good_pattern_similarity":"done avg high","bad_pattern_similarity":"notes low","notes_signal":"historical only","recording_signal":"historical only","evidence_used":["sleep score low","7日done平均"],"recommended_actions":["朝に最重要1件","午後は負荷を絞る"]}'
+        return "睡眠スコアの低下を踏まえ、過去7日で着手が進んだ朝の集中帯に最重要1件を置くのが良さそうです。過去の記録ではメモや行動量の波が午後に崩れやすいため、今日は判断を増やしすぎず、午前に骨格を固めて午後は負荷を絞ってください。"
+
+    monkeypatch.setattr(generator, "_chat_completion", fake_chat_completion)
+
+    result = generator.generate_today_advice(
+        daily_log_read_url="read",
+        bearer_token=None,
+        target_date="2026-03-20",
+    )
+
+    assert result is not None
+    assert len(prompts) == 2
+    combined_prompt = "\n".join(prompts)
+    assert "当日の場所" not in combined_prompt
+    assert '"sleep_score": 68' in combined_prompt
+    context = generator.build_today_advice_generation_context(
+        daily_log_read_url="read",
+        bearer_token=None,
+        target_date="2026-03-20",
+    )
+    assert context is not None
+    today_facts = {
+        "today_sleep": context["today_state"]["today_sleep"],
+        "historical_behavior_patterns": context["today_state"]["historical_behavior_patterns"],
+        "historical_recording_patterns": context["today_state"]["historical_recording_patterns"],
+        "historical_context": context["today_state"]["historical_context"],
+    }
+    serialized_today_facts = str(today_facts)
+    assert "done_count': 0" not in serialized_today_facts
+    assert "drop_count': 0" not in serialized_today_facts
+    assert "spend_total': 0" not in serialized_today_facts
+    assert "meal_logged': False" not in serialized_today_facts
+    assert "過去メモ" in combined_prompt
 
 
 def test_count_input_tokens_returns_estimate_without_tiktoken() -> None:
