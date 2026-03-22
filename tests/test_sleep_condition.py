@@ -50,6 +50,10 @@ def _summary(**overrides):
         sleep_analysis_jp=None,
         today_condition_forecast_jp=None,
         today_advice=None,
+        diary_input_hash=None,
+        today_advice_input_hash=None,
+        diary_generated_at=None,
+        today_advice_generated_at=None,
         page_url=None,
         diary_notification_sent=None,
     )

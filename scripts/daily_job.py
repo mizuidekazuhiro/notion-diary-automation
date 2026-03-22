@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -22,7 +24,10 @@ from publish.read_daily_log import read_daily_log
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 from scripts.diary_generator import generate_diary_from_daily_log
-from scripts.mood_advice_generator import generate_today_advice
+from scripts.mood_advice_generator import (
+    build_today_advice_generation_context,
+    generate_today_advice,
+)
 from scripts.sleep_condition_generator import (
     load_recent_daily_logs,
     maybe_generate_sleep_insights,
@@ -253,6 +258,74 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
     return used, skipped, " | ".join(overview_parts)
 
 
+def _normalize_hash_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        return int(numeric) if numeric.is_integer() else numeric
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, list):
+        normalized_items = []
+        for item in value:
+            normalized_item = _normalize_hash_value(item)
+            if normalized_item in (None, [], {}):
+                continue
+            normalized_items.append(normalized_item)
+        return normalized_items
+    if isinstance(value, dict):
+        normalized_dict: dict[str, object] = {}
+        for key in sorted(value.keys()):
+            normalized_item = _normalize_hash_value(value[key])
+            if normalized_item in (None, [], {}):
+                continue
+            normalized_dict[str(key)] = normalized_item
+        return normalized_dict
+    return str(value).strip() or None
+
+
+def _build_input_hash(payload: dict[str, object]) -> tuple[str, dict[str, object], str]:
+    normalized_payload = _normalize_hash_value(payload)
+    if not isinstance(normalized_payload, dict):
+        normalized_payload = {}
+    normalized_json = json.dumps(
+        normalized_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(normalized_json.encode("utf-8")).hexdigest(), normalized_payload, normalized_json
+
+
+def _utc_timestamp() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _build_diary_hash_payload(
+    summary: "DailyLogSummary",
+    diary_input_fields: dict[str, str],
+) -> tuple[dict[str, object], dict[str, object]]:
+    hash_payload = {
+        "target_date": summary.target_date,
+        "diary_input_fields": diary_input_fields,
+    }
+    debug_summary = {
+        "notes_present": bool((summary.notes or "").strip()),
+        "done_count": summary.done_count or 0,
+        "drop_count": summary.drop_count or 0,
+        "expense_count": summary.expenses.count if summary.expenses else 0,
+        "expense_top_count": len(summary.expenses.top) if summary.expenses else 0,
+        "meal_photo_count": len(summary.meal_photos),
+        "used_field_count": len(diary_input_fields),
+        "used_fields": sorted(diary_input_fields.keys()),
+    }
+    return hash_payload, debug_summary
+
+
 def _refresh_daily_log_summary(config: Config, target_date: str) -> Optional["DailyLogSummary"]:
     return read_daily_log(
         daily_log_read_url=config.daily_log_read_url,
@@ -359,18 +432,85 @@ def _generate_and_save_today_advice(
     run_id: str,
 ) -> "DailyLogSummary":
     logging.info("phase_c_today_advice_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+    context = build_today_advice_generation_context(
+        daily_log_read_url=config.daily_log_read_url,
+        bearer_token=config.bearer_token,
+        target_date=summary.target_date,
+    )
+    if not context:
+        logging.info(
+            "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]",
+            summary.target_date,
+            run_id,
+            False,
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
+    today_state = context["today_state"]
+    structured = context["structured"]
+    today_advice_hash_payload = {
+        "judgment_input": context["judgment_input"],
+        "today_facts": {
+            "today_sleep": today_state.get("today_sleep", {}),
+            "today_activity_context": today_state.get("today_activity_context", {}),
+            "comparisons": today_state.get("comparisons", {}),
+            "recent_3day_trend": today_state.get("recent_3day_trend", {}),
+        },
+    }
+    current_input_hash, normalized_hash_payload, _ = _build_input_hash(today_advice_hash_payload)
+    previous_input_hash = (summary.today_advice_input_hash or "").strip() or None
+    has_today_advice = bool((summary.today_advice or "").strip())
+    input_changed = current_input_hash != previous_input_hash
+    debug_summary = {
+        "current_input_hash": current_input_hash,
+        "previous_input_hash": previous_input_hash,
+        "input_hash_changed": input_changed,
+        "has_previous_input_hash": previous_input_hash is not None,
+        "has_today_advice": has_today_advice,
+        "sample_days": structured["counts"].get("last_30_days_count"),
+        "high_samples": structured.get("high_mood_sample_count"),
+        "low_samples": structured.get("low_mood_sample_count"),
+        "notes_present": bool((summary.notes or "").strip()),
+        "meal_photo_count": len(summary.meal_photos),
+        "done_count": summary.done_count or 0,
+        "drop_count": summary.drop_count or 0,
+        "expense_count": summary.expenses.count if summary.expenses else 0,
+        "hash_input_summary": normalized_hash_payload,
+    }
     logging.info(
-        "phase_c_today_advice_input_summary target_date(JST)=%s run_id=%s has_today_advice=%s has_notes=%s has_location_summary=%s has_diary=%s",
+        "phase_c_today_advice_input_summary target_date(JST)=%s run_id=%s has_today_advice=%s has_notes=%s has_location_summary=%s has_diary=%s debug_summary=%s",
         summary.target_date,
         run_id,
-        bool((summary.today_advice or "").strip()),
+        has_today_advice,
         bool((summary.notes or "").strip()),
         bool((summary.location_summary or "").strip()),
         bool((summary.diary or "").strip()),
+        json.dumps(debug_summary, ensure_ascii=False, sort_keys=True, default=str),
     )
-    if (summary.today_advice or "").strip():
+    if has_today_advice and not input_changed:
         logging.info(
-            "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=existing_today_advice generated_properties=[]",
+            "phase_c_today_advice_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input current_input_hash=%s previous_input_hash=%s input_hash_changed=%s input_summary=%s",
+            summary.target_date,
+            run_id,
+            current_input_hash,
+            previous_input_hash,
+            input_changed,
+            json.dumps(
+                {
+                    "sample_days": structured["counts"].get("last_30_days_count"),
+                    "high_samples": structured.get("high_mood_sample_count"),
+                    "low_samples": structured.get("low_mood_sample_count"),
+                    "done_count": summary.done_count or 0,
+                    "drop_count": summary.drop_count or 0,
+                    "expense_count": summary.expenses.count if summary.expenses else 0,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        logging.info(
+            "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=unchanged_input generated_properties=[]",
             summary.target_date,
             run_id,
             False,
@@ -406,15 +546,22 @@ def _generate_and_save_today_advice(
     save_result = _save_daily_log_fields(
         config,
         target_date=summary.target_date,
-        payload={"today_advice": advice_result.today_advice},
+        payload={
+            "today_advice": advice_result.today_advice,
+            "today_advice_input_hash": current_input_hash,
+            "today_advice_generated_at": _utc_timestamp(),
+        },
     )
     logging.info(
-        "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s",
         summary.target_date,
         run_id,
         save_result.get("updated"),
         save_result.get("reason"),
         ["today_advice"],
+        current_input_hash,
+        previous_input_hash,
+        input_changed,
     )
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     return refreshed_summary or summary
@@ -428,13 +575,32 @@ def _generate_and_save_diary(
 ) -> "DailyLogSummary":
     logging.info("phase_c_diary_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
+    diary_hash_payload, diary_hash_summary = _build_diary_hash_payload(summary, diary_input_fields)
+    current_input_hash, normalized_hash_payload, _ = _build_input_hash(diary_hash_payload)
+    previous_input_hash = (summary.diary_input_hash or "").strip() or None
+    has_diary = bool((summary.diary or "").strip())
+    input_changed = current_input_hash != previous_input_hash
     logging.info(
-        "phase_c_diary_input_summary target_date(JST)=%s run_id=%s used_fields=%s skipped_fields=%s input_overview=%s",
+        "phase_c_diary_input_summary target_date(JST)=%s run_id=%s used_fields=%s skipped_fields=%s input_overview=%s debug_summary=%s",
         summary.target_date,
         run_id,
         sorted(diary_input_fields.keys()),
         skipped_fields,
         input_overview,
+        json.dumps(
+            {
+                **diary_hash_summary,
+                "current_input_hash": current_input_hash,
+                "previous_input_hash": previous_input_hash,
+                "input_hash_changed": input_changed,
+                "has_previous_input_hash": previous_input_hash is not None,
+                "has_diary": has_diary,
+                "hash_input_summary": normalized_hash_payload,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ),
     )
     if not diary_input_fields:
         logging.info(
@@ -446,9 +612,18 @@ def _generate_and_save_diary(
         refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
         return refreshed_summary or summary
 
-    if (summary.diary or "").strip():
+    if has_diary and not input_changed:
         logging.info(
-            "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=existing_diary generated_properties=[]",
+            "phase_c_diary_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input current_input_hash=%s previous_input_hash=%s input_hash_changed=%s input_summary=%s",
+            summary.target_date,
+            run_id,
+            current_input_hash,
+            previous_input_hash,
+            input_changed,
+            json.dumps(diary_hash_summary, ensure_ascii=False, sort_keys=True),
+        )
+        logging.info(
+            "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=unchanged_input generated_properties=[]",
             summary.target_date,
             run_id,
             False,
@@ -467,15 +642,22 @@ def _generate_and_save_diary(
     save_result = _save_daily_log_fields(
         config,
         target_date=summary.target_date,
-        payload={"diary": generated_diary},
+        payload={
+            "diary": generated_diary,
+            "diary_input_hash": current_input_hash,
+            "diary_generated_at": _utc_timestamp(),
+        },
     )
     logging.info(
-        "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s",
         summary.target_date,
         run_id,
         save_result.get("updated"),
         save_result.get("reason"),
         ["diary"],
+        current_input_hash,
+        previous_input_hash,
+        input_changed,
     )
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     return refreshed_summary or summary

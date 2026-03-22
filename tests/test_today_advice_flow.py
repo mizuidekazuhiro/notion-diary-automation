@@ -52,6 +52,10 @@ def _summary(**overrides: object) -> DailyLogSummary:
         sleep_analysis_jp="睡眠時間はやや短めですが、深い睡眠は一定量あります。",
         today_condition_forecast_jp="午前は集中しやすい一方、午後は少し失速しやすそうです。",
         today_advice="朝の集中を使って一番重い1件を先に終わらせると、気分が安定しやすそうです。",
+        diary_input_hash=None,
+        today_advice_input_hash=None,
+        diary_generated_at=None,
+        today_advice_generated_at=None,
         page_url=None,
         diary_notification_sent=None,
     )
