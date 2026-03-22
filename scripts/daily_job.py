@@ -115,6 +115,22 @@ def get_target_date(now: Optional[datetime] = None) -> str:
     return target_date.strftime("%Y-%m-%d")
 
 
+def get_today_advice_target_mode() -> str:
+    mode = (os.getenv("TODAY_ADVICE_TARGET_MODE", "YESTERDAY").strip() or "YESTERDAY").upper()
+    if mode not in {"YESTERDAY", "TODAY"}:
+        raise RuntimeError("TODAY_ADVICE_TARGET_MODE must be YESTERDAY or TODAY")
+    return mode
+
+
+def resolve_target_date(*, explicit_target_date: Optional[str], now: Optional[datetime] = None, phase: Optional[str] = None) -> str:
+    if explicit_target_date:
+        return explicit_target_date
+    now = now or datetime.now(JST)
+    if phase in {"notify_diary", "all"} and get_today_advice_target_mode() == "TODAY":
+        return now.date().strftime("%Y-%m-%d")
+    return get_target_date(now)
+
+
 def run_ingest(config: Config, target_date: str, run_id: str) -> None:
     title = f"Daily Log｜{target_date}"
     logging.info(
@@ -733,6 +749,10 @@ def parse_args() -> argparse.Namespace:
         default="all",
         help="Phase to run (default: all).",
     )
+    parser.add_argument(
+        "--target-date",
+        help="Target date in JST (YYYY-MM-DD). Default is yesterday; for notify_diary/all you can override via TODAY_ADVICE_TARGET_MODE=TODAY.",
+    )
     return parser.parse_args()
 
 
@@ -747,7 +767,7 @@ def main() -> None:
         need_tasks=need_ingest,
     )
     run_id = os.getenv("GITHUB_RUN_ID", "local")
-    target_date = get_target_date()
+    target_date = resolve_target_date(explicit_target_date=args.target_date, phase=args.phase)
 
     logging.info(
         "Starting daily job. phase=%s target_date(JST)=%s run_id=%s",

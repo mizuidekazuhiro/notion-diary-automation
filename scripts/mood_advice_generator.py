@@ -28,6 +28,7 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 - 出力は必ず JSON オブジェクト 1 個のみ。前置きや補足文は禁止
 - 最終本文、見出し、メール文面は絶対に書かない
 - Today advice で当日参照してよいのは sleep 系のみ
+- today sleep only / non-sleep historical only / must include recent 7-day trend
 - 行動・支出・食事・メモ・位置情報系は当日値を使わず、過去実績のみから評価する
 - 当日の diary 本文、過去の日記本文、diary由来要約は使わない
 - diary 本文 / 過去 diary 本文は使わない
@@ -42,6 +43,8 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 - 「今日はメモがない」「今日はタスク完了ゼロ」「今日は食事記録がない」など当日値ベースの断定は禁止
 - recommended_actions は 1 個または 2 個の短い文字列に絞る
 - evidence_used には本文生成に使う根拠を簡潔な配列で残す
+- evidence_used には sleep 根拠と recent behavior pattern 根拠の両方を残す
+- 必ず recent 7-day behavior pattern を 1 つ以上 judgment に残す
 
 必須キー:
 - day_type
@@ -54,6 +57,10 @@ MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前�
 - recording_signal
 - evidence_used
 - recommended_actions
+- sleep_signal
+- recent_behavior_pattern
+- recording_pattern
+- priority_action
 """
 
 FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice 本文を書くアシスタントです。
@@ -62,6 +69,7 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 最優先要件:
 - 出力は日本語本文のみ。見出し、タイトル、箇条書き、JSONは禁止
 - 3文構成を基本とし、内容順は「今日の睡眠状態から見たコンディション」→「過去実績から見た行動上の注意点」→「今日まず取るべき具体行動」
+- 必ず recent 7-day behavior pattern を 1 つ以上本文に入れる
 - 2段落以内
 - 220〜380字程度
 - 一般論は禁止
@@ -72,6 +80,7 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 
 入力制約:
 - Today advice で当日参照してよいのは sleep 系のみ
+- today sleep only / non-sleep historical only / must include recent 7-day trend
 - 行動・支出・食事・メモ・位置情報系は当日値を使わず、過去実績のみから評価する
 - 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
 - 当日の未入力や未完了は評価対象にしない
@@ -308,6 +317,16 @@ def _build_metric_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Option
     }
 
 
+def _compare_metric_windows(current: Optional[float], base: Optional[float]) -> Optional[str]:
+    if current is None or base is None:
+        return None
+    if current > base:
+        return "up"
+    if current < base:
+        return "down"
+    return "flat"
+
+
 def _trend_direction(values: Sequence[Optional[float]]) -> Optional[str]:
     nums = [float(v) for v in values if v is not None]
     if len(nums) < 3:
@@ -377,6 +396,11 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "recent_7d_avg": recent_7_metrics,
             "recent_14d_avg": recent_14_metrics,
             "recent_30d_avg": recent_30_metrics,
+            "recent_7d_vs_30d": {
+                "done_count": _compare_metric_windows(recent_7_metrics["done_count_avg"], recent_30_metrics["done_count_avg"]),
+                "drop_count": _compare_metric_windows(recent_7_metrics["drop_count_avg"], recent_30_metrics["drop_count_avg"]),
+                "spend_total": _compare_metric_windows(recent_7_metrics["expenses_total_avg"], recent_30_metrics["expenses_total_avg"]),
+            },
             "recent_14d_trend": {
                 "done_count": _trend_direction([_safe_float(item.done_count) for item in reversed(recent_summaries[:14])]),
                 "drop_count": _trend_direction([_safe_float(item.drop_count) for item in reversed(recent_summaries[:14])]),
@@ -388,6 +412,7 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "notes_recording_rate_14d": _recording_rate(recent_14, lambda item: item.notes),
             "meal_logged_rate_7d": _recording_rate(recent_7, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
             "meal_logged_rate_14d": _recording_rate(recent_14, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
+            "location_recording_rate_7d": _recording_rate(recent_7, lambda item: item.location_summary),
             "location_recording_rate_14d": _recording_rate(recent_14, lambda item: item.location_summary),
         },
         "historical_context": {
@@ -656,38 +681,25 @@ def _normalize_judgment_json(payload: Mapping[str, Any]) -> dict[str, Any]:
         "bad_pattern_similarity",
         "notes_signal",
         "recording_signal",
+        "sleep_signal",
+        "recent_behavior_pattern",
+        "priority_action",
     ):
         value = normalized.get(key)
         normalized[key] = "" if value is None else str(value).strip()
     return normalized
 
 
-def generate_today_advice(
-    *,
-    daily_log_read_url: str,
-    bearer_token: Optional[str],
-    target_date: str,
-) -> Optional[MoodAdviceResult]:
-    context = build_today_advice_generation_context(
-        daily_log_read_url=daily_log_read_url,
-        bearer_token=bearer_token,
-        target_date=target_date,
-    )
-    if not context:
-        logging.info("Skipping Today advice because no Daily Log history is available. target_date=%s", target_date)
-        return None
-
-    history = context["history"]
-    structured = context["structured"]
-    today_state = context["today_state"]
-    notes_used = context["notes_used"]
-
-    mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
-    final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
-    judgment_input = context["judgment_input"]
-    judgment_user_prompt = f"""以下の材料から、Today advice の本文を書く前段として判定JSONだけを返してください。
+def build_judgment_user_prompt(*, judgment_input: Mapping[str, Any], structured: Mapping[str, Any]) -> str:
+    return f"""以下の材料から、Today advice の本文を書く前段として判定JSONだけを返してください。
 出力は JSON オブジェクト 1 個のみで、本文・見出し・説明は禁止です。
 recommended_actions は 1〜2 個、evidence_used は本文生成に使う根拠だけを短く列挙してください。
+必須:
+- today sleep only
+- non-sleep historical only
+- must include recent 7-day trend
+- 必ず recent 7-day behavior pattern を 1 つ以上 judgment に残す
+- evidence_used には睡眠根拠と行動傾向根拠の両方を含める
 制約:
 - 当日データとして参照するのは sleep 系のみ
 - それ以外は historical data only
@@ -717,6 +729,58 @@ G. 良い日サンプル
 
 H. 悪い日サンプル
 {json.dumps(structured["top_bad_days"], ensure_ascii=False, indent=2)}"""
+
+
+def build_final_user_prompt(*, judgment_json: Mapping[str, Any], today_facts: Mapping[str, Any]) -> str:
+    return f"""以下の判定JSONと当日の最小限の事実だけを使って、Today advice の本文を書いてください。
+出力は見出しなしの日本語本文のみ、2段落以内、220〜380字程度です。
+事実 → 解釈 → 今日の優先行動 の順で、行動提案は recommended_actions にある 1〜2 個へ絞ってください。
+構成は次の3要素を自然文で必ず含めてください。
+1. 今日の睡眠状態から見たコンディション
+2. 直近7日間の行動・記録傾向
+3. 今日まず取るべき具体行動
+必須:
+- today sleep only
+- non-sleep historical only
+- must include recent 7-day trend
+- 必ず recent 7-day behavior pattern を 1 つ以上本文に入れる
+制約:
+- 当日データとして参照するのは sleep 系のみ
+- それ以外は historical data only
+- 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
+- 当日未入力や未完了を根拠に「把握が難しい」「低調」「停滞」などと断定しない
+
+判定JSON:
+{json.dumps(judgment_json, ensure_ascii=False, indent=2)}
+
+当日の事実:
+{json.dumps(today_facts, ensure_ascii=False, indent=2)}"""
+
+
+def generate_today_advice(
+    *,
+    daily_log_read_url: str,
+    bearer_token: Optional[str],
+    target_date: str,
+) -> Optional[MoodAdviceResult]:
+    context = build_today_advice_generation_context(
+        daily_log_read_url=daily_log_read_url,
+        bearer_token=bearer_token,
+        target_date=target_date,
+    )
+    if not context:
+        logging.info("Skipping Today advice because no Daily Log history is available. target_date=%s", target_date)
+        return None
+
+    history = context["history"]
+    structured = context["structured"]
+    today_state = context["today_state"]
+    notes_used = context["notes_used"]
+
+    mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
+    final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
+    judgment_input = context["judgment_input"]
+    judgment_user_prompt = build_judgment_user_prompt(judgment_input=judgment_input, structured=structured)
     judgment_messages = _build_chat_messages(system_prompt=MINI_SYSTEM_PROMPT, user_prompt=judgment_user_prompt)
     judgment_prompt_tokens, judgment_token_method = _count_input_tokens(model=mini_model, messages=judgment_messages)
     logging.info(
@@ -775,24 +839,7 @@ H. 悪い日サンプル
             "notes_used": notes_used,
         },
     }
-    final_user_prompt = f"""以下の判定JSONと当日の最小限の事実だけを使って、Today advice の本文を書いてください。
-出力は見出しなしの日本語本文のみ、2段落以内、220〜380字程度です。
-事実 → 解釈 → 今日の優先行動 の順で、行動提案は recommended_actions にある 1〜2 個へ絞ってください。
-構成は次の3要素を自然文で必ず含めてください。
-1. 今日の睡眠状態から見たコンディション
-2. 過去実績から見た行動上の注意点
-3. 今日まず取るべき具体行動
-制約:
-- 当日データとして参照するのは sleep 系のみ
-- それ以外は historical data only
-- 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
-- 当日未入力や未完了を根拠に「把握が難しい」「低調」「停滞」などと断定しない
-
-判定JSON:
-{json.dumps(judgment_json, ensure_ascii=False, indent=2)}
-
-当日の事実:
-{json.dumps(final_input["today_facts"], ensure_ascii=False, indent=2)}"""
+    final_user_prompt = build_final_user_prompt(judgment_json=judgment_json, today_facts=final_input["today_facts"])
     final_messages = _build_chat_messages(system_prompt=FINAL_SYSTEM_PROMPT, user_prompt=final_user_prompt)
     final_prompt_tokens, final_token_method = _count_input_tokens(model=final_model, messages=final_messages)
     logging.info(

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts import daily_job
@@ -257,6 +259,30 @@ def test_today_advice_existing_with_same_hash_skips(monkeypatch) -> None:
 
     assert result == summary
     assert save_calls == []
+
+
+def test_resolve_target_date_defaults_to_yesterday_and_supports_today_mode(monkeypatch) -> None:
+    now = datetime(2026, 3, 22, 8, 30, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    monkeypatch.delenv("TODAY_ADVICE_TARGET_MODE", raising=False)
+    assert daily_job.resolve_target_date(explicit_target_date=None, now=now, phase="notify_diary") == "2026-03-21"
+
+    monkeypatch.setenv("TODAY_ADVICE_TARGET_MODE", "TODAY")
+    assert daily_job.resolve_target_date(explicit_target_date=None, now=now, phase="notify_diary") == "2026-03-22"
+
+    assert daily_job.resolve_target_date(explicit_target_date="2026-03-10", now=now, phase="notify_diary") == "2026-03-10"
+    assert daily_job.resolve_target_date(explicit_target_date=None, now=now, phase="publish") == "2026-03-21"
+
+
+def test_get_today_advice_target_mode_rejects_invalid_value(monkeypatch) -> None:
+    monkeypatch.setenv("TODAY_ADVICE_TARGET_MODE", "INVALID")
+
+    try:
+        daily_job.get_today_advice_target_mode()
+    except RuntimeError as exc:
+        assert "YESTERDAY or TODAY" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 def test_today_advice_existing_with_changed_hash_regenerates(monkeypatch) -> None:
