@@ -68,6 +68,10 @@ def _summary(**overrides: object) -> DailyLogSummary:
         sleep_analysis_jp=None,
         today_condition_forecast_jp=None,
         today_advice=None,
+        diary_input_hash=None,
+        today_advice_input_hash=None,
+        diary_generated_at=None,
+        today_advice_generated_at=None,
         page_url="https://example.com/page",
         diary_notification_sent=None,
     )
@@ -177,6 +181,142 @@ def test_already_notified_skips_only_notify(monkeypatch) -> None:
     daily_job.run_notify_diary(config, "2026-03-20", "run")
 
     assert order == ["sleep", "advice", "diary", "notify"]
+
+
+def test_diary_existing_with_same_hash_skips(monkeypatch) -> None:
+    summary = _summary(diary="existing diary")
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+    diary_input_fields, _, _ = daily_job.build_diary_input_fields(summary)
+    hash_payload, _ = daily_job._build_diary_hash_payload(summary, diary_input_fields)
+    current_hash, _, _ = daily_job._build_input_hash(hash_payload)
+    summary = _summary(diary="existing diary", diary_input_hash=current_hash)
+
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+
+    result = daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
+
+    assert result == summary
+    assert save_calls == []
+
+
+def test_diary_existing_with_changed_hash_regenerates(monkeypatch) -> None:
+    summary = _summary(diary="existing diary", notes="new notes", diary_input_hash="old-hash")
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: "regenerated diary")
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+
+    daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
+
+    assert len(save_calls) == 1
+    payload = save_calls[0]["payload"]
+    assert payload["diary"] == "regenerated diary"
+    assert payload["diary_input_hash"] != "old-hash"
+    assert payload["diary_generated_at"].endswith("Z")
+
+
+def test_today_advice_existing_with_same_hash_skips(monkeypatch) -> None:
+    summary = _summary(today_advice="existing advice")
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+
+    fake_context = {
+        "today_state": {
+            "today_sleep": {"sleep_duration_min": 450},
+            "today_activity_context": {"notes": "午前は眠気あり"},
+            "comparisons": {"vs_yesterday": {"sleep_duration_min_delta": 20}},
+            "recent_3day_trend": {"sleep_duration_min": "up"},
+        },
+        "structured": {"counts": {"last_30_days_count": 3}, "high_mood_sample_count": 1, "low_mood_sample_count": 1},
+        "judgment_input": {"today_state": {"a": 1}, "structured_comparison": {"b": 2}, "top_good_days": [], "top_bad_days": [], "input_policy": {"diary_used": False}},
+    }
+    current_hash, _, _ = daily_job._build_input_hash(
+        {
+            "judgment_input": fake_context["judgment_input"],
+            "today_facts": {
+                "today_sleep": fake_context["today_state"]["today_sleep"],
+                "today_activity_context": fake_context["today_state"]["today_activity_context"],
+                "comparisons": fake_context["today_state"]["comparisons"],
+                "recent_3day_trend": fake_context["today_state"]["recent_3day_trend"],
+            },
+        }
+    )
+    summary = _summary(today_advice="existing advice", today_advice_input_hash=current_hash)
+
+    monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "generate_today_advice", lambda **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+
+    result = daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
+
+    assert result == summary
+    assert save_calls == []
+
+
+def test_today_advice_existing_with_changed_hash_regenerates(monkeypatch) -> None:
+    summary = _summary(today_advice="existing advice", today_advice_input_hash="old-hash")
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+    fake_context = {
+        "today_state": {
+            "today_sleep": {"sleep_duration_min": 450},
+            "today_activity_context": {"notes": "午前は眠気あり"},
+            "comparisons": {"vs_yesterday": {"sleep_duration_min_delta": 20}},
+            "recent_3day_trend": {"sleep_duration_min": "up"},
+        },
+        "structured": {"counts": {"last_30_days_count": 3}, "high_mood_sample_count": 1, "low_mood_sample_count": 1},
+        "judgment_input": {"today_state": {"a": 1}, "structured_comparison": {"b": 2}, "top_good_days": [], "top_bad_days": [], "input_policy": {"diary_used": False}},
+    }
+    advice_result = MoodAdviceResult(
+        today_advice="regenerated advice",
+        judgment_json={"evidence_used": []},
+        judgment_text="{}",
+        high_mood_sample_count=1,
+        low_mood_sample_count=1,
+        history_count=3,
+    )
+
+    monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "generate_today_advice", lambda **kwargs: advice_result)
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+
+    daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
+
+    assert len(save_calls) == 1
+    payload = save_calls[0]["payload"]
+    assert payload["today_advice"] == "regenerated advice"
+    assert payload["today_advice_input_hash"] != "old-hash"
+    assert payload["today_advice_generated_at"].endswith("Z")
+
+
+def test_build_input_hash_normalizes_empty_values() -> None:
+    payload_a = {
+        "notes": " hello ",
+        "items": ["a", "", "  "],
+        "nested": {"x": "", "y": None, "z": 1.0},
+    }
+    payload_b = {
+        "notes": "hello",
+        "items": ["a"],
+        "nested": {"z": 1},
+    }
+
+    hash_a, normalized_a, _ = daily_job._build_input_hash(payload_a)
+    hash_b, normalized_b, _ = daily_job._build_input_hash(payload_b)
+
+    assert hash_a == hash_b
+    assert normalized_a == normalized_b == {
+        "items": ["a"],
+        "nested": {"z": 1},
+        "notes": "hello",
+    }
 
 
 def test_workflow_run_names_match_dependencies() -> None:

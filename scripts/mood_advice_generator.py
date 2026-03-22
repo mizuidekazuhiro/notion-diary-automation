@@ -474,6 +474,52 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
     }
 
 
+def build_today_advice_generation_context(
+    *,
+    daily_log_read_url: str,
+    bearer_token: Optional[str],
+    target_date: str,
+) -> Optional[dict[str, Any]]:
+    history = load_daily_logs_for_period(
+        daily_log_read_url=daily_log_read_url,
+        bearer_token=bearer_token,
+        target_date=target_date,
+        days=LOOKBACK_DAYS,
+    )
+    if not history:
+        return None
+
+    today_summary = next((item for item in history if item.target_date == target_date), history[0])
+    structured = _build_structured_comparison(history)
+    recent_prior_days = [item for item in history if item.target_date != target_date][:RECENT_WINDOW_DAYS]
+    today_state = _build_today_state(today_summary, recent_prior_days)
+    notes_used = bool(_safe_text(today_summary.notes))
+    judgment_input = {
+        "today_state": today_state,
+        "structured_comparison": {
+            "counts": structured["counts"],
+            "comparisons": structured["comparisons"],
+            "last_30_days_summary": structured["last_30_days_summary"],
+        },
+        "top_good_days": structured["top_good_days"],
+        "top_bad_days": structured["top_bad_days"],
+        "input_policy": {
+            "diary_used": False,
+            "past_diary_used": False,
+            "location_summary_used": True,
+            "notes_used": notes_used,
+        },
+    }
+    return {
+        "history": history,
+        "today_summary": today_summary,
+        "structured": structured,
+        "today_state": today_state,
+        "notes_used": notes_used,
+        "judgment_input": judgment_input,
+    }
+
+
 def _build_chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": system_prompt},
@@ -579,41 +625,23 @@ def generate_today_advice(
     bearer_token: Optional[str],
     target_date: str,
 ) -> Optional[MoodAdviceResult]:
-    history = load_daily_logs_for_period(
+    context = build_today_advice_generation_context(
         daily_log_read_url=daily_log_read_url,
         bearer_token=bearer_token,
         target_date=target_date,
-        days=LOOKBACK_DAYS,
     )
-    if not history:
+    if not context:
         logging.info("Skipping Today advice because no Daily Log history is available. target_date=%s", target_date)
         return None
 
-    today_summary = next((item for item in history if item.target_date == target_date), history[0])
-    structured = _build_structured_comparison(history)
-    recent_prior_days = [item for item in history if item.target_date != target_date][:RECENT_WINDOW_DAYS]
-    today_state = _build_today_state(today_summary, recent_prior_days)
+    history = context["history"]
+    structured = context["structured"]
+    today_state = context["today_state"]
+    notes_used = context["notes_used"]
 
     mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
     final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
-    notes_used = bool(_safe_text(today_summary.notes))
-
-    judgment_input = {
-        "today_state": today_state,
-        "structured_comparison": {
-            "counts": structured["counts"],
-            "comparisons": structured["comparisons"],
-            "last_30_days_summary": structured["last_30_days_summary"],
-        },
-        "top_good_days": structured["top_good_days"],
-        "top_bad_days": structured["top_bad_days"],
-        "input_policy": {
-            "diary_used": False,
-            "past_diary_used": False,
-            "location_summary_used": True,
-            "notes_used": notes_used,
-        },
-    }
+    judgment_input = context["judgment_input"]
     judgment_user_prompt = f"""以下の材料から、Today advice の本文を書く前段として判定JSONだけを返してください。
 出力は JSON オブジェクト 1 個のみで、本文・見出し・説明は禁止です。
 recommended_actions は 1〜2 個、evidence_used は本文生成に使う根拠だけを短く列挙してください。

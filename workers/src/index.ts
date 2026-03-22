@@ -92,6 +92,9 @@ interface Env {
   WINDOW_START_HOUR?: string;
   DAILY_LOG_DIARY_NOTIFICATION_SENT_PROPERTY_NAME?: string;
   DAILY_LOG_DIARY_GENERATED_AT_PROPERTY_NAME?: string;
+  DAILY_LOG_DIARY_INPUT_HASH_PROPERTY_NAME?: string;
+  DAILY_LOG_TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME?: string;
+  DAILY_LOG_TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME?: string;
 }
 
 type NotionPropertyType =
@@ -182,6 +185,8 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Activity Summary", type: "rich_text" },
     { name: "Diary", type: "rich_text" },
     { name: "Today advice", type: "rich_text" },
+    { name: DIARY_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
+    { name: TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
     { name: "Meal summary", type: "rich_text" },
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
@@ -203,6 +208,8 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: SLEEP_PROPERTY_MAPPINGS.baselineWakingBpm.displayName, type: "number" },
     { name: SLEEP_PROPERTY_MAPPINGS.sleepAnalysisJp.displayName, type: "rich_text" },
     { name: SLEEP_PROPERTY_MAPPINGS.todayConditionForecastJp.displayName, type: "rich_text" },
+    { name: DIARY_GENERATED_AT_PROPERTY_NAME, type: "date" },
+    { name: TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME, type: "date" },
   ];
 }
 
@@ -219,6 +226,9 @@ const NOTES_RICH_TEXT_LIMIT = 2000;
 const DIARY_RICH_TEXT_LIMIT = 4000;
 const DIARY_NOTIFICATION_SENT_PROPERTY_NAME = "Diary Notification Sent";
 const DIARY_GENERATED_AT_PROPERTY_NAME = "Diary Generated At";
+const DIARY_INPUT_HASH_PROPERTY_NAME = "Diary Input Hash";
+const TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME = "Today Advice Input Hash";
+const TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME = "Today Advice Generated At";
 
 function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
   const { statusPropertyName, doneDatePropertyName, dropDatePropertyName } =
@@ -1431,6 +1441,26 @@ function getDiaryNotificationSentPropertyName(env: Env): string {
 function getDiaryGeneratedAtPropertyName(env: Env): string {
   return (
     env.DAILY_LOG_DIARY_GENERATED_AT_PROPERTY_NAME || DIARY_GENERATED_AT_PROPERTY_NAME
+  );
+}
+
+function getDiaryInputHashPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_DIARY_INPUT_HASH_PROPERTY_NAME || DIARY_INPUT_HASH_PROPERTY_NAME
+  );
+}
+
+function getTodayAdviceInputHashPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME ||
+    TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME
+  );
+}
+
+function getTodayAdviceGeneratedAtPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME ||
+    TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME
   );
 }
 
@@ -3517,7 +3547,28 @@ async function handleDailyLogGenerateDiary(
       ? payload.today_condition_forecast_jp.trim()
       : "";
   const todayAdvice = typeof payload.today_advice === "string" ? payload.today_advice.trim() : "";
-  if (!diary && !sleepAnalysisJp && !todayConditionForecastJp && !todayAdvice) {
+  const diaryInputHash =
+    typeof payload.diary_input_hash === "string" ? payload.diary_input_hash.trim() : "";
+  const todayAdviceInputHash =
+    typeof payload.today_advice_input_hash === "string"
+      ? payload.today_advice_input_hash.trim()
+      : "";
+  const diaryGeneratedAt =
+    typeof payload.diary_generated_at === "string" ? payload.diary_generated_at.trim() : "";
+  const todayAdviceGeneratedAt =
+    typeof payload.today_advice_generated_at === "string"
+      ? payload.today_advice_generated_at.trim()
+      : "";
+  if (
+    !diary &&
+    !sleepAnalysisJp &&
+    !todayConditionForecastJp &&
+    !todayAdvice &&
+    !diaryInputHash &&
+    !todayAdviceInputHash &&
+    !diaryGeneratedAt &&
+    !todayAdviceGeneratedAt
+  ) {
     return badRequest("no updatable content");
   }
 
@@ -3552,6 +3603,17 @@ async function handleDailyLogGenerateDiary(
   if (todayAdvice) {
     updateProperties["Today advice"] = createRichTextPropertyWithLimit(todayAdvice, DIARY_RICH_TEXT_LIMIT);
   }
+  const diaryInputHashPropertyName = getDiaryInputHashPropertyName(env);
+  if (diaryInputHash && hasPropertyType(dailyLogProperties, diaryInputHashPropertyName, "rich_text")) {
+    updateProperties[diaryInputHashPropertyName] = createRichTextProperty(diaryInputHash);
+  }
+  const todayAdviceInputHashPropertyName = getTodayAdviceInputHashPropertyName(env);
+  if (
+    todayAdviceInputHash &&
+    hasPropertyType(dailyLogProperties, todayAdviceInputHashPropertyName, "rich_text")
+  ) {
+    updateProperties[todayAdviceInputHashPropertyName] = createRichTextProperty(todayAdviceInputHash);
+  }
   const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
   const sleepAnalysisPropertyName = canUseProperty(
     dailyLogProperties,
@@ -3582,11 +3644,38 @@ async function handleDailyLogGenerateDiary(
     );
   }
 
-  const generatedAtPropertyName = getDiaryGeneratedAtPropertyName(env);
-  if (hasPropertyType(dailyLogProperties, generatedAtPropertyName, "date")) {
-    updateProperties[generatedAtPropertyName] = createDateProperty(getJstDateString());
-  } else if (hasPropertyType(dailyLogProperties, generatedAtPropertyName, "rich_text")) {
-    updateProperties[generatedAtPropertyName] = createRichTextProperty(
+  const diaryGeneratedAtPropertyName = getDiaryGeneratedAtPropertyName(env);
+  if (diaryGeneratedAt) {
+    if (hasPropertyType(dailyLogProperties, diaryGeneratedAtPropertyName, "date")) {
+      updateProperties[diaryGeneratedAtPropertyName] = createDateProperty(diaryGeneratedAt);
+    } else if (hasPropertyType(dailyLogProperties, diaryGeneratedAtPropertyName, "rich_text")) {
+      updateProperties[diaryGeneratedAtPropertyName] = createRichTextProperty(diaryGeneratedAt);
+    }
+  } else if (diary && hasPropertyType(dailyLogProperties, diaryGeneratedAtPropertyName, "date")) {
+    updateProperties[diaryGeneratedAtPropertyName] = createDateProperty(getJstDateString());
+  } else if (diary && hasPropertyType(dailyLogProperties, diaryGeneratedAtPropertyName, "rich_text")) {
+    updateProperties[diaryGeneratedAtPropertyName] = createRichTextProperty(
+      formatJstDateTime(getJstDateString()),
+    );
+  }
+
+  const todayAdviceGeneratedAtPropertyName = getTodayAdviceGeneratedAtPropertyName(env);
+  if (todayAdviceGeneratedAt) {
+    if (hasPropertyType(dailyLogProperties, todayAdviceGeneratedAtPropertyName, "date")) {
+      updateProperties[todayAdviceGeneratedAtPropertyName] = createDateProperty(todayAdviceGeneratedAt);
+    } else if (hasPropertyType(dailyLogProperties, todayAdviceGeneratedAtPropertyName, "rich_text")) {
+      updateProperties[todayAdviceGeneratedAtPropertyName] = createRichTextProperty(todayAdviceGeneratedAt);
+    }
+  } else if (
+    todayAdvice &&
+    hasPropertyType(dailyLogProperties, todayAdviceGeneratedAtPropertyName, "date")
+  ) {
+    updateProperties[todayAdviceGeneratedAtPropertyName] = createDateProperty(getJstDateString());
+  } else if (
+    todayAdvice &&
+    hasPropertyType(dailyLogProperties, todayAdviceGeneratedAtPropertyName, "rich_text")
+  ) {
+    updateProperties[todayAdviceGeneratedAtPropertyName] = createRichTextProperty(
       formatJstDateTime(getJstDateString()),
     );
   }
@@ -4109,6 +4198,22 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
+  const diaryInputHash =
+    getPlainTextFromRichText(
+      properties[getDiaryInputHashPropertyName(env)],
+    ) || null;
+  const todayAdviceInputHash =
+    getPlainTextFromRichText(
+      properties[getTodayAdviceInputHashPropertyName(env)],
+    ) || null;
+  const diaryGeneratedAt =
+    getDateTimeFromProperty(properties[getDiaryGeneratedAtPropertyName(env)]) ||
+    getStringFromProperty(properties[getDiaryGeneratedAtPropertyName(env)]) ||
+    null;
+  const todayAdviceGeneratedAt =
+    getDateTimeFromProperty(properties[getTodayAdviceGeneratedAtPropertyName(env)]) ||
+    getStringFromProperty(properties[getTodayAdviceGeneratedAtPropertyName(env)]) ||
+    null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
@@ -4241,6 +4346,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       sleep_analysis_jp: sleepAnalysisJp,
       today_condition_forecast_jp: todayConditionForecastJp,
       today_advice: todayAdvice,
+      diary_input_hash: diaryInputHash,
+      today_advice_input_hash: todayAdviceInputHash,
+      diary_generated_at: diaryGeneratedAt,
+      today_advice_generated_at: todayAdviceGeneratedAt,
       expenses_total: resolvedExpensesTotal,
       expenses: {
         total: resolvedExpensesTotal,
