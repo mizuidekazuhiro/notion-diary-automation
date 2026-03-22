@@ -1,6 +1,6 @@
 # notion-diary-automation
 
-Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/notify → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成と通知判定を担当します。
+Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/notify → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成と通知判定を担当します。既定の `target_date` は JST 前日ですが、Phase C は `--target-date` または `TODAY_ADVICE_TARGET_MODE=TODAY` で当日朝レビューにも切り替えられます。
 
 ## Workflow 名と依存関係
 
@@ -43,6 +43,8 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `scripts/diary_generator.py` は Diary だけを生成します。
 - Diary は後段で sleep insights と Today advice を参照できますが、責務としては「後段参照」のみです。
 - `scripts/mood_advice_generator.py` の Today advice 入力は **`today_sleep` / `historical_behavior_patterns` / `historical_recording_patterns` / `historical_context`** に役割分離されます。
+- Phase C の Today advice は **today sleep only / non-sleep historical only** を守ります。sleep 以外の当日データは Today advice の責務外です。
+- Diary は引き続き Daily Log 全体の振り返りを文章化しますが、Today advice は「当日の睡眠コンディション」と「過去実績の行動傾向」を短く接続する専用レイヤです。
 
 #### Today advice の入力ルール
 - 当日参照してよいのは **sleep 系のみ** です。
@@ -50,6 +52,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `meal / done / drop / spend / notes / 記録有無 / location summary` は **当日値を使わず**、過去7日・14日・30日や mood 高低日の差分比較などの **過去実績のみ**で扱います。
 - 当日の未入力・未完了・ゼロ件は評価対象にしません。
 - Today advice は **「今日の睡眠コンディション × 過去の行動実績パターン」** だけで作ります。
+- 本文には **必ず直近7日間の行動・記録傾向** を 1 つ以上含めます。sleep の話だけで終わらせません。
 - 過去30日を使います。
 - 高評価日は mood 4/5、低評価日は 1/2、中間日は 3 です。
 - 高評価5件・低評価5件は、可能な限り偏らないように抽出します。不足時はその件数でフォールバックします。
@@ -58,10 +61,31 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `notes` は **過去履歴のみ** で使います。当日 notes は使いません。
 - `location summary` は **過去履歴のみ** の構造化コンテキストとして使います。当日 location summary は使いません。
 - 当日 `meal / done / drop / spend / notes / location summary` は LLM 入力に含めません。
+- 当日 `meal_logged=false` / `spend_total=0` / `done_count=0` / `drop_count=0` / notes 空 / location summary 空 などは、途中経過として扱い、Today advice ではネガティブ評価しません。
 - `Diary` / 過去 `Diary` は引き続き入力に含めません。
 - mini モデル → 上位モデルの Pattern B を維持しています。
-- 「最近の傾向」は当日値ではなく、過去7日・14日・30日の集計と比較から判断します。
+- 「最近の傾向」は当日値ではなく、過去7日・14日・30日の集計と比較から判断します。主軸は 7 日傾向で、14日・30日比較は補助です。
 - debug summary には、過去30日件数・高評価/低評価サンプル件数・notes 使用件数・diary 不使用・token 数を出します。
+
+#### Today advice の出力ルール
+- 本文は次の 3 要素を必ずこの順に含めます。
+  1. 今日の睡眠状態から見たコンディション
+  2. 直近7日間の行動・記録傾向
+  3. 今日まず取るべき具体行動
+- 行動提案は 1〜2 個に絞ります。
+- 一般論は避け、事実 → 解釈 → 今日の行動の順でつなぎます。
+- 支出から感情を断定しません。
+- 食事未記録から健康状態を断定しません。
+- `diary` 本文 / 過去 `diary` 本文は使いません。
+- 日本語自由記述として使うのは過去 `notes` のみです。
+- `location summary` は過去履歴の構造化コンテキストに限定します。
+
+#### target_date の扱い
+- `scripts/daily_job.py` の既定 target date は JST 前日です。
+- `--target-date YYYY-MM-DD` を指定すると、全 Phase でその日付を明示利用できます。
+- `TODAY_ADVICE_TARGET_MODE=TODAY` を指定した場合、`--phase notify_diary` または `--phase all` の Phase C は JST 当日を target date にします。
+- `TODAY_ADVICE_TARGET_MODE` の既定値は `YESTERDAY` です。
+- 当日モードでも Today advice のルールは同じで、**today_sleep は当日、non-sleep は historical only** のままです。
 
 #### Phase C の再実行ルール
 - sleep insights は従来どおり実行し、保存後に Daily Log を再読込します。
@@ -135,10 +159,10 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `publish/read_daily_log.py` は sleep 系・Today advice 系プロパティを `DailyLogSummary` に揃えて返します。
 - `scripts/daily_job.py` は Phase C の各保存後に Daily Log を再読込します。
 - `scripts/diary_generator.py` の `event_date / done_date` ルールは維持しています。future event を当日実施と誤認しません。
-- 現在の設計では **Today advice は当日 diary を参照しません**。`notes` は使いますが `diary` は使いません。
+- 現在の設計では **Today advice は diary 本文を現在・過去とも参照しません**。`notes` は過去履歴のみ使い、当日 `notes` は使いません。
 - hash は JSON 正規化 + SHA-256 で作ります。キー順固定・余計な空白なし・`None`/空文字/空配列の揺れを吸収して、不要な再生成を抑えます。
 - Diary hash には、実際に `scripts/diary_generator.py` に渡す入力一式が入ります。これには `notes` / `done` / `drop` / `expenses` / `meal summary` / `location summary` / sleep 系 / `today_advice` など、Diary 出力に影響する項目が含まれます。
-- Today advice hash には、過去30日比較結果・当日 structured input・良い日/悪い日サンプル・記録有無など、Today advice prompt に実際に入る内容が含まれます。
+- Today advice hash には、`today_sleep` と historical-only の `historical_behavior_patterns` / `historical_recording_patterns` / `historical_context`、および過去比較サマリが含まれます。当日 non-sleep 値は hash と prompt の責務から除外します。
 
 ## Debug ログの見方
 

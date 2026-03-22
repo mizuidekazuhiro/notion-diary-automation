@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts.mood_advice_generator import normalize_mood_to_score
@@ -144,7 +146,9 @@ def test_build_today_state_includes_comparison_context() -> None:
     assert state["today_sleep"]["recent_3day_trend"]["sleep_duration_min"] == "up"
     assert "done_count" not in state["today_sleep"]
     assert "recent_7d_avg" in state["historical_behavior_patterns"]
+    assert "recent_7d_vs_30d" in state["historical_behavior_patterns"]
     assert "notes_recording_rate_7d" in state["historical_recording_patterns"]
+    assert "location_recording_rate_7d" in state["historical_recording_patterns"]
     assert "recent_7d_location_samples" in state["historical_context"]
 
 
@@ -258,6 +262,130 @@ def test_prompt_constraints_require_today_sleep_only() -> None:
         assert "Today advice で当日参照してよいのは sleep 系のみ" in prompt
         assert "historical data only" in prompt or "過去実績のみ" in prompt
         assert "当日の meal / done / drop / spend / notes / location summary" in prompt or "当日の done / drop / spend / meal / notes / location summary" in prompt
+        assert "today sleep only / non-sleep historical only / must include recent 7-day trend" in prompt
+
+
+def test_prompt_builders_include_sleep_only_and_recent_7d_constraints() -> None:
+    from scripts.mood_advice_generator import build_final_user_prompt, build_judgment_user_prompt
+
+    judgment_input = {
+        "today_sleep": {"sleep_score": 70},
+        "historical_behavior_patterns": {"recent_7d_avg": {"done_count_avg": 1.5}},
+        "historical_recording_patterns": {"notes_recording_rate_7d": 0.4},
+        "historical_context": {"recent_notes_samples": ["過去メモ"]},
+    }
+    structured = {
+        "comparisons": {"recent_7d": {"done_count_avg": 1.5}},
+        "last_30_days_summary": {"aggregates": {"all_days": {"count": 10}}},
+        "top_good_days": [],
+        "top_bad_days": [],
+    }
+    judgment_prompt = build_judgment_user_prompt(judgment_input=judgment_input, structured=structured)
+    final_prompt = build_final_user_prompt(
+        judgment_json={"recent_behavior_pattern": "直近7日でdone平均が高め", "recommended_actions": ["午前に1件着手"]},
+        today_facts=judgment_input,
+    )
+
+    for prompt in (judgment_prompt, final_prompt):
+        assert "today sleep only" in prompt
+        assert "non-sleep historical only" in prompt
+        assert "must include recent 7-day trend" in prompt
+
+
+def test_generate_today_advice_ignores_same_day_non_sleep_zero_and_missing_fields(monkeypatch) -> None:
+    import scripts.mood_advice_generator as generator
+
+    today = _summary(
+        target_date="2026-03-20",
+        notes=None,
+        done_count=0,
+        drop_count=0,
+        expenses_total=0,
+        meal_summary=None,
+        meal_photos=[],
+        location_summary=None,
+        sleep_score=58,
+        sleep_duration_min=340,
+        sleep_analysis_jp="睡眠時間が短く、回復感も弱いです。",
+        today_condition_forecast_jp="午前から集中が切れやすい見込みです。",
+    )
+    history = [
+        today,
+        _summary(target_date="2026-03-19", done_count=3, expenses_total=2400, meal_summary="定食", notes="午後に集中", mood="★★★★"),
+        _summary(target_date="2026-03-18", done_count=2, expenses_total=2200, meal_summary="自炊", notes="午前に着手", mood="★★★★"),
+        _summary(target_date="2026-03-17", done_count=4, expenses_total=2100, meal_summary="麺", notes="朝に整理", mood="★★★★★"),
+        _summary(target_date="2026-03-16", done_count=3, expenses_total=2300, meal_summary="丼", notes="開始が早い", mood="★★★★"),
+        _summary(target_date="2026-03-15", done_count=2, expenses_total=2000, meal_summary="魚", notes="メモが役立つ", mood="★★★★"),
+        _summary(target_date="2026-03-14", done_count=3, expenses_total=2500, meal_summary="カレー", notes="外出少なめ", mood="★★★"),
+        _summary(target_date="2026-03-13", done_count=3, expenses_total=2600, meal_summary="パスタ", notes="午前が安定", mood="★★★★"),
+    ]
+
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
+    responses = iter([
+        json.dumps({
+            "day_type": "recovery",
+            "main_bottleneck": "sleep debt",
+            "priority_theme": "午前の立ち上がりを軽くする",
+            "primary_risk": "午後の失速",
+            "good_pattern_similarity": "高評価日は午前に着手",
+            "bad_pattern_similarity": "低評価日は寝不足",
+            "notes_signal": "過去メモは午前着手で安定",
+            "recording_signal": "直近7日でnotesとmealの記録率は維持",
+            "sleep_signal": "睡眠時間短め",
+            "recent_behavior_pattern": "直近7日で done_count 平均は2件台後半で、朝に着手した日のメモが多い",
+            "priority_action": "午前の最重要1件を先に始める",
+            "evidence_used": ["睡眠時間340分で短め", "直近7日done平均は2件台後半"],
+            "recommended_actions": ["午前に最重要1件へ着手", "昼前に短い整理メモを残す"],
+        }),
+        "睡眠時間は短く朝の立ち上がりは重めですが、直近7日ではdone数が2件台後半で、午前に着手した日のメモが安定していました。今日はその流れを再現する日として、午前の早い段階で最重要の1件に着手し、昼前に短い整理メモだけ残してください。",
+    ])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: next(responses))
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+
+    assert result is not None
+    advice = result.today_advice
+    assert "睡眠時間は短く" in advice
+    assert "直近7日" in advice
+    assert "done数が2件台後半" in advice
+    assert "今日はメモがない" not in advice
+    assert "タスク完了がゼロ" not in advice
+    assert "食事記録がない" not in advice
+    assert "支出が少ない" not in advice
+    assert "停滞" not in advice
+    assert any("睡眠" in item or "sleep" in item.lower() for item in result.judgment_json["evidence_used"])
+    assert any("7日" in item or "done" in item.lower() for item in result.judgment_json["evidence_used"])
+
+
+def test_generation_context_surfaces_recent_7d_non_sleep_patterns() -> None:
+    from scripts.mood_advice_generator import build_today_advice_generation_context
+
+    today = _summary(target_date="2026-03-20", done_count=0, notes=None, meal_summary=None, expenses_total=0)
+    prior_days = [
+        _summary(target_date="2026-03-19", done_count=3, drop_count=1, expenses_total=3000, notes="n1", meal_summary="m1"),
+        _summary(target_date="2026-03-18", done_count=2, drop_count=1, expenses_total=2500, notes="n2", meal_summary="m2"),
+        _summary(target_date="2026-03-17", done_count=4, drop_count=0, expenses_total=2800, notes="n3", meal_summary=None, meal_photos=["p"]),
+        _summary(target_date="2026-03-16", done_count=3, drop_count=2, expenses_total=2600, notes=None, meal_summary="m4"),
+        _summary(target_date="2026-03-15", done_count=1, drop_count=1, expenses_total=2400, notes="n5", meal_summary="m5"),
+        _summary(target_date="2026-03-14", done_count=2, drop_count=0, expenses_total=2200, notes=None, meal_summary="m6"),
+        _summary(target_date="2026-03-13", done_count=3, drop_count=1, expenses_total=2100, notes="n7", meal_summary=None, meal_photos=["p"]),
+        _summary(target_date="2026-03-12", done_count=1, drop_count=1, expenses_total=900, notes=None, meal_summary=None),
+    ]
+
+    import scripts.mood_advice_generator as generator
+    original = generator.load_daily_logs_for_period
+    generator.load_daily_logs_for_period = lambda **kwargs: [today, *prior_days]
+    try:
+        context = build_today_advice_generation_context(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    finally:
+        generator.load_daily_logs_for_period = original
+
+    behavior = context["today_state"]["historical_behavior_patterns"]
+    recording = context["today_state"]["historical_recording_patterns"]
+    assert behavior["recent_7d_avg"]["done_count_avg"] is not None
+    assert behavior["recent_7d_vs_30d"]["spend_total"] in {"up", "down", "flat"}
+    assert recording["notes_recording_rate_7d"] == 0.71
+    assert recording["meal_logged_rate_7d"] == 1.0
 
 
 def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) -> None:
