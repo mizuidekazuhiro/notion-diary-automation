@@ -50,6 +50,8 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - 当日参照してよいのは **sleep 系のみ** です。
 - 当日参照に含めるのは `sleep_analysis_jp` / `today_condition_forecast_jp` / `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Score` / `Sleep Heart Rate` / `Deep Duration` / `REM Duration` / `Readiness Stars` / `Readiness HRV` / `Readiness BPM` / `Baseline HRV` / `Baseline Waking BPM` など、sleep insights 系の構造化データだけです。
 - `meal / done / drop / spend / notes / 記録有無 / location summary` は **当日値を使わず**、過去7日・14日・30日や mood 高低日の差分比較などの **過去実績のみ**で扱います。
+- good mood / low mood 比較では `done / drop / spend` に加えて、`kcal / protein / fat / carb` の meal 数値、過去 `notes` から抽出した signal、`location summary` 由来の location pattern も見ます。
+- diary 本文は Today advice の現在値・過去値ともに使いません。notes は過去履歴のみ使い、当日 notes は使いません。
 - 当日の未入力・未完了・ゼロ件は評価対象にしません。
 - Today advice は **「今日の睡眠コンディション × 過去の行動実績パターン」** だけで作ります。
 - 本文には **必ず直近7日間の行動・記録傾向** を 1 つ以上含めます。sleep の話だけで終わらせません。
@@ -65,14 +67,17 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Diary` / 過去 `Diary` は引き続き入力に含めません。
 - mini モデル → 上位モデルの Pattern B を維持しています。
 - 「最近の傾向」は当日値ではなく、過去7日・14日・30日の集計と比較から判断します。主軸は 7 日傾向で、14日・30日比較は補助です。
-- debug summary には、過去30日件数・高評価/低評価サンプル件数・notes 使用件数・diary 不使用・token 数を出します。
+- debug summary には、today_sleep の主要キー、recent_7d / recent_14d / recent_30d の主要集計、good/bad 差分、meal 比較、notes signal 比較、location pattern 比較、evidence_used を要約で出します。full dump は debug ファイルへ保存します。
 
 #### Today advice の出力ルール
 - 本文は次の 3 要素を必ずこの順に含めます。
   1. 今日の睡眠状態から見たコンディション
-  2. 直近7日間の行動・記録傾向
+  2. 直近7日間の行動・記録傾向と good/bad day 比較から見える再現パターン
   3. 今日まず取るべき具体行動
 - 行動提案は 1〜2 個に絞ります。
+- 本文は 220〜380 字程度、3 文構成を基本とし、sleep の話だけで終わらせません。
+- recent 7-day trend を最低1つ、good/bad day comparison 由来の示唆を可能なら最低1つ含めます。
+- 因果は断定せず、「傾向」「重なり」「示唆」に留めます。
 - 一般論は避け、事実 → 解釈 → 今日の行動の順でつなぎます。
 - 支出から感情を断定しません。
 - 食事未記録から健康状態を断定しません。
