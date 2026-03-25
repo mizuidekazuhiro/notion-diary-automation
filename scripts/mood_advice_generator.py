@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
@@ -978,7 +979,19 @@ def generate_today_advice(
         fetch_payload["missing"]["spending"],
     )
     try:
-        note_labels = label_notes_in_batches(summaries=historical_summaries, chat_completion=_chat_completion, model=mini_model)
+        note_label_audit: dict[str, Any] = {}
+        notes_debug_dir = os.path.join(
+            tempfile.gettempdir(),
+            "today_advice_notes_raw",
+            f"{target_date}_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}",
+        )
+        note_labels = label_notes_in_batches(
+            summaries=historical_summaries,
+            chat_completion=_chat_completion,
+            model=mini_model,
+            raw_response_dir=notes_debug_dir,
+            audit=note_label_audit,
+        )
         notes_total_count = len(historical_summaries)
         notes_non_empty_count = sum(1 for item in historical_summaries if _safe_text(item.notes))
         notes_batch_api_calls = int(math.ceil(notes_non_empty_count / 15)) if notes_non_empty_count else 0
@@ -1003,6 +1016,8 @@ def generate_today_advice(
                 "sleep_issue": sum(1 for item in notes_labeled if item.sleep_issue_flag),
             },
             "top_evidence_keywords": [k for k, _v in sorted({kw: sum(kw in item.evidence_keywords for item in notes_labeled) for item in notes_labeled for kw in item.evidence_keywords}.items(), key=lambda p: p[1], reverse=True)[:5]],
+            "fallback_reason_counts": note_label_audit.get("fallback_reason_counts", {}),
+            "raw_response_paths": note_label_audit.get("raw_response_paths", []),
         }
         audit.put("notes_labeling", notes_payload)
         audit.info(
@@ -1017,8 +1032,36 @@ def generate_today_advice(
             "[TodayAdvice][Notes] flags: fatigue=%s stress=%s social=%s achievement=%s self_care=%s sleep_issue=%s",
             notes_payload["flag_counts"]["fatigue"], notes_payload["flag_counts"]["stress"], notes_payload["flag_counts"]["social_load"], notes_payload["flag_counts"]["achievement"], notes_payload["flag_counts"]["self_care"], notes_payload["flag_counts"]["sleep_issue"],
         )
+        reason_counts = notes_payload["fallback_reason_counts"]
+        audit.info(
+            "[TodayAdvice][Notes] fallback_reasons: parse_error=%s schema_mismatch=%s date_match_failure=%s empty_response=%s",
+            reason_counts.get("parse_error_count", 0),
+            reason_counts.get("schema_mismatch_count", 0),
+            reason_counts.get("date_match_failure_count", 0),
+            reason_counts.get("empty_response_count", 0),
+        )
+        if notes_payload["raw_response_paths"]:
+            audit.info("[TodayAdvice][Notes] raw_responses_saved=%s", safe_json(notes_payload["raw_response_paths"]))
 
         feature_df = build_daily_feature_table(historical_summaries, note_labels)
+        history_by_date = {item.target_date: item for item in historical_summaries}
+        sleep_conversion_samples = []
+        for _, row in feature_df.sort_values("date").tail(10).iterrows():
+            date = str(row.get("date"))
+            raw_item = history_by_date.get(date)
+            raw_sleep_duration_min = raw_item.sleep_duration_min if raw_item is not None else None
+            raw_sleep_score = raw_item.sleep_score if raw_item is not None else None
+            derived_sleep_hours = row.get("sleep_hours")
+            sleep_conversion_samples.append(
+                {
+                    "date": date,
+                    "raw_sleep_duration_min": raw_sleep_duration_min,
+                    "derived_sleep_hours": round(float(derived_sleep_hours), 2) if derived_sleep_hours is not None and not math.isnan(float(derived_sleep_hours)) else None,
+                    "raw_sleep_score": raw_sleep_score,
+                    "sleep_hours_missing_flag": bool(raw_sleep_duration_min is None),
+                    "sleep_score_missing_flag": bool(raw_sleep_score is None),
+                }
+            )
         feature_payload = {
             "row_count": int(len(feature_df.index)) if not feature_df.empty else 0,
             "column_count": int(len(feature_df.columns)) if not feature_df.empty else 0,
@@ -1039,7 +1082,10 @@ def generate_today_advice(
                 "spending_total_mean": round(float(feature_df["spending_total"].fillna(0).mean()), 2) if "spending_total" in feature_df else 0,
                 "task_done_mean": round(float(feature_df["task_done_count"].fillna(0).mean()), 2) if "task_done_count" in feature_df else 0,
                 "task_drop_mean": round(float(feature_df["task_drop_count"].fillna(0).mean()), 2) if "task_drop_count" in feature_df else 0,
+                "sleep_hours_non_null_count": int(feature_df["sleep_hours"].notna().sum()) if "sleep_hours" in feature_df else 0,
+                "sleep_score_non_null_count": int(feature_df["sleep_score"].notna().sum()) if "sleep_score" in feature_df else 0,
             },
+            "sleep_feature_conversion_samples": sleep_conversion_samples,
         }
         audit.put("features", feature_payload)
         audit.info("[TodayAdvice][Features] rows=%s cols=%s", feature_payload["row_count"], feature_payload["column_count"])
@@ -1057,6 +1103,12 @@ def generate_today_advice(
             feature_payload["numeric_summary"]["task_done_mean"],
             feature_payload["numeric_summary"]["task_drop_mean"],
         )
+        audit.info(
+            "[TodayAdvice][Features] counts: sleep_hours_non_null=%s sleep_score_non_null=%s",
+            feature_payload["numeric_summary"]["sleep_hours_non_null_count"],
+            feature_payload["numeric_summary"]["sleep_score_non_null_count"],
+        )
+        audit.info("[TodayAdvice][Features] sleep_conversion_samples=%s", safe_json(sleep_conversion_samples))
 
         lag_result = analyze_lag_patterns(feature_df)
         adopted_patterns = [
@@ -1141,6 +1193,7 @@ def generate_today_advice(
             today_match_payload["primary_focus"],
         )
         audit.put("analysis_json", analysis_json)
+        audit.info("[TodayAdvice][AnalysisJSON] %s", safe_json(analysis_json))
         audit.dump_json("AnalysisJSON", analysis_json)
 
         today_advice = render_today_advice_from_analysis(
@@ -1167,7 +1220,12 @@ def generate_today_advice(
         audit.put("regression", summarize_regression(regression_summary))
         audit.put("analysis_json", analysis_json)
         audit.put("final_text", {"text": today_advice})
+        audit.info("[TodayAdvice][AnalysisJSON] %s", safe_json(analysis_json))
         audit.info("[TodayAdvice][FinalText] %s", today_advice)
+    audit.put("notes_fallback_reason_counts", audit.payload["analysis_audit"].get("notes_labeling", {}).get("fallback_reason_counts", {}))
+    audit.put("sleep_feature_conversion_samples", audit.payload["analysis_audit"].get("features", {}).get("sleep_feature_conversion_samples", []))
+    audit.put("matched_patterns_count", int(analysis_json.get("matched_patterns_count", len(analysis_json.get("matched_patterns", [])))))
+    audit.put("evidence_used", list(analysis_json.get("evidence_used", [])))
     fallback_used = not bool(today_advice.strip())
     logging.info("today_advice_fallback_used=%s", fallback_used)
     audit.emit_final()
@@ -1175,6 +1233,11 @@ def generate_today_advice(
         "analysis_json": analysis_json,
         "analysis_audit": audit.payload["analysis_audit"],
         "matched_pattern_count": len(adopted_patterns),
+        "matched_patterns_count": int(analysis_json.get("matched_patterns_count", len(analysis_json.get("matched_patterns", [])))),
+        "evidence_used": list(analysis_json.get("evidence_used", [])),
+        "meal_signal": analysis_json.get("meal_signal", ""),
+        "notes_pattern_signal": analysis_json.get("notes_pattern_signal", ""),
+        "location_pattern_signal": analysis_json.get("location_pattern_signal", ""),
         "regression_summary": regression_summary,
     }
     judgment_text = json.dumps(judgment_json, ensure_ascii=False)

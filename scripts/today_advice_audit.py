@@ -16,8 +16,11 @@ class TodayAdviceAuditLogger:
         self.debug = debug
         self.payload: dict[str, Any] = {"analysis_audit": {"target_date": target_date}}
 
-    def put(self, key: str, value: Mapping[str, Any]) -> None:
-        self.payload["analysis_audit"][key] = dict(value)
+    def put(self, key: str, value: Any) -> None:
+        if isinstance(value, Mapping):
+            self.payload["analysis_audit"][key] = dict(value)
+            return
+        self.payload["analysis_audit"][key] = value
 
     def info(self, message: str, *args: Any) -> None:
         logging.info(message, *args)
