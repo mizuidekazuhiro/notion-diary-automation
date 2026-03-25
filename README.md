@@ -186,6 +186,44 @@ Today advice は従来の Phase C 分離を維持したまま、内部で次の 
 6. **分析済み JSON のみで本文生成**  
    GPT には生の30日 Notes を再投入せず、分析済み JSON のみを渡して Today advice 日本語本文を作ります。GPT 失敗時はルールベース文へフォールバックします。
 
+### Today advice 分析監査ログ（analysis_audit）
+
+Today advice の精度改善より先に、分析過程を追跡できるよう監査ログを追加しています。`scripts/mood_advice_generator.py` は Today advice 生成中に次を段階ログとして出力します。
+
+- A. データ取得 (`[TodayAdvice][Fetch]`): 分析期間、取得件数、欠損件数。
+- B. Notes ラベル化 (`[TodayAdvice][Notes]`): 対象件数、API 呼び出し件数、感情/フラグ件数（Notes 本文全文は出力しない）。
+- C. 特徴量作成 (`[TodayAdvice][Features]`): DataFrame 行列数、作成列、主要フラグ件数。
+- D. lag 分析 (`[TodayAdvice][Lag]`): `pattern_id / target_outcome / sample_size / hit_rate / baseline_rate / delta / adopted / confidence`。
+- E. 回帰分析 (`[TodayAdvice][Regression]`): 実行可否、サンプル数、上位特徴量、スキップ理由。
+- F. 今日一致判定 (`[TodayAdvice][TodayMatch]`): 当日 sleep 文脈、一致ルール、risk/focus。
+- G. GPT 入力分析 JSON (`[TodayAdvice][AnalysisJSON]`)
+- H. 最終本文 (`[TodayAdvice][FinalText]`)
+
+`TODAY_ADVICE_DEBUG=true` の場合は、上記サマリに加えて最終的な構造化 JSON 監査ログを1つにまとめて出力します。
+
+- 環境変数: `TODAY_ADVICE_DEBUG=true|false`（既定: `false`）
+- 詳細出力キー: `[TodayAdvice][AnalysisAudit] {"analysis_audit": {...}}`
+
+`analysis_audit` の主キー:
+
+- `target_date`
+- `fetch`
+- `notes_labeling`
+- `features`
+- `lag_analysis`
+- `regression`
+- `today_match`
+- `analysis_json`
+- `final_text`
+
+確認ポイント:
+
+- 「30日分が取れているか」→ `fetch.fetched_count` / `fetch.usable_rows_count`
+- 「Notes が分析に入っているか」→ `notes_labeling.non_empty_count` / `notes_labeling.flag_counts`
+- 「非 sleep の過去実績が analysis JSON に残るか」→ `analysis_json.recent_7d_summary`, `analysis_json.matched_patterns`, `analysis_json.regression_summary`
+- 「どの条件が採用されたか」→ `lag_analysis.patterns[*].adopted`
+- 「本文の根拠追跡」→ `analysis_json` と `final_text`
+
 ### なぜ1日ずつではなく一括ラベル化するか
 - API 呼び出し回数を減らし、コストと待ち時間を削減するため。
 - 指示文の重複送信を避け、判定基準の一貫性を上げるため。

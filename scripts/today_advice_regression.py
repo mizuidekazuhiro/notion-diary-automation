@@ -21,10 +21,21 @@ FEATURES = [
 
 
 def run_low_mood_regression(df: Any) -> dict[str, Any]:
+    base = {
+        "available": False,
+        "sample_size": max(0, len(df) - 1),
+        "regression_target_name": "next_day_low_mood_flag",
+        "regression_feature_names": list(FEATURES),
+        "top_positive_features": [],
+        "top_negative_features": [],
+        "top_positive_risk_features": [],
+        "top_protective_features": [],
+        "skipped_reason": None,
+    }
     import importlib
     sk_spec = importlib.util.find_spec("sklearn")
     if sk_spec is None:
-        return {"available": False, "sample_size": max(0, len(df) - 1), "top_positive_risk_features": [], "top_protective_features": []}
+        return {**base, "skipped_reason": "sklearn_not_installed"}
     LogisticRegression = importlib.import_module("sklearn.linear_model").LogisticRegression
     Pipeline = importlib.import_module("sklearn.pipeline").Pipeline
     StandardScaler = importlib.import_module("sklearn.preprocessing").StandardScaler
@@ -32,7 +43,11 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
     work["target"] = (work["mood"].shift(-1).fillna(5) <= 2).astype(int)
     train = work.iloc[:-1].copy()
     if len(train) < 8 or train["target"].nunique() < 2:
-        return {"available": False, "sample_size": len(train), "top_positive_risk_features": [], "top_protective_features": []}
+        return {
+            **base,
+            "sample_size": len(train),
+            "skipped_reason": "insufficient_samples_or_single_class",
+        }
     x = train[FEATURES].copy().fillna(0.0)
     for col in x.columns:
         if x[col].dtype == bool:
@@ -47,10 +62,21 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
         coef = model.named_steps["clf"].coef_[0]
         pairs = sorted(zip(FEATURES, coef), key=lambda p: p[1], reverse=True)
     except Exception:
-        return {"available": False, "sample_size": len(train), "top_positive_risk_features": [], "top_protective_features": []}
+        return {
+            **base,
+            "sample_size": len(train),
+            "skipped_reason": "regression_fit_failed",
+        }
+    top_positive = [name for name, c in pairs if c > 0][:3]
+    top_negative = [name for name, c in sorted(pairs, key=lambda p: p[1]) if c < 0][:3]
     return {
         "available": True,
         "sample_size": len(train),
-        "top_positive_risk_features": [name for name, c in pairs if c > 0][:3],
-        "top_protective_features": [name for name, c in sorted(pairs, key=lambda p: p[1]) if c < 0][:3],
+        "regression_target_name": "next_day_low_mood_flag",
+        "regression_feature_names": list(FEATURES),
+        "top_positive_features": top_positive,
+        "top_negative_features": top_negative,
+        "top_positive_risk_features": top_positive,
+        "top_protective_features": top_negative,
+        "skipped_reason": None,
     }

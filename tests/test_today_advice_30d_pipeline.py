@@ -137,3 +137,105 @@ def test_gpt_failure_fallback_message() -> None:
     )
     assert "回復優先" in text
     assert "午前中の重い判断" in text
+
+
+def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+
+    histories = [_summary(i, mood="★" if i % 2 == 0 else "★★★★", notes="疲れ" if i % 3 == 0 else "回復") for i in range(1, 14)]
+    target = _summary(20, target_date="2026-03-20", sleep_duration_min=290, sleep_score=62)
+    monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    monkeypatch.setattr(
+        generator,
+        "_chat_completion",
+        lambda **kwargs: "監査ログ確認用の本文です。",
+    )
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result is not None
+    audit = result.judgment_json["analysis_audit"]
+    for key in [
+        "target_date",
+        "fetch",
+        "notes_labeling",
+        "features",
+        "lag_analysis",
+        "regression",
+        "today_match",
+        "analysis_json",
+        "final_text",
+    ]:
+        assert key in audit
+
+
+def test_lag_analysis_is_included_in_audit_log(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+
+    histories = [_summary(i, mood="★" if i % 2 == 0 else "★★★★", notes="疲れ") for i in range(1, 13)]
+    target = _summary(20, target_date="2026-03-20")
+    monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result is not None
+    lag = result.judgment_json["analysis_audit"]["lag_analysis"]
+    assert lag["evaluated_count"] > 0
+    assert any("pattern_id" in item and "target_outcome" in item for item in lag["patterns"])
+
+
+def test_notes_label_count_reflected_in_audit_log(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+
+    histories = [_summary(i, notes="" if i % 2 == 0 else "疲れ") for i in range(1, 11)]
+    target = _summary(20, target_date="2026-03-20")
+    monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result is not None
+    notes = result.judgment_json["analysis_audit"]["notes_labeling"]
+    assert notes["total_count"] == len(histories)
+    assert notes["non_empty_count"] == len([h for h in histories if (h.notes or "").strip()])
+
+
+def test_regression_availability_reflected_in_audit_log(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+
+    histories = [_summary(i, mood="★" if i % 3 == 0 else "★★★★", notes="疲れ" if i % 2 == 0 else "回復") for i in range(1, 19)]
+    target = _summary(20, target_date="2026-03-20")
+    monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result is not None
+    regression = result.judgment_json["analysis_audit"]["regression"]
+    assert "available" in regression
+    assert "sample_size" in regression
+
+
+def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+
+    histories = [_summary(i, notes="疲れ") for i in range(1, 12)]
+    target = _summary(20, target_date="2026-03-20")
+    monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "これは最終本文です。")
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result is not None
+    assert result.judgment_json["analysis_audit"]["final_text"]["text"] == "これは最終本文です。"

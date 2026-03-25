@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -17,6 +18,13 @@ from scripts.today_advice_feature_builder import build_daily_feature_table
 from scripts.today_advice_pattern_analyzer import analyze_lag_patterns
 from scripts.today_advice_regression import run_low_mood_regression
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
+from scripts.today_advice_audit import (
+    TodayAdviceAuditLogger,
+    count_missing,
+    is_today_advice_debug_enabled,
+    safe_json,
+    summarize_regression,
+)
 
 OPENAI_TIMEOUT = (5, 90)
 DEFAULT_MINI_MODEL = "gpt-4.1-mini"
@@ -923,22 +931,175 @@ def generate_today_advice(
     structured = context["structured"]
     today_summary = context["today_summary"]
     historical_summaries = context["historical_summaries"]
+    debug_enabled = is_today_advice_debug_enabled()
+    audit = TodayAdviceAuditLogger(target_date=target_date, debug=debug_enabled)
     final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
     mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
 
-    logging.info("today_advice_30d_analysis_days=%s", len(historical_summaries))
+    fetched_count = len(history)
+    usable_count = len(historical_summaries)
+    skipped_count = max(0, fetched_count - usable_count)
+    analysis_end_date = target_date
+    analysis_start_date = (datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    fetch_payload = {
+        "window_days": LOOKBACK_DAYS,
+        "analysis_start_date": analysis_start_date,
+        "analysis_end_date": analysis_end_date,
+        "fetched_count": fetched_count,
+        "usable_rows_count": usable_count,
+        "skipped_rows_count": skipped_count,
+        "missing": {
+            "mood": sum(count_missing(item.mood) for item in historical_summaries),
+            "sleep_hours": sum(1 for item in historical_summaries if item.sleep_duration_min is None),
+            "sleep_score": sum(count_missing(item.sleep_score) for item in historical_summaries),
+            "notes": sum(count_missing(item.notes) for item in historical_summaries),
+            "task_done": sum(count_missing(item.done_count) for item in historical_summaries),
+            "task_drop": sum(count_missing(item.drop_count) for item in historical_summaries),
+            "spending": sum(count_missing(item.expenses_total) for item in historical_summaries),
+        },
+    }
+    audit.put("fetch", fetch_payload)
+    audit.info(
+        "[TodayAdvice][Fetch] target_date=%s window=%s fetched=%s usable=%s skipped=%s",
+        target_date,
+        LOOKBACK_DAYS,
+        fetched_count,
+        usable_count,
+        skipped_count,
+    )
+    audit.info(
+        "[TodayAdvice][Fetch] missing: mood=%s sleep_hours=%s sleep_score=%s notes=%s done=%s drop=%s spending=%s",
+        fetch_payload["missing"]["mood"],
+        fetch_payload["missing"]["sleep_hours"],
+        fetch_payload["missing"]["sleep_score"],
+        fetch_payload["missing"]["notes"],
+        fetch_payload["missing"]["task_done"],
+        fetch_payload["missing"]["task_drop"],
+        fetch_payload["missing"]["spending"],
+    )
     try:
         note_labels = label_notes_in_batches(summaries=historical_summaries, chat_completion=_chat_completion, model=mini_model)
+        notes_total_count = len(historical_summaries)
+        notes_non_empty_count = sum(1 for item in historical_summaries if _safe_text(item.notes))
+        notes_batch_api_calls = int(math.ceil(notes_non_empty_count / 15)) if notes_non_empty_count else 0
+        notes_labeled = list(note_labels.values())
+        notes_payload = {
+            "total_count": notes_total_count,
+            "non_empty_count": notes_non_empty_count,
+            "api_calls": notes_batch_api_calls,
+            "labeled_count": len(notes_labeled),
+            "fallback_neutral_count": sum(1 for item in notes_labeled if item.confidence == "low" and item.sentiment_label == "neutral"),
+            "sentiment_counts": {
+                "positive": sum(1 for item in notes_labeled if item.sentiment_label == "positive"),
+                "neutral": sum(1 for item in notes_labeled if item.sentiment_label == "neutral"),
+                "negative": sum(1 for item in notes_labeled if item.sentiment_label == "negative"),
+            },
+            "flag_counts": {
+                "fatigue": sum(1 for item in notes_labeled if item.fatigue_flag),
+                "stress": sum(1 for item in notes_labeled if item.stress_flag),
+                "social_load": sum(1 for item in notes_labeled if item.social_load_flag),
+                "achievement": sum(1 for item in notes_labeled if item.achievement_flag),
+                "self_care": sum(1 for item in notes_labeled if item.self_care_flag),
+                "sleep_issue": sum(1 for item in notes_labeled if item.sleep_issue_flag),
+            },
+            "top_evidence_keywords": [k for k, _v in sorted({kw: sum(kw in item.evidence_keywords for item in notes_labeled) for item in notes_labeled for kw in item.evidence_keywords}.items(), key=lambda p: p[1], reverse=True)[:5]],
+        }
+        audit.put("notes_labeling", notes_payload)
+        audit.info(
+            "[TodayAdvice][Notes] total=%s non_empty=%s api_calls=%s labeled=%s fallback_neutral=%s",
+            notes_payload["total_count"], notes_payload["non_empty_count"], notes_payload["api_calls"], notes_payload["labeled_count"], notes_payload["fallback_neutral_count"],
+        )
+        audit.info(
+            "[TodayAdvice][Notes] sentiment: positive=%s neutral=%s negative=%s",
+            notes_payload["sentiment_counts"]["positive"], notes_payload["sentiment_counts"]["neutral"], notes_payload["sentiment_counts"]["negative"],
+        )
+        audit.info(
+            "[TodayAdvice][Notes] flags: fatigue=%s stress=%s social=%s achievement=%s self_care=%s sleep_issue=%s",
+            notes_payload["flag_counts"]["fatigue"], notes_payload["flag_counts"]["stress"], notes_payload["flag_counts"]["social_load"], notes_payload["flag_counts"]["achievement"], notes_payload["flag_counts"]["self_care"], notes_payload["flag_counts"]["sleep_issue"],
+        )
+
         feature_df = build_daily_feature_table(historical_summaries, note_labels)
-        missing_counts = feature_df.isna().sum().to_dict() if not feature_df.empty else {}
-        logging.info("today_advice_feature_missing_counts=%s", json.dumps(missing_counts, ensure_ascii=False, sort_keys=True))
+        feature_payload = {
+            "row_count": int(len(feature_df.index)) if not feature_df.empty else 0,
+            "column_count": int(len(feature_df.columns)) if not feature_df.empty else 0,
+            "created_columns": [str(col) for col in feature_df.columns],
+            "flag_counts": {
+                "sleep_lt_6h_flag_count": int(feature_df["sleep_lt_6h_flag"].fillna(False).sum()) if "sleep_lt_6h_flag" in feature_df else 0,
+                "bedtime_after_0100_flag_count": int(feature_df["bedtime_after_0100_flag"].fillna(False).sum()) if "bedtime_after_0100_flag" in feature_df else 0,
+                "notes_negative_flag_count": int((feature_df["notes_sentiment_label"].fillna("") == "negative").sum()) if "notes_sentiment_label" in feature_df else 0,
+                "notes_fatigue_flag_count": int(feature_df["notes_fatigue_flag"].fillna(False).sum()) if "notes_fatigue_flag" in feature_df else 0,
+                "spending_high_flag_count": int(feature_df["spending_high_flag"].fillna(False).sum()) if "spending_high_flag" in feature_df else 0,
+                "drop_high_flag_count": int(feature_df["drop_high_flag"].fillna(False).sum()) if "drop_high_flag" in feature_df else 0,
+            },
+            "numeric_summary": {
+                "sleep_hours_mean": round(float(feature_df["sleep_hours"].fillna(0).mean()), 2) if "sleep_hours" in feature_df else 0,
+                "sleep_hours_min": round(float(feature_df["sleep_hours"].fillna(0).min()), 2) if "sleep_hours" in feature_df else 0,
+                "sleep_hours_max": round(float(feature_df["sleep_hours"].fillna(0).max()), 2) if "sleep_hours" in feature_df else 0,
+                "sleep_score_mean": round(float(feature_df["sleep_score"].fillna(0).mean()), 2) if "sleep_score" in feature_df else 0,
+                "spending_total_mean": round(float(feature_df["spending_total"].fillna(0).mean()), 2) if "spending_total" in feature_df else 0,
+                "task_done_mean": round(float(feature_df["task_done_count"].fillna(0).mean()), 2) if "task_done_count" in feature_df else 0,
+                "task_drop_mean": round(float(feature_df["task_drop_count"].fillna(0).mean()), 2) if "task_drop_count" in feature_df else 0,
+            },
+        }
+        audit.put("features", feature_payload)
+        audit.info("[TodayAdvice][Features] rows=%s cols=%s", feature_payload["row_count"], feature_payload["column_count"])
+        audit.info(
+            "[TodayAdvice][Features] flags: sleep_lt_6h=%s bedtime_after_0100=%s notes_negative=%s notes_fatigue=%s",
+            feature_payload["flag_counts"]["sleep_lt_6h_flag_count"],
+            feature_payload["flag_counts"]["bedtime_after_0100_flag_count"],
+            feature_payload["flag_counts"]["notes_negative_flag_count"],
+            feature_payload["flag_counts"]["notes_fatigue_flag_count"],
+        )
+        audit.info(
+            "[TodayAdvice][Features] numeric: sleep_hours_mean=%s sleep_score_mean=%s task_done_mean=%s task_drop_mean=%s",
+            feature_payload["numeric_summary"]["sleep_hours_mean"],
+            feature_payload["numeric_summary"]["sleep_score_mean"],
+            feature_payload["numeric_summary"]["task_done_mean"],
+            feature_payload["numeric_summary"]["task_drop_mean"],
+        )
+
         lag_result = analyze_lag_patterns(feature_df)
-        adopted_patterns = lag_result["adopted_patterns"]
-        logging.info("today_advice_lag_conditions=%s", len(lag_result["all_patterns"]))
-        logging.info("today_advice_adopted_patterns=%s", len(adopted_patterns))
+        adopted_patterns = [
+            item for item in lag_result["adopted_patterns"] if item.get("target_outcome") == "next_day_low_mood_flag"
+        ]
+        for pattern in lag_result.get("all_patterns", []):
+            audit.info(
+                "[TodayAdvice][Lag] pattern=%s outcome=%s sample=%s hit=%.2f base=%.2f delta=%.2f adopted=%s confidence=%s",
+                pattern.get("pattern_id"),
+                pattern.get("target_outcome"),
+                int(pattern.get("sample_size", 0) or 0),
+                float(pattern.get("hit_rate", 0.0) or 0.0),
+                float(pattern.get("baseline_rate", 0.0) or 0.0),
+                float(pattern.get("delta", 0.0) or 0.0),
+                bool(pattern.get("adopted", False)),
+                pattern.get("confidence", "low"),
+            )
+        lag_payload = {
+            "conditions": lag_result.get("conditions", []),
+            "evaluated_count": int(lag_result.get("evaluated_count", len(lag_result.get("all_patterns", []))) or 0),
+            "adopted_count": int(lag_result.get("adopted_count", len(lag_result.get("adopted_patterns", []))) or 0),
+            "patterns": lag_result.get("all_patterns", []),
+            "adopted_patterns": lag_result.get("adopted_patterns", []),
+        }
+        audit.put("lag_analysis", lag_payload)
+        audit.info("[TodayAdvice][Lag] evaluated=%s adopted=%s", lag_payload["evaluated_count"], lag_payload["adopted_count"])
+
         regression_summary = run_low_mood_regression(feature_df)
-        logging.info("today_advice_regression_available=%s", regression_summary.get("available"))
-        logging.info("today_advice_regression_sample_size=%s", regression_summary.get("sample_size"))
+        regression_payload = summarize_regression(regression_summary)
+        audit.put("regression", regression_payload)
+        if regression_payload["available"]:
+            audit.info(
+                "[TodayAdvice][Regression] available=true sample=%s target=%s",
+                regression_payload["sample_size"],
+                regression_payload["regression_target_name"],
+            )
+            audit.info("[TodayAdvice][Regression] top_positive=%s", safe_json(regression_payload["top_positive_features"]))
+            audit.info("[TodayAdvice][Regression] top_negative=%s", safe_json(regression_payload["top_negative_features"]))
+        else:
+            audit.info(
+                "[TodayAdvice][Regression] available=false reason=%s",
+                regression_payload.get("skipped_reason") or "unknown",
+            )
 
         analysis_json = build_analysis_json(
             target_date=target_date,
@@ -947,11 +1108,48 @@ def generate_today_advice(
             adopted_patterns=adopted_patterns,
             regression_summary=regression_summary,
         )
+        today_sleep_hours = round((today_summary.sleep_duration_min or 0) / 60.0, 2) if today_summary.sleep_duration_min is not None else None
+        today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
+        today_sleep_score = today_summary.sleep_score
+        today_condition_flags = {
+            "prev_sleep_lt_6h": bool(today_sleep_hours is not None and today_sleep_hours < 6),
+            "prev_bedtime_after_0100": bool(today_bedtime is not None and today_bedtime >= "01:00"),
+            "prev_sleep_score_low": bool(today_sleep_score is not None and today_sleep_score < 70),
+        }
+        matched_pattern_ids = [
+            item.get("pattern_id") for item in adopted_patterns if today_condition_flags.get(str(item.get("pattern_id")), False)
+        ]
+        today_match_payload = {
+            "today_sleep_context": {
+                "sleep_hours": today_sleep_hours,
+                "bedtime": today_bedtime,
+                "sleep_score": today_sleep_score,
+            },
+            "match_conditions": today_condition_flags,
+            "matched_patterns_count": len(matched_pattern_ids),
+            "matched_pattern_ids": matched_pattern_ids,
+            "risk_level": analysis_json.get("risk_level"),
+            "primary_focus": analysis_json.get("primary_focus"),
+        }
+        audit.put("today_match", today_match_payload)
+        audit.info("[TodayAdvice][TodayMatch] sleep_hours=%s bedtime=%s sleep_score=%s", today_sleep_hours, today_bedtime, today_sleep_score)
+        audit.info(
+            "[TodayAdvice][TodayMatch] matched=%s ids=%s risk=%s focus=%s",
+            today_match_payload["matched_patterns_count"],
+            safe_json(today_match_payload["matched_pattern_ids"]),
+            today_match_payload["risk_level"],
+            today_match_payload["primary_focus"],
+        )
+        audit.put("analysis_json", analysis_json)
+        audit.dump_json("AnalysisJSON", analysis_json)
+
         today_advice = render_today_advice_from_analysis(
             analysis_json=analysis_json,
             model=final_model,
             chat_completion=_chat_completion,
         )
+        audit.put("final_text", {"text": today_advice})
+        audit.info("[TodayAdvice][FinalText] %s", today_advice)
     except Exception as exc:
         logging.warning("today_advice_pipeline_failed target_date=%s error=%s", target_date, exc)
         adopted_patterns = []
@@ -966,10 +1164,16 @@ def generate_today_advice(
             "primary_focus": "負荷調整",
         }
         today_advice = "睡眠コンディションを優先しつつ、今日は午前の重い判断を絞って進めるのが安全です。"
+        audit.put("regression", summarize_regression(regression_summary))
+        audit.put("analysis_json", analysis_json)
+        audit.put("final_text", {"text": today_advice})
+        audit.info("[TodayAdvice][FinalText] %s", today_advice)
     fallback_used = not bool(today_advice.strip())
     logging.info("today_advice_fallback_used=%s", fallback_used)
+    audit.emit_final()
     judgment_json = {
         "analysis_json": analysis_json,
+        "analysis_audit": audit.payload["analysis_audit"],
         "matched_pattern_count": len(adopted_patterns),
         "regression_summary": regression_summary,
     }
