@@ -169,6 +169,40 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - Diary hash には、実際に `scripts/diary_generator.py` に渡す入力一式が入ります。これには `notes` / `done` / `drop` / `expenses` / `meal summary` / `location summary` / sleep 系 / `today_advice` など、Diary 出力に影響する項目が含まれます。
 - Today advice hash には、`today_sleep` と historical-only の `historical_behavior_patterns` / `historical_recording_patterns` / `historical_context`、および過去比較サマリが含まれます。当日 non-sleep 値は hash と prompt の責務から除外します。
 
+## Today advice 30日分析パイプライン（新規）
+
+Today advice は従来の Phase C 分離を維持したまま、内部で次の 6 段階に強化しました。
+
+1. **過去30日 Notes 一括ラベル化**  
+   `scripts/note_batch_labeler.py` が過去30日 Notes をまとめて GPT へ渡し、日次ラベル JSON（sentiment / fatigue / stress / social_load / achievement / self_care / sleep_issue）を返します。空Notesや JSON パース失敗時は neutral フォールバックです。
+2. **日次特徴量テーブル作成**  
+   `scripts/today_advice_feature_builder.py` が pandas DataFrame を作り、sleep / mood / task / spending / notes ラベル特徴を 1 日 1 行で統合します。
+3. **条件別翌日悪化率（lag1）集計**  
+   `scripts/today_advice_pattern_analyzer.py` が `prev_* -> next_day_*` の hit_rate, baseline, delta, confidence を算出し、採用条件を満たすパターンだけを候補化します。
+4. **ロジスティック回帰（補助分析）**  
+   `scripts/today_advice_regression.py` が翌日 low mood を目的変数に LogisticRegression を実行し、上位リスク特徴と保護特徴を補助情報として出します（成立しない場合はスキップ）。
+5. **分析済み JSON 生成**  
+   `scripts/today_advice_renderer.py` が `today_sleep_context`, `recent_7d_summary`, `matched_patterns`, `regression_summary`, `risk_level`, `primary_focus` をまとめた分析済み JSON を生成します。
+6. **分析済み JSON のみで本文生成**  
+   GPT には生の30日 Notes を再投入せず、分析済み JSON のみを渡して Today advice 日本語本文を作ります。GPT 失敗時はルールベース文へフォールバックします。
+
+### なぜ1日ずつではなく一括ラベル化するか
+- API 呼び出し回数を減らし、コストと待ち時間を削減するため。
+- 指示文の重複送信を避け、判定基準の一貫性を上げるため。
+- JSON 一括返却で後段の DataFrame/分析処理を単純化するため。
+
+### 追加ライブラリ
+- `pandas`: 日次特徴量テーブル作成
+- `numpy`: 欠損・数値補助
+- `scikit-learn`: LogisticRegression
+- `statsmodels`: 回帰分析拡張のための将来互換（現時点は補助）
+
+### ルール再確認
+- Today advice は **today sleep only / non-sleep historical only** を維持します。
+- 当日 Notes は today advice に使いません（Notes は過去30日の履歴分析のみ）。
+- 回帰分析は補助情報で、最終判定は条件別集計（lag パターン）を優先します。
+- OpenAI 失敗時も neutral ラベルと本文フォールバックで Phase C を止めません。
+
 ## Debug ログの見方
 
 - Phase C のログプレフィックスは `phase_c_sleep_*` / `phase_c_today_advice_*` / `phase_c_diary_*` / `phase_c_notify_*` で統一しています。

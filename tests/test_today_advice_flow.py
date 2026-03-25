@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 
+import pytest
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts.mood_advice_generator import normalize_mood_to_score
+
+HAS_PANDAS = importlib.util.find_spec("pandas") is not None
 
 
 def _summary(**overrides: object) -> DailyLogSummary:
@@ -304,6 +308,8 @@ def test_prompt_builders_include_sleep_only_and_recent_7d_constraints() -> None:
 
 
 def test_generate_today_advice_ignores_same_day_non_sleep_zero_and_missing_fields(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
     import scripts.mood_advice_generator as generator
 
     today = _summary(
@@ -400,6 +406,8 @@ def test_generation_context_surfaces_recent_7d_non_sleep_patterns() -> None:
 
 
 def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
     import scripts.mood_advice_generator as generator
 
     today = _summary(
@@ -529,6 +537,8 @@ def test_generation_context_adds_structured_non_sleep_comparisons() -> None:
 
 
 def test_generate_today_advice_requires_recent_and_good_bad_evidence(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
     import scripts.mood_advice_generator as generator
 
     today = _summary(target_date="2026-03-20", sleep_score=60, sleep_duration_min=330, notes=None, meal_summary=None, location_summary=None)

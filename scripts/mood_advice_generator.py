@@ -12,6 +12,11 @@ from typing import Any, Mapping, Optional, Sequence
 import requests
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
+from scripts.note_batch_labeler import label_notes_in_batches
+from scripts.today_advice_feature_builder import build_daily_feature_table
+from scripts.today_advice_pattern_analyzer import analyze_lag_patterns
+from scripts.today_advice_regression import run_low_mood_regression
+from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
 
 OPENAI_TIMEOUT = (5, 90)
 DEFAULT_MINI_MODEL = "gpt-4.1-mini"
@@ -916,113 +921,59 @@ def generate_today_advice(
 
     history = context["history"]
     structured = context["structured"]
-    today_state = context["today_state"]
-    notes_used = context["notes_used"]
-
-    mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
+    today_summary = context["today_summary"]
+    historical_summaries = context["historical_summaries"]
     final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
-    judgment_input = context["judgment_input"]
-    judgment_user_prompt = build_judgment_user_prompt(judgment_input=judgment_input, structured=structured)
-    judgment_messages = _build_chat_messages(system_prompt=MINI_SYSTEM_PROMPT, user_prompt=judgment_user_prompt)
-    judgment_prompt_tokens, judgment_token_method = _count_input_tokens(model=mini_model, messages=judgment_messages)
-    logging.info(
-        "today_advice_stage_input target_date=%s stage=judgment model=%s diary_used=%s past_diary_used=%s location_summary_used=%s notes_used=%s input_tokens=%s token_counting_method=%s evidence_used=%s",
-        target_date,
-        mini_model,
-        False,
-        False,
-        True,
-        notes_used,
-        judgment_prompt_tokens,
-        judgment_token_method,
-        [],
-    )
-    _dump_today_advice_debug_log(
-        debug_kind="MOOD_JUDGMENT",
-        stage="judgment",
-        target_date=target_date,
-        model=mini_model,
-        advice_input=judgment_input,
-        advice_input_summary=_build_mood_advice_debug_summary(
-            history=history,
-            structured=structured,
-            today_state=today_state,
-            stage="judgment",
-            evidence_used=[],
-            notes_used=notes_used,
-            prompt_tokens=judgment_prompt_tokens,
-            token_counting_method=judgment_token_method,
-        ),
-        prompt_text=f"[system]\n{MINI_SYSTEM_PROMPT}\n\n[user]\n{judgment_user_prompt}",
-    )
-    try:
-        judgment_text = _chat_completion(
-            model=mini_model,
-            system_prompt=MINI_SYSTEM_PROMPT,
-            user_prompt=judgment_user_prompt,
-        )
-        judgment_json = _normalize_judgment_json(_extract_json_object(judgment_text))
-    except Exception as exc:
-        raise RuntimeError(f"today_advice stage 1 judgment failed: {exc}") from exc
-    evidence_used = judgment_json.get("evidence_used", []) if isinstance(judgment_json.get("evidence_used"), list) else []
+    mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
 
-    final_input = {
-        "judgment_json": judgment_json,
-        "today_facts": {
-            "today_sleep": today_state.get("today_sleep", {}),
-            "historical_behavior_patterns": today_state.get("historical_behavior_patterns", {}),
-            "historical_recording_patterns": today_state.get("historical_recording_patterns", {}),
-            "historical_context": today_state.get("historical_context", {}),
-        },
-        "input_policy": {
-            "diary_used": False,
-            "past_diary_used": False,
-            "location_summary_used": True,
-            "notes_used": notes_used,
-        },
-    }
-    final_user_prompt = build_final_user_prompt(judgment_json=judgment_json, today_facts=final_input["today_facts"])
-    final_messages = _build_chat_messages(system_prompt=FINAL_SYSTEM_PROMPT, user_prompt=final_user_prompt)
-    final_prompt_tokens, final_token_method = _count_input_tokens(model=final_model, messages=final_messages)
-    logging.info(
-        "today_advice_stage_input target_date=%s stage=final model=%s diary_used=%s past_diary_used=%s location_summary_used=%s notes_used=%s input_tokens=%s token_counting_method=%s evidence_used=%s",
-        target_date,
-        final_model,
-        False,
-        False,
-        True,
-        notes_used,
-        final_prompt_tokens,
-        final_token_method,
-        evidence_used,
-    )
-    _dump_today_advice_debug_log(
-        debug_kind="MOOD_FINAL",
-        stage="final",
-        target_date=target_date,
-        model=final_model,
-        advice_input=final_input,
-        advice_input_summary=_build_mood_advice_debug_summary(
-            history=history,
-            structured=structured,
-            today_state=today_state,
-            stage="final",
-            evidence_used=evidence_used,
-            notes_used=notes_used,
-            prompt_tokens=final_prompt_tokens,
-            token_counting_method=final_token_method,
-        ),
-        prompt_text=f"[system]\n{FINAL_SYSTEM_PROMPT}\n\n[user]\n{final_user_prompt}",
-    )
+    logging.info("today_advice_30d_analysis_days=%s", len(historical_summaries))
     try:
-        today_advice = _chat_completion(
+        note_labels = label_notes_in_batches(summaries=historical_summaries, chat_completion=_chat_completion, model=mini_model)
+        feature_df = build_daily_feature_table(historical_summaries, note_labels)
+        missing_counts = feature_df.isna().sum().to_dict() if not feature_df.empty else {}
+        logging.info("today_advice_feature_missing_counts=%s", json.dumps(missing_counts, ensure_ascii=False, sort_keys=True))
+        lag_result = analyze_lag_patterns(feature_df)
+        adopted_patterns = lag_result["adopted_patterns"]
+        logging.info("today_advice_lag_conditions=%s", len(lag_result["all_patterns"]))
+        logging.info("today_advice_adopted_patterns=%s", len(adopted_patterns))
+        regression_summary = run_low_mood_regression(feature_df)
+        logging.info("today_advice_regression_available=%s", regression_summary.get("available"))
+        logging.info("today_advice_regression_sample_size=%s", regression_summary.get("sample_size"))
+
+        analysis_json = build_analysis_json(
+            target_date=target_date,
+            today_summary=today_summary,
+            features_df=feature_df,
+            adopted_patterns=adopted_patterns,
+            regression_summary=regression_summary,
+        )
+        today_advice = render_today_advice_from_analysis(
+            analysis_json=analysis_json,
             model=final_model,
-            system_prompt=FINAL_SYSTEM_PROMPT,
-            user_prompt=final_user_prompt,
+            chat_completion=_chat_completion,
         )
     except Exception as exc:
-        raise RuntimeError(f"today_advice stage 2 final writing failed: {exc}") from exc
-
+        logging.warning("today_advice_pipeline_failed target_date=%s error=%s", target_date, exc)
+        adopted_patterns = []
+        regression_summary = {"available": False, "sample_size": 0, "top_positive_risk_features": [], "top_protective_features": []}
+        analysis_json = {
+            "target_date": target_date,
+            "today_sleep_context": {"sleep_hours": (today_summary.sleep_duration_min or 0) / 60.0 if today_summary.sleep_duration_min is not None else None},
+            "recent_7d_summary": {"behavior_trend": ["直近7日傾向はデータ不足"], "recording_trend": []},
+            "matched_patterns": [],
+            "regression_summary": regression_summary,
+            "risk_level": "low",
+            "primary_focus": "負荷調整",
+        }
+        today_advice = "睡眠コンディションを優先しつつ、今日は午前の重い判断を絞って進めるのが安全です。"
+    fallback_used = not bool(today_advice.strip())
+    logging.info("today_advice_fallback_used=%s", fallback_used)
+    judgment_json = {
+        "analysis_json": analysis_json,
+        "matched_pattern_count": len(adopted_patterns),
+        "regression_summary": regression_summary,
+    }
+    judgment_text = json.dumps(judgment_json, ensure_ascii=False)
     return MoodAdviceResult(
         today_advice=today_advice,
         judgment_json=judgment_json,
