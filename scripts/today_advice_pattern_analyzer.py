@@ -33,34 +33,48 @@ def analyze_lag_patterns(df: Any) -> dict[str, Any]:
         "prev_notes_social_load": work["notes_social_load_flag"],
         "prev_notes_sleep_issue": work["notes_sleep_issue_flag"],
     }
-    baseline = float(work["next_day_low_mood_flag"].mean()) if len(work) else 0.0
+    outcomes = {
+        "next_day_low_mood_flag": work["next_day_low_mood_flag"],
+        "next_day_fatigue_flag": work["next_day_fatigue_flag"],
+        "next_day_low_productivity_flag": work["next_day_low_productivity_flag"],
+    }
     all_patterns = []
     adopted = []
     for key, cond in conditions.items():
         subset = work[cond.fillna(False)]
         sample = int(len(subset))
-        hit = float(subset["next_day_low_mood_flag"].mean()) if sample else 0.0
-        delta = round(hit - baseline, 2)
-        conf = _confidence(sample, delta)
-        item = {
-            "pattern_id": key,
-            "target_outcome": "next_day_low_mood_flag",
-            "sample_size": sample,
-            "hit_rate": round(hit, 2),
-            "baseline_rate": round(baseline, 2),
-            "delta": delta,
-            "confidence": conf,
-        }
-        all_patterns.append(item)
-        if sample >= 3 and delta >= 0.20 and hit >= 0.50:
-            item = dict(item)
-            if "sleep" in key:
-                item["recommended_actions"] = ACTION_MAP["sleep"][:2]
-            elif "stress" in key or "fatigue" in key:
-                item["recommended_actions"] = ACTION_MAP["stress"][:2]
-            elif "social" in key:
-                item["recommended_actions"] = ACTION_MAP["social"][:2]
-            else:
-                item["recommended_actions"] = ACTION_MAP["positive"][:2]
-            adopted.append(item)
-    return {"all_patterns": all_patterns, "adopted_patterns": adopted}
+        for outcome_name, outcome_series in outcomes.items():
+            baseline = float(outcome_series.mean()) if len(work) else 0.0
+            hit = float(subset[outcome_name].mean()) if sample else 0.0
+            delta = round(hit - baseline, 2)
+            conf = _confidence(sample, delta)
+            item = {
+                "pattern_id": key,
+                "target_outcome": outcome_name,
+                "sample_size": sample,
+                "hit_rate": round(hit, 2),
+                "baseline_rate": round(baseline, 2),
+                "delta": delta,
+                "confidence": conf,
+                "adopted": False,
+            }
+            if sample >= 3 and delta >= 0.20 and hit >= 0.50:
+                item["adopted"] = True
+                if "sleep" in key:
+                    item["recommended_actions"] = ACTION_MAP["sleep"][:2]
+                elif "stress" in key or "fatigue" in key:
+                    item["recommended_actions"] = ACTION_MAP["stress"][:2]
+                elif "social" in key:
+                    item["recommended_actions"] = ACTION_MAP["social"][:2]
+                else:
+                    item["recommended_actions"] = ACTION_MAP["positive"][:2]
+                adopted.append(dict(item))
+            all_patterns.append(item)
+    return {
+        "conditions": list(conditions.keys()),
+        "outcomes": list(outcomes.keys()),
+        "all_patterns": all_patterns,
+        "adopted_patterns": adopted,
+        "evaluated_count": len(all_patterns),
+        "adopted_count": len(adopted),
+    }
