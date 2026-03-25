@@ -30,18 +30,32 @@ def build_analysis_json(
         primary_focus = "回復優先"
     elif risk_level == "medium":
         primary_focus = "負荷調整"
+    sleep_hours = round((today_summary.sleep_duration_min or 0) / 60.0, 2) if today_summary.sleep_duration_min is not None else None
+    evidence_used = []
+    if sleep_hours is not None:
+        evidence_used.append(f"sleep: 睡眠時間{sleep_hours}時間")
+    if behavior:
+        evidence_used.append(f"recent_7d: {behavior[0]}")
+    evidence_used.append(
+        "good_bad: 明確な差分は限定的" if not adopted_patterns else f"good_bad: 再現パターン{len(adopted_patterns)}件"
+    )
     return {
         "target_date": target_date,
         "today_sleep_context": {
-            "sleep_hours": round((today_summary.sleep_duration_min or 0) / 60.0, 2) if today_summary.sleep_duration_min is not None else None,
+            "sleep_hours": sleep_hours,
             "bedtime": (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None,
             "sleep_score": today_summary.sleep_score,
         },
         "recent_7d_summary": {"behavior_trend": behavior, "recording_trend": recording},
         "matched_patterns": list(adopted_patterns),
+        "matched_patterns_count": len(adopted_patterns),
+        "evidence_used": evidence_used,
         "regression_summary": dict(regression_summary),
         "risk_level": risk_level,
         "primary_focus": primary_focus,
+        "meal_signal": "過去30日の食事差分は限定的",
+        "notes_pattern_signal": "直近メモ傾向を優先参照",
+        "location_pattern_signal": "場所パターンは補助情報として参照",
     }
 
 
@@ -51,6 +65,13 @@ def render_today_advice_from_analysis(
     model: str,
     chat_completion: Callable[..., str],
 ) -> str:
+    if (
+        "matched_patterns" in analysis_json
+        and "evidence_used" in analysis_json
+        and not analysis_json.get("matched_patterns")
+        and not analysis_json.get("evidence_used")
+    ):
+        return "過去30日で明確な再現パターンは不明です。"
     prompt = (
         "分析済みJSONのみを使ってToday adviceを2〜4文の自然な日本語で作成。"
         "必ず1)今日の睡眠要約 2)過去30日のリスク 3)直近7日傾向1つ 4)具体行動1〜2個。"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -87,13 +88,30 @@ def _normalize_item(item: Mapping[str, Any], date: str) -> NoteLabel:
 
 
 def parse_note_label_json(raw_text: str, input_rows: Sequence[Mapping[str, str]]) -> list[NoteLabel]:
+    parsed, _meta = parse_note_label_json_with_meta(raw_text, input_rows)
+    return parsed
+
+
+def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[str, str]]) -> tuple[list[NoteLabel], dict[str, Any]]:
     fallback = {str(row.get("date")): neutral_label(str(row.get("date"))) for row in input_rows}
+    matched_dates: set[str] = set()
+    meta: dict[str, Any] = {
+        "empty_response": False,
+        "parse_error": False,
+        "schema_mismatch": False,
+        "matched_dates": matched_dates,
+    }
+    if not raw_text or not str(raw_text).strip():
+        meta["empty_response"] = True
+        return list(fallback.values()), meta
     try:
         parsed = json.loads(raw_text)
     except Exception:
-        return list(fallback.values())
+        meta["parse_error"] = True
+        return list(fallback.values()), meta
     if not isinstance(parsed, list):
-        return list(fallback.values())
+        meta["schema_mismatch"] = True
+        return list(fallback.values()), meta
     for row in parsed:
         if not isinstance(row, Mapping):
             continue
@@ -101,7 +119,8 @@ def parse_note_label_json(raw_text: str, input_rows: Sequence[Mapping[str, str]]
         if date not in fallback:
             continue
         fallback[date] = _normalize_item(row, date)
-    return [fallback[str(row.get("date"))] for row in input_rows]
+        matched_dates.add(date)
+    return [fallback[str(row.get("date"))] for row in input_rows], meta
 
 
 def label_notes_in_batches(
@@ -110,12 +129,24 @@ def label_notes_in_batches(
     chat_completion: Callable[..., str],
     model: str,
     batch_size: int = 15,
+    raw_response_dir: str | None = None,
+    audit: Optional[dict[str, Any]] = None,
 ) -> dict[str, NoteLabel]:
     rows = [{"date": s.target_date, "notes": (s.notes or "").strip()} for s in summaries]
     if not rows:
         return {}
     api_calls = 0
     results: dict[str, NoteLabel] = {}
+    reason_counts = {
+        "parse_error_count": 0,
+        "schema_mismatch_count": 0,
+        "date_match_failure_count": 0,
+        "empty_response_count": 0,
+    }
+    raw_response_paths: list[str] = []
+    debug_dir = Path(raw_response_dir) if raw_response_dir else None
+    if debug_dir:
+        debug_dir.mkdir(parents=True, exist_ok=True)
     for index in range(0, len(rows), batch_size):
         chunk = rows[index : index + batch_size]
         missing = [r for r in chunk if not r["notes"]]
@@ -136,11 +167,34 @@ def label_notes_in_batches(
                 system_prompt="あなたは日本語Notesを構造化ラベル化する。出力はJSONのみ。",
                 user_prompt=prompt,
             )
-            parsed = parse_note_label_json(raw, targets)
+            if debug_dir:
+                first_date = targets[0]["date"] if targets else "na"
+                file_path = debug_dir / f"notes_batch_{index // batch_size:02d}_{first_date}.txt"
+                file_path.write_text(str(raw), encoding="utf-8")
+                raw_response_paths.append(str(file_path))
+            parsed, meta = parse_note_label_json_with_meta(raw, targets)
+            if meta["empty_response"]:
+                reason_counts["empty_response_count"] += len(targets)
+            elif meta["parse_error"]:
+                reason_counts["parse_error_count"] += len(targets)
+            elif meta["schema_mismatch"]:
+                reason_counts["schema_mismatch_count"] += len(targets)
+            else:
+                matched = set(meta.get("matched_dates", set()))
+                reason_counts["date_match_failure_count"] += sum(1 for row in targets if row["date"] not in matched)
         except Exception:
             parsed = [neutral_label(row["date"]) for row in targets]
+            reason_counts["parse_error_count"] += len(targets)
         for item in parsed:
             results[item.date] = item
     logging.info("notes batch label count=%s", len(rows))
     logging.info("notes batch api calls=%s", api_calls)
+    if audit is not None:
+        audit.update(
+            {
+                "api_calls": api_calls,
+                "fallback_reason_counts": dict(reason_counts),
+                "raw_response_paths": raw_response_paths,
+            }
+        )
     return {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}

@@ -139,6 +139,15 @@ def test_gpt_failure_fallback_message() -> None:
     assert "午前中の重い判断" in text
 
 
+def test_no_pattern_no_evidence_returns_unknown_pattern_message() -> None:
+    text = render_today_advice_from_analysis(
+        analysis_json={"matched_patterns": [], "evidence_used": [], "today_sleep_context": {"sleep_hours": 6.2}},
+        model="x",
+        chat_completion=lambda **kwargs: "一般論です。",
+    )
+    assert text == "過去30日で明確な再現パターンは不明です。"
+
+
 def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
@@ -167,6 +176,10 @@ def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
         "today_match",
         "analysis_json",
         "final_text",
+        "notes_fallback_reason_counts",
+        "sleep_feature_conversion_samples",
+        "matched_patterns_count",
+        "evidence_used",
     ]:
         assert key in audit
 
