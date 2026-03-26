@@ -65,16 +65,15 @@ def _extract_location_flags(text: str) -> dict[str, bool]:
     }
 
 
-def build_daily_feature_table(
-    histories: Sequence[DailyLogSummary],
-    note_labels: Mapping[str, NoteLabel],
-) -> Any:
+def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels: Mapping[str, NoteLabel]) -> Any:
     import importlib
+
     pd_spec = importlib.util.find_spec("pandas")
     if pd_spec is None:
         raise RuntimeError("pandas is required for today advice feature table")
     pd = importlib.import_module("pandas")
     np = importlib.import_module("numpy")
+
     rows = []
     for item in histories:
         label = note_labels.get(item.target_date) or NoteLabel(
@@ -94,75 +93,85 @@ def build_daily_feature_table(
         location_flags = _extract_location_flags(item.location_summary or "")
         meal_text = item.meal_summary or ""
         notes_text = item.notes or ""
-        done = item.done_count or 0
-        drop = item.drop_count or 0
+        activity_text = item.activity_summary or ""
+        done = int(item.done_count or 0)
+        drop = int(item.drop_count or 0)
         denom = done + drop
+
         rows.append(
             {
                 "date": item.target_date,
                 "mood": _normalize_mood_to_score(item.mood),
                 "sleep_valid_flag": sleep_valid_flag,
                 "sleep_invalid_reason": sleep_invalid_reason,
-                "sleep_hours": (sleep_duration / 60.0) if sleep_valid_flag and sleep_duration is not None else float("nan"),
-                "bedtime_min": _to_minutes(item.sleep_start) if sleep_valid_flag else float("nan"),
-                "wake_time_min": _to_minutes(item.sleep_end) if sleep_valid_flag else float("nan"),
-                "sleep_score": item.sleep_score if sleep_valid_flag else float("nan"),
-                "deep_sleep_minutes": item.deep_duration_min if sleep_valid_flag else float("nan"),
-                "rem_duration_min": item.rem_duration_min if sleep_valid_flag else float("nan"),
-                "readiness_bpm": item.readiness_bpm,
-                "readiness_hrv": item.readiness_hrv,
-                "baseline_hrv": item.baseline_hrv,
-                "baseline_waking_bpm": item.baseline_waking_bpm,
-                "spending_total": item.expenses_total,
-                "task_done_count": done,
-                "task_drop_count": drop,
-                "task_completion_ratio": (done / denom) if denom > 0 else float("nan"),
-                "kcal": item.kcal,
-                "protein": item.protein,
-                "fat": item.fat,
-                "carb": item.carb,
+                "sleep_hours": (sleep_duration / 60.0) if sleep_valid_flag and sleep_duration is not None else np.nan,
+                "sleep_score": _safe_float(item.sleep_score) if sleep_valid_flag else np.nan,
+                "bedtime_min": _to_minutes(item.sleep_start) if sleep_valid_flag else np.nan,
+                "wake_time_min": _to_minutes(item.sleep_end) if sleep_valid_flag else np.nan,
+                "deep_duration_min": _safe_float(item.deep_duration_min) if sleep_valid_flag else np.nan,
+                "rem_duration_min": _safe_float(item.rem_duration_min) if sleep_valid_flag else np.nan,
+                "readiness_bpm": _safe_float(item.readiness_bpm),
+                "readiness_hrv": _safe_float(item.readiness_hrv),
+                "baseline_hrv": _safe_float(item.baseline_hrv),
+                "baseline_waking_bpm": _safe_float(item.baseline_waking_bpm),
+                "notes_present_flag": bool(notes_text.strip()),
+                "notes_sentiment_label": label.sentiment_label,
+                "notes_sentiment_score": int(label.sentiment_score),
+                "notes_fatigue_flag": bool(label.fatigue_flag),
+                "notes_stress_flag": bool(label.stress_flag),
+                "notes_social_load_flag": bool(label.social_load_flag),
+                "notes_achievement_flag": bool(label.achievement_flag),
+                "notes_self_care_flag": bool(label.self_care_flag),
+                "notes_sleep_issue_flag": bool(label.sleep_issue_flag),
                 "meal_logged_flag": bool(meal_text.strip()) or any(v is not None for v in (item.kcal, item.protein, item.fat, item.carb)),
+                "kcal": _safe_float(item.kcal),
+                "protein": _safe_float(item.protein),
+                "fat": _safe_float(item.fat),
+                "carb": _safe_float(item.carb),
                 "overeating_like_flag": bool(re.search(r"食べすぎ|食べ過ぎ|夜食|暴食", meal_text)),
                 "eating_out_like_flag": bool(re.search(r"外食|レストラン|居酒屋|カフェ", meal_text)),
                 "late_meal_like_flag": bool(re.search(r"夜食|深夜|遅い", meal_text)),
-                "notes_sentiment_score": label.sentiment_score,
-                "notes_sentiment_label": label.sentiment_label,
-                "notes_fatigue_flag": label.fatigue_flag,
-                "notes_stress_flag": label.stress_flag,
-                "notes_social_load_flag": label.social_load_flag,
-                "notes_achievement_flag": label.achievement_flag,
-                "notes_self_care_flag": label.self_care_flag,
-                "notes_sleep_issue_flag": label.sleep_issue_flag,
-                "notes_present_flag": bool(notes_text.strip()),
-                "location_present_flag": bool((item.location_summary or "").strip()),
-                "transport_spend_like_flag": bool(re.search(r"交通|電車|タクシー|バス", notes_text)),
-                "social_spend_like_flag": bool(re.search(r"会食|飲み会|友人|同僚", notes_text)),
-                "social_event_like_flag": bool(label.social_load_flag or re.search(r"会食|飲み会|打ち合わせ|会議", notes_text)),
-                "movement_intensity_like_flag": bool(re.search(r"歩いた|移動|外出|ランニング|運動", notes_text)),
+                "spending_total": _safe_float(item.expenses_total),
+                "transport_spend_like_flag": bool(re.search(r"交通|電車|タクシー|バス", notes_text + activity_text)),
+                "social_spend_like_flag": bool(re.search(r"会食|飲み会|友人|同僚", notes_text + activity_text)),
+                "task_done_count": done,
+                "task_drop_count": drop,
+                "task_completion_ratio": (done / denom) if denom > 0 else np.nan,
+                "done_low_flag": done <= 1,
+                "drop_high_flag": drop >= 2,
                 "task_balance_bad_flag": bool(denom >= 2 and (drop / denom) >= 0.6),
+                "location_present_flag": bool((item.location_summary or "").strip()),
+                "social_event_like_flag": bool(label.social_load_flag or re.search(r"会食|飲み会|打ち合わせ|会議", notes_text + activity_text)),
+                "movement_intensity_like_flag": bool(re.search(r"歩いた|移動|外出|ランニング|運動", notes_text + activity_text)),
                 **location_flags,
             }
         )
+
     df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
-    for col in ("sleep_hours", "sleep_score", "protein", "fat", "carb", "kcal", "spending_total", "task_done_count", "task_drop_count"):
-        if col in df:
-            series = pd.to_numeric(df[col], errors="coerce")
-            if col.startswith("sleep_"):
-                series = series.where(df["sleep_valid_flag"].fillna(False))
-            baseline = series.rolling(7, min_periods=2).mean().shift(1)
-            df[col] = series
-            df[f"{col}_vs_7d_delta"] = series - baseline
+    numeric_targets = [
+        "sleep_hours", "sleep_score", "kcal", "protein", "fat", "carb", "spending_total", "task_done_count", "task_drop_count"
+    ]
+    for col in numeric_targets:
+        if col not in df:
+            continue
+        series = pd.to_numeric(df[col], errors="coerce")
+        if col.startswith("sleep"):
+            series = series.where(df["sleep_valid_flag"].fillna(False))
+        baseline = series.rolling(7, min_periods=2).mean().shift(1)
+        df[col] = series
+        df[f"{col}_vs_7d_delta"] = series - baseline
+
     df["done_vs_7d_delta"] = df["task_done_count"] - df["task_done_count"].rolling(7, min_periods=2).mean().shift(1)
     df["drop_vs_7d_delta"] = df["task_drop_count"] - df["task_drop_count"].rolling(7, min_periods=2).mean().shift(1)
     df["spending_vs_7d_delta"] = df["spending_total"] - df["spending_total"].rolling(7, min_periods=2).mean().shift(1)
-    df["sleep_vs_7d_delta"] = df["sleep_hours_vs_7d_delta"]
-    df["sleep_score_vs_7d_delta"] = df["sleep_score_vs_7d_delta"]
-    df["spending_high_flag"] = df["spending_total"].fillna(0) >= df["spending_total"].fillna(0).quantile(0.75)
-    df["bedtime_after_0100_flag"] = df["bedtime_min"] >= 60
+    df["sleep_vs_7d_delta"] = df.get("sleep_hours_vs_7d_delta", np.nan)
+    df["sleep_score_vs_7d_delta"] = df.get("sleep_score_vs_7d_delta", np.nan)
+
+    q = df["spending_total"].dropna()
+    threshold = float(q.quantile(0.75)) if len(q) else float("inf")
+    df["spending_high_flag"] = df["spending_total"].fillna(0) >= threshold
     df["sleep_lt_6h_flag"] = (df["sleep_valid_flag"]) & (df["sleep_hours"] < 6)
-    df["drop_high_flag"] = df["task_drop_count"] >= 2
-    df["done_low_flag"] = df["task_done_count"] <= 1
+
     quality_cols = ["notes_present_flag", "meal_logged_flag", "location_present_flag", "sleep_valid_flag"]
     df["data_quality_score"] = df[quality_cols].astype(int).mean(axis=1).round(2)
-    df["rem_duration_min"] = df.get("rem_duration_min", np.nan)
     return df

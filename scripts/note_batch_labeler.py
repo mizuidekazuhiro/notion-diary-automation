@@ -144,6 +144,10 @@ def label_notes_in_batches(
         "empty_response_count": 0,
     }
     raw_response_paths: list[str] = []
+    raw_sentiment_counts = {"positive": 0, "neutral": 0, "negative": 0, "unknown": 0}
+    raw_flag_counts = {"fatigue": 0, "stress": 0, "social_load": 0, "achievement": 0, "self_care": 0, "sleep_issue": 0}
+    normalized_sentiment_counts = {"positive": 0, "neutral": 0, "negative": 0}
+    normalized_flag_counts = {"fatigue": 0, "stress": 0, "social_load": 0, "achievement": 0, "self_care": 0, "sleep_issue": 0}
     debug_dir = Path(raw_response_dir) if raw_response_dir else None
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +171,25 @@ def label_notes_in_batches(
                 system_prompt="あなたは日本語Notesを構造化ラベル化する。出力はJSONのみ。",
                 user_prompt=prompt,
             )
+            try:
+                raw_items = json.loads(str(raw))
+                if isinstance(raw_items, list):
+                    for raw_item in raw_items:
+                        if not isinstance(raw_item, Mapping):
+                            continue
+                        sentiment = str(raw_item.get("sentiment_label") or "").strip().lower()
+                        if sentiment in raw_sentiment_counts:
+                            raw_sentiment_counts[sentiment] += 1
+                        else:
+                            raw_sentiment_counts["unknown"] += 1
+                        raw_flag_counts["fatigue"] += int(bool(raw_item.get("fatigue_flag")))
+                        raw_flag_counts["stress"] += int(bool(raw_item.get("stress_flag")))
+                        raw_flag_counts["social_load"] += int(bool(raw_item.get("social_load_flag")))
+                        raw_flag_counts["achievement"] += int(bool(raw_item.get("achievement_flag")))
+                        raw_flag_counts["self_care"] += int(bool(raw_item.get("self_care_flag")))
+                        raw_flag_counts["sleep_issue"] += int(bool(raw_item.get("sleep_issue_flag")))
+            except Exception:
+                pass
             if debug_dir:
                 first_date = targets[0]["date"] if targets else "na"
                 file_path = debug_dir / f"notes_batch_{index // batch_size:02d}_{first_date}.txt"
@@ -187,6 +210,13 @@ def label_notes_in_batches(
             reason_counts["parse_error_count"] += len(targets)
         for item in parsed:
             results[item.date] = item
+            normalized_sentiment_counts[item.sentiment_label] += 1
+            normalized_flag_counts["fatigue"] += int(item.fatigue_flag)
+            normalized_flag_counts["stress"] += int(item.stress_flag)
+            normalized_flag_counts["social_load"] += int(item.social_load_flag)
+            normalized_flag_counts["achievement"] += int(item.achievement_flag)
+            normalized_flag_counts["self_care"] += int(item.self_care_flag)
+            normalized_flag_counts["sleep_issue"] += int(item.sleep_issue_flag)
     logging.info("notes batch label count=%s", len(rows))
     logging.info("notes batch api calls=%s", api_calls)
     if audit is not None:
@@ -195,6 +225,10 @@ def label_notes_in_batches(
                 "api_calls": api_calls,
                 "fallback_reason_counts": dict(reason_counts),
                 "raw_response_paths": raw_response_paths,
+                "raw_sentiment_counts": dict(raw_sentiment_counts),
+                "raw_flag_counts": dict(raw_flag_counts),
+                "normalized_sentiment_counts": dict(normalized_sentiment_counts),
+                "normalized_flag_counts": dict(normalized_flag_counts),
             }
         )
     return {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}

@@ -18,7 +18,7 @@ from scripts.note_batch_labeler import label_notes_in_batches
 from scripts.today_advice_feature_builder import build_daily_feature_table
 from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
-from scripts.today_advice_tree_model import run_tree_model_summary
+from scripts.today_advice_lightgbm import run_lightgbm_low_mood
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
 from scripts.today_advice_audit import (
     TodayAdviceAuditLogger,
@@ -1003,12 +1003,12 @@ def generate_today_advice(
             "api_calls": notes_batch_api_calls,
             "labeled_count": len(notes_labeled),
             "fallback_neutral_count": sum(1 for item in notes_labeled if item.confidence == "low" and item.sentiment_label == "neutral"),
-            "sentiment_counts": {
+            "dataframe_sentiment_counts": {
                 "positive": sum(1 for item in notes_labeled if item.sentiment_label == "positive"),
                 "neutral": sum(1 for item in notes_labeled if item.sentiment_label == "neutral"),
                 "negative": sum(1 for item in notes_labeled if item.sentiment_label == "negative"),
             },
-            "flag_counts": {
+            "dataframe_flag_counts": {
                 "fatigue": sum(1 for item in notes_labeled if item.fatigue_flag),
                 "stress": sum(1 for item in notes_labeled if item.stress_flag),
                 "social_load": sum(1 for item in notes_labeled if item.social_load_flag),
@@ -1016,6 +1016,10 @@ def generate_today_advice(
                 "self_care": sum(1 for item in notes_labeled if item.self_care_flag),
                 "sleep_issue": sum(1 for item in notes_labeled if item.sleep_issue_flag),
             },
+            "raw_sentiment_counts": note_label_audit.get("raw_sentiment_counts", {}),
+            "raw_flag_counts": note_label_audit.get("raw_flag_counts", {}),
+            "normalized_sentiment_counts": note_label_audit.get("normalized_sentiment_counts", {}),
+            "normalized_flag_counts": note_label_audit.get("normalized_flag_counts", {}),
             "top_evidence_keywords": [k for k, _v in sorted({kw: sum(kw in item.evidence_keywords for item in notes_labeled) for item in notes_labeled for kw in item.evidence_keywords}.items(), key=lambda p: p[1], reverse=True)[:5]],
             "fallback_reason_counts": note_label_audit.get("fallback_reason_counts", {}),
             "raw_response_paths": note_label_audit.get("raw_response_paths", []),
@@ -1026,12 +1030,16 @@ def generate_today_advice(
             notes_payload["total_count"], notes_payload["non_empty_count"], notes_payload["api_calls"], notes_payload["labeled_count"], notes_payload["fallback_neutral_count"],
         )
         audit.info(
-            "[TodayAdvice][Notes] sentiment: positive=%s neutral=%s negative=%s",
-            notes_payload["sentiment_counts"]["positive"], notes_payload["sentiment_counts"]["neutral"], notes_payload["sentiment_counts"]["negative"],
+            "[TodayAdvice][Notes] raw_sentiment=%s normalized_sentiment=%s dataframe_sentiment=%s",
+            safe_json(notes_payload["raw_sentiment_counts"]),
+            safe_json(notes_payload["normalized_sentiment_counts"]),
+            safe_json(notes_payload["dataframe_sentiment_counts"]),
         )
         audit.info(
-            "[TodayAdvice][Notes] flags: fatigue=%s stress=%s social=%s achievement=%s self_care=%s sleep_issue=%s",
-            notes_payload["flag_counts"]["fatigue"], notes_payload["flag_counts"]["stress"], notes_payload["flag_counts"]["social_load"], notes_payload["flag_counts"]["achievement"], notes_payload["flag_counts"]["self_care"], notes_payload["flag_counts"]["sleep_issue"],
+            "[TodayAdvice][Notes] raw_flags=%s normalized_flags=%s dataframe_flags=%s",
+            safe_json(notes_payload["raw_flag_counts"]),
+            safe_json(notes_payload["normalized_flag_counts"]),
+            safe_json(notes_payload["dataframe_flag_counts"]),
         )
         reason_counts = notes_payload["fallback_reason_counts"]
         audit.info(
@@ -1144,9 +1152,9 @@ def generate_today_advice(
                 "[TodayAdvice][Regression] available=false reason=%s",
                 regression_payload.get("skipped_reason") or "unknown",
             )
-        tree_summary = run_tree_model_summary(feature_df)
-        audit.put("tree_model", tree_summary)
-        audit.info("[TodayAdvice][Tree] available=%s sample=%s", tree_summary.get("available"), tree_summary.get("sample_size"))
+        lightgbm_summary = run_lightgbm_low_mood(feature_df)
+        audit.put("lightgbm", lightgbm_summary)
+        audit.info("[TodayAdvice][LightGBM] available=%s sample=%s reason=%s", lightgbm_summary.get("available"), lightgbm_summary.get("sample_size"), lightgbm_summary.get("skipped_reason"))
 
         analysis_json = build_analysis_json(
             target_date=target_date,
@@ -1154,7 +1162,16 @@ def generate_today_advice(
             features_df=feature_df,
             exploratory_summary=exploratory_summary,
             regression_summary=regression_summary,
-            tree_summary=tree_summary,
+            lightgbm_summary=lightgbm_summary,
+            notes_label_quality={
+                "raw_sentiment_counts": notes_payload.get("raw_sentiment_counts", {}),
+                "raw_flag_counts": notes_payload.get("raw_flag_counts", {}),
+                "normalized_sentiment_counts": notes_payload.get("normalized_sentiment_counts", {}),
+                "normalized_flag_counts": notes_payload.get("normalized_flag_counts", {}),
+                "dataframe_sentiment_counts": notes_payload.get("dataframe_sentiment_counts", {}),
+                "dataframe_flag_counts": notes_payload.get("dataframe_flag_counts", {}),
+                "top_keywords": notes_payload.get("top_evidence_keywords", []),
+            },
         )
         today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")
         today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
@@ -1205,14 +1222,14 @@ def generate_today_advice(
         logging.warning("today_advice_pipeline_failed target_date=%s error=%s", target_date, exc)
         exploratory_summary = {"matched_today_conditions": []}
         regression_summary = {"available": False, "sample_size": 0, "top_positive_risk_features": [], "top_protective_features": []}
-        tree_summary = {"available": False, "sample_size": 0, "top_feature_importances": [], "representative_branches": []}
+        lightgbm_summary = {"available": False, "sample_size": 0, "feature_importances": [], "top_risk_features": [], "top_protective_features": [], "skipped_reason": "pipeline_failed"}
         analysis_json = {
             "target_date": target_date,
             "today_sleep_context": {"sleep_available": False, "sleep_invalid_reason": "pipeline_failed", "sleep_hours": None},
             "recent_7d_summary": {"behavior_trend": ["直近7日傾向はデータ不足"], "recording_trend": []},
             "exploratory_summary": {},
             "regression_summary": regression_summary,
-            "tree_summary": tree_summary,
+            "lightgbm_summary": lightgbm_summary,
             "risk_level": "low",
             "primary_focus": "負荷調整",
         }
@@ -1239,7 +1256,7 @@ def generate_today_advice(
         "notes_pattern_signal": analysis_json.get("notes_pattern_signal", ""),
         "location_pattern_signal": analysis_json.get("location_pattern_signal", ""),
         "regression_summary": regression_summary,
-        "tree_summary": tree_summary,
+        "lightgbm_summary": lightgbm_summary,
     }
     judgment_text = json.dumps(judgment_json, ensure_ascii=False)
     return MoodAdviceResult(
