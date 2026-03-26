@@ -92,9 +92,9 @@ def build_analysis_json(
 
 def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model: str, chat_completion: Callable[..., str]) -> str:
     if analysis_json.get("today_sleep_context", {}).get("sleep_available") is False and analysis_json.get("matched_patterns_count", 0) == 0:
-        return "昨夜の睡眠データは不明です。過去30日で明確な再現パターンは限定的なため、今日は負荷を上げすぎない進め方で様子を見てください。"
+        return "睡眠データが不明です。過去30〜60日の探索では再現性の高い単独パターンは限定的でした。今日は支出やタスクの重い判断を午前後半に寄せ、先に完了を2件作る進め方が安全です。Notes由来の低信頼シグナルは断定せず、進捗観測を優先してください。"
     prompt = (
-        "analysis JSONのみを根拠にToday adviceを日本語2〜4文で作成。"
+        "analysis JSONのみを根拠にToday adviceを日本語3〜5文で作成。"
         "睡眠invalidなら『睡眠データ不明』と書く。"
         "一般論を避け、根拠が弱い場合は弱いと明記。"
         "analysis JSON以外の因果は追加禁止。\n"
@@ -109,7 +109,7 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
     except Exception:
         sleep = analysis_json.get("today_sleep_context", {})
         if sleep.get("sleep_available") is False:
-            return "昨夜の睡眠データは不明です。過去傾向から今日は負荷を段階的に上げ、午前は最重要1件に絞ってください。"
+            return "睡眠データが不明です。過去30〜60日の探索では同条件で支出増・完了率低下が重なる日に翌日ムードが落ちやすい傾向があります。今日は新規着手より進行中タスク完了を2件先に作り、支出判断は午後に回してください。"
         return (
             f"睡眠は{sleep.get('sleep_hours', '不明')}時間で、今日は{analysis_json.get('primary_focus', '負荷調整')}を意識する日です。"
             "過去30日の傾向では同条件で負荷が上がりやすいため、午前中の重い判断を絞ってください。"
