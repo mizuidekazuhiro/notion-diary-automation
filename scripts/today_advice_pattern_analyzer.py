@@ -3,9 +3,17 @@ from __future__ import annotations
 from itertools import combinations
 from typing import Any
 
+LEAKAGE_COLUMNS = {
+    "target",
+    "next_day_mood_score",
+    "next_day_low_mood_flag",
+    "next_day_fatigue_flag",
+    "next_day_low_productivity_flag",
+}
+
 
 def _feature_columns(df: Any) -> list[str]:
-    excluded = {"date", "mood", "sleep_invalid_reason"}
+    excluded = {"date", "mood", "sleep_invalid_reason", *LEAKAGE_COLUMNS}
     return [c for c in df.columns if c not in excluded]
 
 
@@ -31,6 +39,7 @@ def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
             "evidence_used": [],
             "reason_codes": ["insufficient_history"],
         }
+
     feature_cols = _feature_columns(train)
     for col in feature_cols:
         if train[col].dtype == bool:
@@ -43,48 +52,49 @@ def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
     protective: list[dict[str, Any]] = []
     for col in feature_cols:
         series = train[col]
-        if series.dtype == object and col != "sleep_invalid_reason":
-            numeric_series = series.map({"positive": 1, "neutral": 0, "negative": -1}) if col == "notes_sentiment_label" else None
-            if numeric_series is not None and numeric_series.notna().sum() >= 5:
-                series = numeric_series
-            else:
-                continue
+        if series.dtype == object and col != "notes_sentiment_label":
+            continue
+        if col == "notes_sentiment_label":
+            series = series.map({"positive": 1, "neutral": 0, "negative": -1})
         else:
             series = series.astype(float) if str(series.dtype) != "bool" else series.astype(int)
         valid = series.notna()
         if int(valid.sum()) < 5:
             continue
-        low_mood_values = series[target == 1]
-        good_mood_values = series[target == 0]
-        low_mean = float(low_mood_values.mean()) if len(low_mood_values) else 0.0
-        good_mean = float(good_mood_values.mean()) if len(good_mood_values) else 0.0
-        delta = round(low_mean - good_mean, 3)
+        low = series[target == 1]
+        mid = series[(train["mood"] == 3)]
+        high = series[(train["mood"] >= 4)]
+        low_mean = float(low.mean()) if len(low) else 0.0
+        high_mean = float(high.mean()) if len(high) else 0.0
+        delta = round(low_mean - high_mean, 3)
         corr = float(series.fillna(0).corr(target)) if series.nunique(dropna=True) > 1 else 0.0
-        summary = {
-            "feature": col,
-            "count": int(valid.sum()),
-            "missing_count": int((~valid).sum()),
-            "low_group_mean": round(low_mean, 3),
-            "high_group_mean": round(good_mean, 3),
-            "mean": round(float(series.fillna(0).mean()), 3),
-            "median": round(float(series.dropna().median()), 3) if valid.any() else None,
-            "good_vs_bad_delta": delta,
-            "correlation_direction": "positive" if corr > 0.03 else "negative" if corr < -0.03 else "flat",
-            "correlation_value": round(corr, 3),
-        }
-        univariate_summary.append(summary)
-        ranked = {"feature": col, "delta": delta, "correlation": round(corr, 3), "support": int(valid.sum())}
+        univariate_summary.append(
+            {
+                "feature": col,
+                "count": int(valid.sum()),
+                "support": int(valid.sum()),
+                "mean": round(float(series.fillna(0).mean()), 3),
+                "median": round(float(series.dropna().median()), 3) if valid.any() else None,
+                "low_mood_mean": round(low_mean, 3),
+                "middle_mood_mean": round(float(mid.mean()), 3) if len(mid) else 0.0,
+                "high_mood_mean": round(high_mean, 3),
+                "delta": delta,
+                "correlation": round(corr, 3),
+            }
+        )
+        item = {"feature": col, "delta": delta, "correlation": round(corr, 3), "support": int(valid.sum())}
         if delta > 0:
-            risk.append(ranked)
+            risk.append(item)
         elif delta < 0:
-            protective.append(ranked)
+            protective.append(item)
+
     risk = sorted(risk, key=lambda x: (x["delta"], abs(x["correlation"])), reverse=True)[:8]
     protective = sorted(protective, key=lambda x: (x["delta"], -abs(x["correlation"])))[:8]
 
     bool_features = [c for c in feature_cols if train[c].dropna().isin([0, 1, True, False]).all()]
     combination_risk: list[dict[str, Any]] = []
     combination_good: list[dict[str, Any]] = []
-    for f1, f2 in combinations(bool_features[:12], 2):
+    for f1, f2 in combinations(bool_features[:16], 2):
         mask = train[f1].fillna(False).astype(bool) & train[f2].fillna(False).astype(bool)
         sample = int(mask.sum())
         if sample < 3:
@@ -101,6 +111,7 @@ def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
             combination_risk.append(item)
         else:
             combination_good.append(item)
+
     combination_risk = sorted(combination_risk, key=lambda x: (x["delta"], x["sample_size"]), reverse=True)[:5]
     combination_good = sorted(combination_good, key=lambda x: (x["delta"], -x["sample_size"]))[:5]
 
@@ -110,11 +121,13 @@ def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
         f1, f2 = item["features"]
         if bool(today.get(f1, False)) and bool(today.get(f2, False)):
             matched.append(item)
+
     evidence = []
     if risk:
         evidence.append({"source_type": "univariate", "feature": risk[0]["feature"], "delta": risk[0]["delta"]})
     if matched:
         evidence.append({"source_type": "combination", "features": matched[0]["features"], "delta": matched[0]["delta"]})
+
     return {
         "exploratory_target_name": "next_day_low_mood_flag",
         "univariate_summary": univariate_summary,

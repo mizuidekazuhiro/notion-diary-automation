@@ -9,7 +9,7 @@ from scripts.note_batch_labeler import label_notes_in_batches, parse_note_label_
 from scripts.today_advice_feature_builder import build_daily_feature_table
 from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
-from scripts.today_advice_tree_model import run_tree_model_summary
+from scripts.today_advice_lightgbm import run_lightgbm_low_mood
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
 
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
@@ -130,7 +130,7 @@ def test_analysis_json_builder() -> None:
         features_df=df,
         exploratory_summary={"matched_today_conditions": [], "top_single_features_for_low_mood": []},
         regression_summary={"available": False, "sample_size": 0},
-        tree_summary={"available": False, "sample_size": 0},
+        lightgbm_summary={"available": False, "sample_size": 0},
     )
     assert payload["target_date"] == "2026-03-10"
     assert "today_sleep_context" in payload
@@ -181,7 +181,7 @@ def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
         "features",
         "exploratory_analysis",
         "regression",
-        "tree_model",
+        "lightgbm",
         "today_match",
         "analysis_json",
         "final_text",
@@ -299,7 +299,7 @@ def test_invalid_sleep_day_keeps_non_sleep_features() -> None:
     assert df.iloc[0]["task_done_count"] == 3
 
 
-def test_analysis_json_contains_exploratory_regression_tree() -> None:
+def test_analysis_json_contains_exploratory_regression_lightgbm() -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
     hs = [_summary(i) for i in range(1, 12)]
@@ -310,11 +310,11 @@ def test_analysis_json_contains_exploratory_regression_tree() -> None:
         features_df=df,
         exploratory_summary=analyze_exploratory_patterns(df),
         regression_summary=run_low_mood_regression(df),
-        tree_summary=run_tree_model_summary(df),
+        lightgbm_summary=run_lightgbm_low_mood(df),
     )
     assert "exploratory_summary" in payload
     assert "regression_summary" in payload
-    assert "tree_summary" in payload
+    assert "lightgbm_summary" in payload
 
 
 def test_today_sleep_invalid_sets_sleep_available_false() -> None:
@@ -328,7 +328,7 @@ def test_today_sleep_invalid_sets_sleep_available_false() -> None:
         features_df=df,
         exploratory_summary=analyze_exploratory_patterns(df),
         regression_summary={"available": False, "sample_size": 0},
-        tree_summary={"available": False, "sample_size": 0},
+        lightgbm_summary={"available": False, "sample_size": 0},
     )
     assert bool(payload["today_sleep_context"]["sleep_available"]) is False
 
@@ -345,3 +345,45 @@ def test_today_advice_prompt_prefers_exploratory_evidence() -> None:
         chat_completion=lambda **kwargs: kwargs["user_prompt"],
     )
     assert "analysis=" in got
+
+
+def test_leakage_columns_excluded_from_rankings() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    hs = [_summary(i, mood="★" if i % 2 == 0 else "★★★★") for i in range(1, 16)]
+    df = build_daily_feature_table(hs, {})
+    result = analyze_exploratory_patterns(df)
+    ranked = [x["feature"] for x in result["top_single_features_for_low_mood"]]
+    assert "next_day_low_mood_flag" not in ranked
+    assert "next_day_mood_score" not in ranked
+
+
+def test_lightgbm_failure_has_specific_reason() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    hs = [_summary(i, mood="★★★★") for i in range(1, 8)]
+    df = build_daily_feature_table(hs, {})
+    result = run_lightgbm_low_mood(df)
+    assert "skipped_reason" in result
+    assert result["skipped_reason"] in {
+        "lightgbm_not_installed",
+        "insufficient_samples",
+        "single_class_target",
+        "too_many_missing_values",
+        "unsupported_dtype",
+        "fit_exception",
+    }
+
+
+def test_fallback_text_does_not_add_new_causality() -> None:
+    text = render_today_advice_from_analysis(
+        analysis_json={
+            "today_sleep_context": {"sleep_available": False, "sleep_hours": None},
+            "matched_patterns_count": 0,
+            "exploratory_summary": {"top_single_features_for_low_mood": []},
+        },
+        model="x",
+        chat_completion=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert "睡眠データは不明" in text
+    assert "明確な再現パターンは限定的" in text or "過去傾向" in text
