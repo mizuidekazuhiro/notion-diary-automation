@@ -177,13 +177,18 @@ Today advice は従来の Phase C 分離を維持したまま、内部で次の 
    `scripts/note_batch_labeler.py` が過去30日 Notes をまとめて GPT へ渡し、日次ラベル JSON（sentiment / fatigue / stress / social_load / achievement / self_care / sleep_issue）を返します。空Notesや JSON パース失敗時は neutral フォールバックです。
 2. **日次特徴量テーブル作成**  
    `scripts/today_advice_feature_builder.py` が pandas DataFrame を作り、sleep / mood / task / spending / notes ラベル特徴を 1 日 1 行で統合します。
-3. **条件別翌日悪化率（lag1）集計**  
-   `scripts/today_advice_pattern_analyzer.py` が `prev_* -> next_day_*` の hit_rate, baseline, delta, confidence を算出し、採用条件を満たすパターンだけを候補化します。
-4. **ロジスティック回帰（補助分析）**  
-   `scripts/today_advice_regression.py` が翌日 low mood を目的変数に LogisticRegression を実行し、上位リスク特徴と保護特徴を補助情報として出します（成立しない場合はスキップ）。
-5. **分析済み JSON 生成**  
-   `scripts/today_advice_renderer.py` が `today_sleep_context`, `recent_7d_summary`, `matched_patterns`, `regression_summary`, `risk_level`, `primary_focus` をまとめた分析済み JSON を生成します。
-6. **分析済み JSON のみで本文生成**  
+3. **探索型分析（単変量 + 組み合わせ）**  
+   `scripts/today_advice_pattern_analyzer.py` が 30〜60 日の特徴量を広く見て、`next_day_low_mood_flag` を主目的変数に単変量差分・相関方向・特徴量組み合わせパターン（条件の組）を抽出します。固定 if ルールは主軸にしません。
+4. **回帰分析（補助）**  
+   `scripts/today_advice_regression.py` が翌日 low mood を目的変数に LogisticRegression を実行し、上位リスク特徴と保護特徴を補助情報として出します（サンプル不足時は自動スキップ）。
+5. **木モデル（組み合わせ探索）**  
+   `scripts/today_advice_tree_model.py` が shallow decision tree を用いて、代表分岐と重要特徴量を出力します。単独要因ではなく「組み合わせで落ちやすい条件」を確認するための補助です。
+6. **分析済み JSON 生成**  
+   `scripts/today_advice_renderer.py` が `today_sleep_context`, `data_quality`, `exploratory_summary`, `recent_7d_summary`, `regression_summary`, `tree_summary`, `matched_today_conditions` をまとめます。
+   - `sleep_duration_min <= 0`（Apple Watch 未装着など）は短時間睡眠ではなく欠損扱いです。
+   - `sleep_valid_flag=false`, `sleep_invalid_reason=zero_duration|missing_duration|negative_duration|missing_all_sleep_fields` を付与し、sleep 系分析から除外します。
+   - 当日 sleep が invalid の場合は `today_sleep_context.sleep_available=false` になり、sleep 根拠の助言を抑制します。
+7. **分析済み JSON のみで本文生成**  
    GPT には生の30日 Notes を再投入せず、分析済み JSON のみを渡して Today advice 日本語本文を作ります。GPT 失敗時はルールベース文へフォールバックします。
 
 ### Today advice 分析監査ログ（analysis_audit）
@@ -193,9 +198,10 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - A. データ取得 (`[TodayAdvice][Fetch]`): 分析期間、取得件数、欠損件数。
 - B. Notes ラベル化 (`[TodayAdvice][Notes]`): 対象件数、API 呼び出し件数、感情/フラグ件数（Notes 本文全文は出力しない）。
 - C. 特徴量作成 (`[TodayAdvice][Features]`): DataFrame 行列数、作成列、主要フラグ件数。
-- D. lag 分析 (`[TodayAdvice][Lag]`): `pattern_id / target_outcome / sample_size / hit_rate / baseline_rate / delta / adopted / confidence`。
+- D. exploratory 分析 (`[TodayAdvice][Exploratory]`): 単変量差分、保護/リスク特徴、条件組み合わせ（low/high mood 側）。
 - E. 回帰分析 (`[TodayAdvice][Regression]`): 実行可否、サンプル数、上位特徴量、スキップ理由。
-- F. 今日一致判定 (`[TodayAdvice][TodayMatch]`): 当日 sleep 文脈、一致ルール、risk/focus。
+- F. 木モデル (`[TodayAdvice][Tree]`): 実行可否、サンプル数、上位特徴量、代表分岐。
+- G. 今日一致判定 (`[TodayAdvice][TodayMatch]`): 当日 sleep の有効/欠損理由、一致パターン、risk/focus、根拠配列。
 - G. GPT 入力分析 JSON (`[TodayAdvice][AnalysisJSON]`)
 - H. 最終本文 (`[TodayAdvice][FinalText]`)
 
@@ -210,8 +216,9 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - `fetch`
 - `notes_labeling`
 - `features`
-- `lag_analysis`
+- `exploratory_analysis`
 - `regression`
+- `tree_model`
 - `today_match`
 - `analysis_json`
 - `final_text`
@@ -220,8 +227,8 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 
 - 「30日分が取れているか」→ `fetch.fetched_count` / `fetch.usable_rows_count`
 - 「Notes が分析に入っているか」→ `notes_labeling.non_empty_count` / `notes_labeling.flag_counts`
-- 「非 sleep の過去実績が analysis JSON に残るか」→ `analysis_json.recent_7d_summary`, `analysis_json.matched_patterns`, `analysis_json.regression_summary`
-- 「どの条件が採用されたか」→ `lag_analysis.patterns[*].adopted`
+- 「非 sleep の過去実績が analysis JSON に残るか」→ `analysis_json.exploratory_summary`, `analysis_json.recent_7d_summary`, `analysis_json.regression_summary`, `analysis_json.tree_summary`
+- 「どの条件の組み合わせが採用されたか」→ `analysis_json.matched_today_conditions`, `exploratory_analysis.top_combination_patterns_for_low_mood`
 - 「本文の根拠追跡」→ `analysis_json` と `final_text`
 
 ### なぜ1日ずつではなく一括ラベル化するか
@@ -238,7 +245,7 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 ### ルール再確認
 - Today advice は **today sleep only / non-sleep historical only** を維持します。
 - 当日 Notes は today advice に使いません（Notes は過去30日の履歴分析のみ）。
-- 回帰分析は補助情報で、最終判定は条件別集計（lag パターン）を優先します。
+- 回帰分析と木モデルは補助情報で、主軸は exploratory_summary（単変量 + 組み合わせ探索）です。
 - OpenAI 失敗時も neutral ラベルと本文フォールバックで Phase C を止めません。
 
 ## Debug ログの見方

@@ -4,12 +4,26 @@ from typing import Any
 
 
 FEATURES = [
+    "sleep_valid_flag",
     "sleep_hours",
     "bedtime_min",
     "sleep_score",
+    "sleep_vs_7d_delta",
+    "sleep_score_vs_7d_delta",
     "spending_total",
+    "spending_vs_7d_delta",
     "task_done_count",
     "task_drop_count",
+    "task_completion_ratio",
+    "done_vs_7d_delta",
+    "drop_vs_7d_delta",
+    "kcal",
+    "protein",
+    "fat",
+    "carb",
+    "protein_vs_7d_delta",
+    "fat_vs_7d_delta",
+    "carb_vs_7d_delta",
     "notes_sentiment_score",
     "notes_fatigue_flag",
     "notes_stress_flag",
@@ -42,6 +56,13 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
     work = df.copy().sort_values("date").reset_index(drop=True)
     work["target"] = (work["mood"].shift(-1).fillna(5) <= 2).astype(int)
     train = work.iloc[:-1].copy()
+    for col in FEATURES:
+        if col not in train.columns:
+            train[col] = 0.0
+    # sleep invalid days are kept as non-sleep signal days, while sleep features remain missing then imputed.
+    for col in ("sleep_hours", "bedtime_min", "sleep_score", "sleep_vs_7d_delta", "sleep_score_vs_7d_delta"):
+        if col in train:
+            train.loc[~train["sleep_valid_flag"].fillna(False), col] = float("nan")
     if len(train) < 8 or train["target"].nunique() < 2:
         return {
             **base,
