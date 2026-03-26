@@ -7,8 +7,9 @@ import pytest
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts.note_batch_labeler import label_notes_in_batches, parse_note_label_json
 from scripts.today_advice_feature_builder import build_daily_feature_table
-from scripts.today_advice_pattern_analyzer import analyze_lag_patterns
+from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
+from scripts.today_advice_tree_model import run_tree_model_summary
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
 
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
@@ -96,9 +97,9 @@ def test_lag_pattern_decision_thresholds() -> None:
     histories = [_summary(i, mood="★" if i % 2 == 0 else "★★★★", notes="疲れ") for i in range(1, 12)]
     labels = {h.target_date: parse_note_label_json('[{"date":"%s","fatigue_flag":true,"sentiment_label":"negative","sentiment_score":-1}]' % h.target_date, [{"date": h.target_date, "notes": h.notes}])[0] for h in histories}
     df = build_daily_feature_table(histories, labels)
-    result = analyze_lag_patterns(df)
-    assert len(result["all_patterns"]) >= 8
-    assert all("confidence" in item for item in result["all_patterns"])
+    result = analyze_exploratory_patterns(df)
+    assert len(result["univariate_summary"]) >= 8
+    assert "top_combination_patterns_for_low_mood" in result
 
 
 def test_logistic_regression_minimum_run() -> None:
@@ -123,7 +124,14 @@ def test_analysis_json_builder() -> None:
     histories = [_summary(i) for i in range(1, 10)]
     labels = {h.target_date: parse_note_label_json('[{"date":"%s"}]' % h.target_date, [{"date": h.target_date, "notes": h.notes}])[0] for h in histories}
     df = build_daily_feature_table(histories, labels)
-    payload = build_analysis_json(target_date="2026-03-10", today_summary=_summary(10), features_df=df, adopted_patterns=[], regression_summary={"available": False, "sample_size": 0})
+    payload = build_analysis_json(
+        target_date="2026-03-10",
+        today_summary=_summary(10),
+        features_df=df,
+        exploratory_summary={"matched_today_conditions": [], "top_single_features_for_low_mood": []},
+        regression_summary={"available": False, "sample_size": 0},
+        tree_summary={"available": False, "sample_size": 0},
+    )
     assert payload["target_date"] == "2026-03-10"
     assert "today_sleep_context" in payload
     assert "recent_7d_summary" in payload
@@ -141,11 +149,11 @@ def test_gpt_failure_fallback_message() -> None:
 
 def test_no_pattern_no_evidence_returns_unknown_pattern_message() -> None:
     text = render_today_advice_from_analysis(
-        analysis_json={"matched_patterns": [], "evidence_used": [], "today_sleep_context": {"sleep_hours": 6.2}},
+        analysis_json={"matched_patterns_count": 0, "exploratory_summary": {"top_single_features_for_low_mood": []}, "today_sleep_context": {"sleep_available": False, "sleep_hours": 6.2}},
         model="x",
         chat_completion=lambda **kwargs: "一般論です。",
     )
-    assert text == "過去30日で明確な再現パターンは不明です。"
+    assert "明確な再現パターンは限定的" in text
 
 
 def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
@@ -171,8 +179,9 @@ def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
         "fetch",
         "notes_labeling",
         "features",
-        "lag_analysis",
+        "exploratory_analysis",
         "regression",
+        "tree_model",
         "today_match",
         "analysis_json",
         "final_text",
@@ -184,7 +193,7 @@ def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
         assert key in audit
 
 
-def test_lag_analysis_is_included_in_audit_log(monkeypatch) -> None:
+def test_exploratory_analysis_is_included_in_audit_log(monkeypatch) -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
     import scripts.mood_advice_generator as generator
@@ -197,9 +206,9 @@ def test_lag_analysis_is_included_in_audit_log(monkeypatch) -> None:
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
-    lag = result.judgment_json["analysis_audit"]["lag_analysis"]
-    assert lag["evaluated_count"] > 0
-    assert any("pattern_id" in item and "target_outcome" in item for item in lag["patterns"])
+    exploratory = result.judgment_json["analysis_audit"]["exploratory_analysis"]
+    assert exploratory["exploratory_feature_count"] > 0
+    assert isinstance(exploratory["top_single_features_for_low_mood"], list)
 
 
 def test_notes_label_count_reflected_in_audit_log(monkeypatch) -> None:
@@ -252,3 +261,87 @@ def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
     assert result.judgment_json["analysis_audit"]["final_text"]["text"] == "これは最終本文です。"
+
+
+def test_sleep_duration_zero_marked_invalid() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    h = _summary(1, sleep_duration_min=0)
+    df = build_daily_feature_table([h], {})
+    assert bool(df.iloc[0]["sleep_valid_flag"]) is False
+    assert df.iloc[0]["sleep_invalid_reason"] == "zero_duration"
+
+
+def test_invalid_sleep_not_treated_as_short_sleep() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    h = _summary(1, sleep_duration_min=0)
+    df = build_daily_feature_table([h], {})
+    assert bool(df.iloc[0]["sleep_lt_6h_flag"]) is False
+
+
+def test_invalid_sleep_excluded_from_sleep_lag_features() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    hs = [_summary(1, sleep_duration_min=0), _summary(2, sleep_duration_min=420)]
+    df = build_daily_feature_table(hs, {})
+    assert str(df.iloc[0]["sleep_hours"]) == "nan"
+    assert df.iloc[0]["sleep_vs_7d_delta"] != df.iloc[0]["sleep_vs_7d_delta"]
+
+
+def test_invalid_sleep_day_keeps_non_sleep_features() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    h = _summary(1, sleep_duration_min=0, notes="疲れ", kcal=2000, protein=100, done_count=3)
+    df = build_daily_feature_table([h], {})
+    assert bool(df.iloc[0]["notes_present_flag"]) is True
+    assert df.iloc[0]["protein"] == 100
+    assert df.iloc[0]["task_done_count"] == 3
+
+
+def test_analysis_json_contains_exploratory_regression_tree() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    hs = [_summary(i) for i in range(1, 12)]
+    df = build_daily_feature_table(hs, {})
+    payload = build_analysis_json(
+        target_date="2026-03-12",
+        today_summary=_summary(12),
+        features_df=df,
+        exploratory_summary=analyze_exploratory_patterns(df),
+        regression_summary=run_low_mood_regression(df),
+        tree_summary=run_tree_model_summary(df),
+    )
+    assert "exploratory_summary" in payload
+    assert "regression_summary" in payload
+    assert "tree_summary" in payload
+
+
+def test_today_sleep_invalid_sets_sleep_available_false() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    hs = [_summary(i, sleep_duration_min=420) for i in range(1, 8)] + [_summary(8, sleep_duration_min=0)]
+    df = build_daily_feature_table(hs, {})
+    payload = build_analysis_json(
+        target_date="2026-03-08",
+        today_summary=_summary(8, sleep_duration_min=0),
+        features_df=df,
+        exploratory_summary=analyze_exploratory_patterns(df),
+        regression_summary={"available": False, "sample_size": 0},
+        tree_summary={"available": False, "sample_size": 0},
+    )
+    assert bool(payload["today_sleep_context"]["sleep_available"]) is False
+
+
+def test_today_advice_prompt_prefers_exploratory_evidence() -> None:
+    analysis = {
+        "matched_patterns_count": 1,
+        "exploratory_summary": {"top_single_features_for_low_mood": [{"feature": "notes_stress_flag"}]},
+        "today_sleep_context": {"sleep_available": False, "sleep_hours": None},
+    }
+    got = render_today_advice_from_analysis(
+        analysis_json=analysis,
+        model="x",
+        chat_completion=lambda **kwargs: kwargs["user_prompt"],
+    )
+    assert "analysis=" in got
