@@ -554,7 +554,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     def render_items(items: Iterable[TaskEntry], remaining: int) -> List[str]:
         lines = []
         if not items:
-            lines.append("- —")
+            return lines
         else:
             for item in items:
                 lines.append(f"- {item.title} (Priority: {item.priority})")
@@ -646,18 +646,20 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         ("Sleep Source", sleep_source),
     ]
     visible_sleep_lines = [f"- {label}: {value}" for label, value in sleep_lines if value]
-    if visible_sleep_lines:
-        lines += ["", "Sleep & Condition", *visible_sleep_lines]
-
     lines += [
         "",
         "Diary",
         diary or "—",
         "",
+    ]
+    if visible_sleep_lines:
+        lines += ["", "Sleep & Condition", *visible_sleep_lines]
+
+    lines += [
+        "",
         "Summary",
         f"- Expenses total: {expenses_total}",
         f"- Location summary: {location_summary}",
-        f"- Mood: {mood}",
         f"- Weight: {weight}",
         "",
         "Expenses (昨日の支出)",
