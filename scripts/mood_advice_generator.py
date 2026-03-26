@@ -16,8 +16,9 @@ import requests
 from publish.read_daily_log import DailyLogSummary, read_daily_log
 from scripts.note_batch_labeler import label_notes_in_batches
 from scripts.today_advice_feature_builder import build_daily_feature_table
-from scripts.today_advice_pattern_analyzer import analyze_lag_patterns
+from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
+from scripts.today_advice_tree_model import run_tree_model_summary
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
 from scripts.today_advice_audit import (
     TodayAdviceAuditLogger,
@@ -1058,6 +1059,10 @@ def generate_today_advice(
                     "raw_sleep_duration_min": raw_sleep_duration_min,
                     "derived_sleep_hours": round(float(derived_sleep_hours), 2) if derived_sleep_hours is not None and not math.isnan(float(derived_sleep_hours)) else None,
                     "raw_sleep_score": raw_sleep_score,
+                    "source_field_name_duration": "sleep_duration_min",
+                    "source_field_name_score": "sleep_score",
+                    "sleep_valid_flag": bool(row.get("sleep_valid_flag", False)),
+                    "sleep_invalid_reason": row.get("sleep_invalid_reason"),
                     "sleep_hours_missing_flag": bool(raw_sleep_duration_min is None),
                     "sleep_score_missing_flag": bool(raw_sleep_score is None),
                 }
@@ -1066,6 +1071,9 @@ def generate_today_advice(
             "row_count": int(len(feature_df.index)) if not feature_df.empty else 0,
             "column_count": int(len(feature_df.columns)) if not feature_df.empty else 0,
             "created_columns": [str(col) for col in feature_df.columns],
+            "sleep_valid_count": int(feature_df["sleep_valid_flag"].fillna(False).sum()) if "sleep_valid_flag" in feature_df else 0,
+            "sleep_invalid_count": int((~feature_df["sleep_valid_flag"].fillna(False)).sum()) if "sleep_valid_flag" in feature_df else 0,
+            "invalid_reason_counts": feature_df["sleep_invalid_reason"].fillna("unknown").value_counts().to_dict() if "sleep_invalid_reason" in feature_df else {},
             "flag_counts": {
                 "sleep_lt_6h_flag_count": int(feature_df["sleep_lt_6h_flag"].fillna(False).sum()) if "sleep_lt_6h_flag" in feature_df else 0,
                 "bedtime_after_0100_flag_count": int(feature_df["bedtime_after_0100_flag"].fillna(False).sum()) if "bedtime_after_0100_flag" in feature_df else 0,
@@ -1110,31 +1118,15 @@ def generate_today_advice(
         )
         audit.info("[TodayAdvice][Features] sleep_conversion_samples=%s", safe_json(sleep_conversion_samples))
 
-        lag_result = analyze_lag_patterns(feature_df)
-        adopted_patterns = [
-            item for item in lag_result["adopted_patterns"] if item.get("target_outcome") == "next_day_low_mood_flag"
-        ]
-        for pattern in lag_result.get("all_patterns", []):
-            audit.info(
-                "[TodayAdvice][Lag] pattern=%s outcome=%s sample=%s hit=%.2f base=%.2f delta=%.2f adopted=%s confidence=%s",
-                pattern.get("pattern_id"),
-                pattern.get("target_outcome"),
-                int(pattern.get("sample_size", 0) or 0),
-                float(pattern.get("hit_rate", 0.0) or 0.0),
-                float(pattern.get("baseline_rate", 0.0) or 0.0),
-                float(pattern.get("delta", 0.0) or 0.0),
-                bool(pattern.get("adopted", False)),
-                pattern.get("confidence", "low"),
-            )
-        lag_payload = {
-            "conditions": lag_result.get("conditions", []),
-            "evaluated_count": int(lag_result.get("evaluated_count", len(lag_result.get("all_patterns", []))) or 0),
-            "adopted_count": int(lag_result.get("adopted_count", len(lag_result.get("adopted_patterns", []))) or 0),
-            "patterns": lag_result.get("all_patterns", []),
-            "adopted_patterns": lag_result.get("adopted_patterns", []),
-        }
-        audit.put("lag_analysis", lag_payload)
-        audit.info("[TodayAdvice][Lag] evaluated=%s adopted=%s", lag_payload["evaluated_count"], lag_payload["adopted_count"])
+        exploratory_summary = analyze_exploratory_patterns(feature_df)
+        audit.put("exploratory_analysis", {
+            "exploratory_feature_count": len(feature_df.columns),
+            "exploratory_target_name": exploratory_summary.get("exploratory_target_name"),
+            "top_single_features_for_low_mood": exploratory_summary.get("top_single_features_for_low_mood", []),
+            "top_protective_features": exploratory_summary.get("top_protective_features", []),
+            "top_combination_patterns_for_low_mood": exploratory_summary.get("top_combination_patterns_for_low_mood", []),
+            "top_combination_patterns_for_high_mood": exploratory_summary.get("top_combination_patterns_for_high_mood", []),
+        })
 
         regression_summary = run_low_mood_regression(feature_df)
         regression_payload = summarize_regression(regression_summary)
@@ -1152,15 +1144,19 @@ def generate_today_advice(
                 "[TodayAdvice][Regression] available=false reason=%s",
                 regression_payload.get("skipped_reason") or "unknown",
             )
+        tree_summary = run_tree_model_summary(feature_df)
+        audit.put("tree_model", tree_summary)
+        audit.info("[TodayAdvice][Tree] available=%s sample=%s", tree_summary.get("available"), tree_summary.get("sample_size"))
 
         analysis_json = build_analysis_json(
             target_date=target_date,
             today_summary=today_summary,
             features_df=feature_df,
-            adopted_patterns=adopted_patterns,
+            exploratory_summary=exploratory_summary,
             regression_summary=regression_summary,
+            tree_summary=tree_summary,
         )
-        today_sleep_hours = round((today_summary.sleep_duration_min or 0) / 60.0, 2) if today_summary.sleep_duration_min is not None else None
+        today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")
         today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
         today_sleep_score = today_summary.sleep_score
         today_condition_flags = {
@@ -1168,11 +1164,11 @@ def generate_today_advice(
             "prev_bedtime_after_0100": bool(today_bedtime is not None and today_bedtime >= "01:00"),
             "prev_sleep_score_low": bool(today_sleep_score is not None and today_sleep_score < 70),
         }
-        matched_pattern_ids = [
-            item.get("pattern_id") for item in adopted_patterns if today_condition_flags.get(str(item.get("pattern_id")), False)
-        ]
+        matched_pattern_ids = [",".join(item.get("features", [])) for item in exploratory_summary.get("matched_today_conditions", [])]
         today_match_payload = {
             "today_sleep_context": {
+                "sleep_available": analysis_json.get("today_sleep_context", {}).get("sleep_available"),
+                "sleep_invalid_reason": analysis_json.get("today_sleep_context", {}).get("sleep_invalid_reason"),
                 "sleep_hours": today_sleep_hours,
                 "bedtime": today_bedtime,
                 "sleep_score": today_sleep_score,
@@ -1182,6 +1178,8 @@ def generate_today_advice(
             "matched_pattern_ids": matched_pattern_ids,
             "risk_level": analysis_json.get("risk_level"),
             "primary_focus": analysis_json.get("primary_focus"),
+            "evidence_used": analysis_json.get("evidence_used", []),
+            "reason_codes": analysis_json.get("reason_codes", []),
         }
         audit.put("today_match", today_match_payload)
         audit.info("[TodayAdvice][TodayMatch] sleep_hours=%s bedtime=%s sleep_score=%s", today_sleep_hours, today_bedtime, today_sleep_score)
@@ -1205,14 +1203,16 @@ def generate_today_advice(
         audit.info("[TodayAdvice][FinalText] %s", today_advice)
     except Exception as exc:
         logging.warning("today_advice_pipeline_failed target_date=%s error=%s", target_date, exc)
-        adopted_patterns = []
+        exploratory_summary = {"matched_today_conditions": []}
         regression_summary = {"available": False, "sample_size": 0, "top_positive_risk_features": [], "top_protective_features": []}
+        tree_summary = {"available": False, "sample_size": 0, "top_feature_importances": [], "representative_branches": []}
         analysis_json = {
             "target_date": target_date,
-            "today_sleep_context": {"sleep_hours": (today_summary.sleep_duration_min or 0) / 60.0 if today_summary.sleep_duration_min is not None else None},
+            "today_sleep_context": {"sleep_available": False, "sleep_invalid_reason": "pipeline_failed", "sleep_hours": None},
             "recent_7d_summary": {"behavior_trend": ["直近7日傾向はデータ不足"], "recording_trend": []},
-            "matched_patterns": [],
+            "exploratory_summary": {},
             "regression_summary": regression_summary,
+            "tree_summary": tree_summary,
             "risk_level": "low",
             "primary_focus": "負荷調整",
         }
@@ -1224,7 +1224,7 @@ def generate_today_advice(
         audit.info("[TodayAdvice][FinalText] %s", today_advice)
     audit.put("notes_fallback_reason_counts", audit.payload["analysis_audit"].get("notes_labeling", {}).get("fallback_reason_counts", {}))
     audit.put("sleep_feature_conversion_samples", audit.payload["analysis_audit"].get("features", {}).get("sleep_feature_conversion_samples", []))
-    audit.put("matched_patterns_count", int(analysis_json.get("matched_patterns_count", len(analysis_json.get("matched_patterns", [])))))
+    audit.put("matched_patterns_count", int(analysis_json.get("matched_patterns_count", 0)))
     audit.put("evidence_used", list(analysis_json.get("evidence_used", [])))
     fallback_used = not bool(today_advice.strip())
     logging.info("today_advice_fallback_used=%s", fallback_used)
@@ -1232,13 +1232,14 @@ def generate_today_advice(
     judgment_json = {
         "analysis_json": analysis_json,
         "analysis_audit": audit.payload["analysis_audit"],
-        "matched_pattern_count": len(adopted_patterns),
-        "matched_patterns_count": int(analysis_json.get("matched_patterns_count", len(analysis_json.get("matched_patterns", [])))),
+        "matched_pattern_count": len(exploratory_summary.get("matched_today_conditions", [])),
+        "matched_patterns_count": int(analysis_json.get("matched_patterns_count", 0)),
         "evidence_used": list(analysis_json.get("evidence_used", [])),
         "meal_signal": analysis_json.get("meal_signal", ""),
         "notes_pattern_signal": analysis_json.get("notes_pattern_signal", ""),
         "location_pattern_signal": analysis_json.get("location_pattern_signal", ""),
         "regression_summary": regression_summary,
+        "tree_summary": tree_summary,
     }
     judgment_text = json.dumps(judgment_json, ensure_ascii=False)
     return MoodAdviceResult(
