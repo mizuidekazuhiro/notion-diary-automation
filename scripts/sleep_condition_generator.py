@@ -151,6 +151,19 @@ def build_sleep_insight_context(
     )
 
 
+
+
+def _is_invalid_sleep_record(summary: DailyLogSummary) -> tuple[bool, str | None]:
+    duration = _safe_float(summary.sleep_duration_min)
+    score = _safe_float(summary.sleep_score)
+    if duration is None:
+        return True, "missing_duration"
+    if duration <= 0:
+        if duration == 0 and score == 0:
+            return True, "duration_and_score_zero"
+        return True, "duration_non_positive"
+    return False, None
+
 def load_recent_daily_logs(
     *,
     daily_log_read_url: str,
@@ -342,6 +355,13 @@ def maybe_generate_sleep_insights(
     today_summary: DailyLogSummary,
     history_summaries: Sequence[DailyLogSummary],
 ) -> dict[str, str]:
+    invalid, reason = _is_invalid_sleep_record(today_summary)
+    if invalid:
+        logging.info("phase_c_sleep_invalid target_date=%s sleep_invalid_reason=%s sleep_text_mode=missing", target_date, reason)
+        return {
+            "sleep_analysis_jp": "昨夜の睡眠データは取得できていません。Apple Watch 未装着などにより記録が欠損している可能性があります。",
+            "today_condition_forecast_jp": "睡眠データが不明のため、睡眠に基づく今日の見通しは判定できません。",
+        }
     context = build_sleep_insight_context(
         today_summary=today_summary,
         history_summaries=history_summaries,
