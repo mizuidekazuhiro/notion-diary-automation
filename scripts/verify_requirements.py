@@ -1,6 +1,7 @@
 import re
 import os
 from pathlib import Path
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_TS = ROOT / "workers" / "src" / "index.ts"
@@ -145,6 +146,9 @@ def main() -> None:
             "Daily log relation query should require date is_not_empty.",
         )
 
+    for dep in ["pandas", "numpy", "sklearn", "lightgbm"]:
+        if importlib.util.find_spec(dep) is None:
+            raise AssertionError(f"Required dependency is missing: {dep}")
     print("All requirement checks passed.")
 
 

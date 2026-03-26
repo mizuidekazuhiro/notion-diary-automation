@@ -49,6 +49,9 @@ def _sleep_validity(summary: DailyLogSummary) -> tuple[bool, str | None, float |
         return False, "missing_duration", None
     if duration < 0:
         return False, "negative_duration", None
+    score = _safe_float(summary.sleep_score)
+    if duration == 0 and score == 0:
+        return False, "zero_duration_and_score_zero", None
     if duration == 0:
         return False, "zero_duration", None
     return True, None, duration
@@ -117,12 +120,41 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "notes_present_flag": bool(notes_text.strip()),
                 "notes_sentiment_label": label.sentiment_label,
                 "notes_sentiment_score": int(label.sentiment_score),
+                "sentiment_unknown": label.sentiment_label == "unknown",
+                "no_signal_note": bool(label.no_signal_note),
+                "parse_low_confidence": bool(label.parse_low_confidence),
+                "tag_extract_failed": bool(label.tag_extract_failed),
                 "notes_fatigue_flag": bool(label.fatigue_flag),
                 "notes_stress_flag": bool(label.stress_flag),
                 "notes_social_load_flag": bool(label.social_load_flag),
                 "notes_achievement_flag": bool(label.achievement_flag),
                 "notes_self_care_flag": bool(label.self_care_flag),
                 "notes_sleep_issue_flag": bool(label.sleep_issue_flag),
+                "notes_has_exercise": bool(label.derived_flags.get("exercise") or any(s.get("tag") in {"exercise","gym"} for s in label.signals)),
+                "notes_has_social": any(s.get("tag") == "social" for s in label.signals),
+                "notes_has_drinking": any(s.get("tag") == "drinking" for s in label.signals),
+                "notes_has_conflict": any(s.get("tag") == "conflict" for s in label.signals),
+                "notes_has_regret": any(s.get("tag") == "regret" for s in label.signals),
+                "notes_has_productive": any(s.get("tag") == "productive" for s in label.signals),
+                "notes_has_moderate_productivity": any(s.get("tag") == "moderate_productivity" for s in label.signals),
+                "notes_has_money_saved": any(s.get("tag") == "money_saved" for s in label.signals),
+                "notes_has_diet_disruption": any(s.get("tag") == "meal_disruption" for s in label.signals),
+                "notes_has_late_work": any(s.get("tag") == "late_work" for s in label.signals),
+                "notes_has_early_home": any(s.get("tag") == "early_home" for s in label.signals),
+                "notes_has_business_trip": any(s.get("tag") == "business_trip" for s in label.signals),
+                "notes_has_dc_work": any(s.get("tag") == "dc_work" for s in label.signals),
+                "notes_has_presentation_work": any(s.get("tag") == "presentation_work" for s in label.signals),
+                "notes_signal_count": len(label.signals),
+                "notes_positive_signal_count": sum(1 for s in label.signals if s.get("polarity") == "positive"),
+                "notes_negative_signal_count": sum(1 for s in label.signals if s.get("polarity") == "negative"),
+                "notes_behavior_signal_count": sum(1 for s in label.signals if s.get("category") == "behavior"),
+                "notes_state_signal_count": sum(1 for s in label.signals if s.get("category") == "state"),
+                "notes_avg_confidence": (sum(float(s.get("confidence") or 0.0) for s in label.signals) / len(label.signals)) if label.signals else 0.0,
+                "notes_parse_quality_score": {"low": 0.2, "medium": 0.6, "high": 1.0}.get(label.parse_quality, 0.2),
+                "notes_recovery_like_flag": bool(label.derived_flags.get("recovery_like_flag")),
+                "notes_self_control_flag": bool(label.derived_flags.get("self_control_flag")),
+                "notes_work_progress_flag": bool(label.derived_flags.get("work_progress_flag")),
+                "notes_life_disruption_flag": bool(label.derived_flags.get("life_disruption_flag")),
                 "meal_logged_flag": bool(meal_text.strip()) or any(v is not None for v in (item.kcal, item.protein, item.fat, item.carb)),
                 "kcal": _safe_float(item.kcal),
                 "protein": _safe_float(item.protein),
@@ -171,6 +203,17 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
     threshold = float(q.quantile(0.75)) if len(q) else float("inf")
     df["spending_high_flag"] = df["spending_total"].fillna(0) >= threshold
     df["sleep_lt_6h_flag"] = (df["sleep_valid_flag"]) & (df["sleep_hours"] < 6)
+
+
+    # aliases required by regression/exploratory naming
+    for src, dst in [
+        ("notes_fatigue_flag", "notes_has_fatigue"),
+        ("notes_stress_flag", "notes_has_stress"),
+        ("notes_achievement_flag", "notes_has_achievement"),
+        ("notes_sleep_issue_flag", "notes_has_sleep_issue"),
+    ]:
+        if src in df.columns and dst not in df.columns:
+            df[dst] = df[src].fillna(False).astype(bool)
 
     quality_cols = ["notes_present_flag", "meal_logged_flag", "location_present_flag", "sleep_valid_flag"]
     df["data_quality_score"] = df[quality_cols].astype(int).mean(axis=1).round(2)

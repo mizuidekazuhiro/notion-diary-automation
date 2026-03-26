@@ -264,3 +264,13 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
   - `phase_c_diary_input_summary ... debug_summary=...`
   - `phase_c_diary_saved updated=true/false`
 - いずれも secrets は含めません。
+
+## notify_diary 最新仕様メモ（2026-03 更新）
+
+- Notes解析は sentiment 主体ではなく GPT 構造化抽出主体です（signals + derived flags）。
+- Notes 抽出は unknown/low-confidence を保持し、unknown を neutral に丸めません。
+- `sleep_duration_min <= 0`（または duration=0 かつ score=0）は睡眠欠損として扱い、睡眠分析文・見通し文は欠損用テンプレートを返します。
+- Today advice は固定ルールではなく 30〜60 日の探索型分析結果（exploratory/regression/LightGBM）を根拠に構成します。
+- LightGBM を正式依存として導入しています（`requirements.txt` / CI install / verify 対応）。
+- メール本文セクション順は `Today advice -> Diary -> Sleep & Condition -> Summary -> Tasks -> Meal summary` です。
+- Drop 0 件時は `- None` / `- —` のダミー明細を表示しません（件数と本文を一致）。
