@@ -70,6 +70,10 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "sleep_analysis_jp": summary.sleep_analysis_jp,
         "today_condition_forecast_jp": summary.today_condition_forecast_jp,
         "today_advice": summary.today_advice,
+        "f_risk_alert": summary.f_risk_alert,
+        "f_risk_score": summary.f_risk_score,
+        "f_risk_reason": summary.f_risk_reason,
+        "f_risk_matched_patterns": summary.f_risk_matched_patterns,
         "sleep_start": summary.sleep_start,
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.resolved_sleep_duration_min,
@@ -87,6 +91,11 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "deep_duration_min": summary.deep_duration_min,
         "rem_duration_min": summary.rem_duration_min,
         "sleep_source": summary.sleep_source,
+        "weather_location": summary.weather_location,
+        "weather_summary": summary.weather_summary,
+        "weather_temp_max_c": summary.weather_temp_max_c,
+        "weather_temp_min_c": summary.weather_temp_min_c,
+        "weather_precip_probability_max": summary.weather_precip_probability_max,
         "mood_notes_url": "",
     }
     plain_text = render_daily_log_text(payload)

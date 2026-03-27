@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from publish.read_daily_log import DailyLogSummary
@@ -175,6 +176,8 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "eating_out_like_flag": bool(re.search(r"外食|レストラン|居酒屋|カフェ", meal_text)),
                 "late_meal_like_flag": bool(re.search(r"夜食|深夜|遅い", meal_text)),
                 "spending_total": _safe_float(item.expenses_total),
+                "expense_f_count": _safe_float(item.expense_f_count),
+                "expense_f_total": _safe_float(item.expense_f_total),
                 "transport_spend_like_flag": bool(re.search(r"交通|電車|タクシー|バス", notes_text + activity_text)),
                 "social_spend_like_flag": bool(re.search(r"会食|飲み会|友人|同僚", notes_text + activity_text)),
                 "task_done_count": done,
@@ -186,6 +189,13 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "location_present_flag": bool((item.location_summary or "").strip()),
                 "social_event_like_flag": bool(label.social_load_flag or re.search(r"会食|飲み会|打ち合わせ|会議", notes_text + activity_text)),
                 "movement_intensity_like_flag": bool(re.search(r"歩いた|移動|外出|ランニング|運動", notes_text + activity_text)),
+                "weather_location": item.weather_location,
+                "weather_summary": item.weather_summary,
+                "weather_temp_max_c": _safe_float(item.weather_temp_max_c),
+                "weather_temp_min_c": _safe_float(item.weather_temp_min_c),
+                "weather_precip_probability_max": _safe_float(item.weather_precip_probability_max),
+                "weather_code": _safe_float(item.weather_code),
+                "is_weekend": _is_weekend(item.target_date),
                 **location_flags,
             }
         )
@@ -229,3 +239,11 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
     quality_cols = ["notes_present_flag", "meal_logged_flag", "location_present_flag", "sleep_valid_flag"]
     df["data_quality_score"] = df[quality_cols].astype(int).mean(axis=1).round(2)
     return df
+
+
+def _is_weekend(date_text: str) -> bool:
+    try:
+        weekday = datetime.strptime(date_text, "%Y-%m-%d").weekday()
+    except Exception:
+        return False
+    return weekday >= 5
