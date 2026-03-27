@@ -163,9 +163,25 @@ def parse_note_label_json(raw_text: str, input_rows: Sequence[Mapping[str, str]]
     return parsed
 
 
+def _normalize_date_key(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.replace("/", "-")
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    return text
+
+
 def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[str, str]]) -> tuple[list[NoteLabel], dict[str, Any]]:
-    fallback = {str(r.get("date")): neutral_label(str(r.get("date"))) for r in input_rows}
-    meta: dict[str, Any] = {"parse_error": False, "empty_response": False, "matched_dates": set(), "schema_mismatch": False}
+    fallback = {}
+    input_by_date: dict[str, str] = {}
+    for row in input_rows:
+        raw_date = str(row.get("date"))
+        normalized = _normalize_date_key(raw_date)
+        fallback[normalized or raw_date] = neutral_label(raw_date)
+        input_by_date[normalized or raw_date] = raw_date
+    meta: dict[str, Any] = {"parse_error": False, "empty_response": False, "matched_dates": set(), "schema_mismatch": False, "unmatched_response_dates": set()}
     if not str(raw_text or "").strip():
         meta["empty_response"] = True
         return list(fallback.values()), meta
@@ -188,12 +204,21 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
     for row in rows:
         if not isinstance(row, Mapping):
             continue
-        date = str(row.get("date") or "")
+        raw_date = str(row.get("date") or "")
+        date = _normalize_date_key(raw_date)
         if date not in fallback:
+            if date:
+                meta["unmatched_response_dates"].add(date)
             continue
-        fallback[date] = _normalize_result(date, row)
-        meta["matched_dates"].add(date)
-    return [fallback[str(r.get("date"))] for r in input_rows], meta
+        canonical_date = input_by_date.get(date, date)
+        fallback[date] = _normalize_result(canonical_date, row)
+        meta["matched_dates"].add(canonical_date)
+    parsed = []
+    for row in input_rows:
+        raw_date = str(row.get("date"))
+        normalized = _normalize_date_key(raw_date) or raw_date
+        parsed.append(fallback[normalized])
+    return parsed, meta
 
 
 def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_completion: Callable[..., str], model: str, batch_size: int = 15, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
@@ -212,6 +237,7 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
     empty_response_count = 0
     raw_response_paths: list[str] = []
     matched_dates: set[str] = set()
+    unmatched_response_dates: set[str] = set()
     raw_sentiment_counts: Counter[str] = Counter()
     raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
@@ -243,6 +269,7 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
             schema_mismatch_count += int(bool(meta.get("schema_mismatch")))
             empty_response_count += int(bool(meta.get("empty_response")))
             matched_dates.update(set(meta.get("matched_dates") or set()))
+            unmatched_response_dates.update(set(meta.get("unmatched_response_dates") or set()))
             if not meta["parse_error"] and not meta["schema_mismatch"]:
                 date_match_failure_count += max(0, len(targets) - len(set(meta.get("matched_dates") or set())))
             for row in parsed:
@@ -271,6 +298,8 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
 
     ordered = {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}
     if audit is not None:
+        all_input_dates = [str(r["date"]) for r in rows]
+        unmatched_input_dates = sorted(set(all_input_dates) - matched_dates)
         labels = list(ordered.values())
         all_tags = [sig.get("tag") for x in labels for sig in x.signals if sig.get("tag")]
         parse_success = sum(1 for x in labels if not x.tag_extract_failed)
@@ -312,8 +341,12 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
             "raw_response_paths": raw_response_paths,
             "matched_dates_count": len(matched_dates),
             "matched_dates": sorted(matched_dates),
+            "unmatched_input_dates": unmatched_input_dates,
+            "unmatched_response_dates": sorted(unmatched_response_dates),
             "tags_detected_count": len(all_tags),
             "signals_detected_count": len(all_tags),
+            "extracted_tag_count": len(all_tags),
+            "extracted_signal_count": len(all_tags),
             "unknown_count": sum(1 for x in labels if x.sentiment_label == "unknown"),
             "unknown_rate": round(sum(1 for x in labels if x.sentiment_label == "unknown") / len(labels), 3) if labels else 0.0,
             "tag_extract_failed_count": sum(1 for x in labels if x.tag_extract_failed),

@@ -7,6 +7,17 @@ from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Tuple
 
 MAX_TASK_ITEMS = 30
+SECTION_ORDER = [
+    "today_advice",
+    "diary",
+    "summary",
+    "sleep",
+    "expenses",
+    "done",
+    "drop",
+    "meal",
+]
+TASK_PLACEHOLDER_VALUES = {"", "-", "—", "none", "なし", "無し", "null"}
 
 
 @dataclass(frozen=True)
@@ -141,7 +152,8 @@ def _parse_task_items(summary_text: str) -> Tuple[List[TaskEntry], List[TaskEntr
             continue
 
         item_text = line[1:].strip()
-        if not item_text:
+        normalized_item = item_text.strip().lower()
+        if normalized_item in TASK_PLACEHOLDER_VALUES:
             continue
         match = priority_pattern.match(item_text)
         if not match:
@@ -216,12 +228,24 @@ def _render_more_row(remaining: int) -> str:
     )
 
 
+def _resolve_count(payload: Mapping[str, object], key: str, fallback_count: int) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or value is None:
+        return fallback_count
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback_count
+
+
 def render_daily_log_html(payload: Mapping[str, object]) -> str:
     target_date = str(payload.get("target_date") or "")
     run_id = str(payload.get("run_id") or payload.get("mail_id") or "")
     summary_text = str(payload.get("summary_text") or "")
 
     done_items, drop_items = _parse_task_items(summary_text)
+    done_count_display = _resolve_count(payload, "done_count", len(done_items))
+    drop_count_display = _resolve_count(payload, "drop_count", len(drop_items))
     done_visible, done_more = _limit_items(done_items)
     drop_visible, drop_more = _limit_items(drop_items)
 
@@ -433,8 +457,6 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             </tr>
             {today_advice_html}
 
-            {sleep_condition_html}
-
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
@@ -478,6 +500,8 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
               </td>
             </tr>
 
+            {sleep_condition_html}
+
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
@@ -497,7 +521,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
                   <tr>
                     <td>
-                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🎉 昨日完了したこと（Done: {len(done_items)}）</h2>
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🎉 昨日完了したこと（Done: {done_count_display}）</h2>
                       <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">{done_rows}</table>
                     </td>
                   </tr>
@@ -510,7 +534,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
                   <tr>
                     <td>
-                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🧹 昨日手放したこと（Drop: {len(drop_items)}）</h2>
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">🧹 昨日手放したこと（Drop: {drop_count_display}）</h2>
                       <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">{drop_rows}</table>
                     </td>
                   </tr>
@@ -548,13 +572,15 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     summary_text = str(payload.get("summary_text") or "")
 
     done_items, drop_items = _parse_task_items(summary_text)
+    done_count_display = _resolve_count(payload, "done_count", len(done_items))
+    drop_count_display = _resolve_count(payload, "drop_count", len(drop_items))
     done_visible, done_more = _limit_items(done_items)
     drop_visible, drop_more = _limit_items(drop_items)
 
     def render_items(items: Iterable[TaskEntry], remaining: int) -> List[str]:
         lines = []
         if not items:
-            return lines
+            return ["—"]
         else:
             for item in items:
                 lines.append(f"- {item.title} (Priority: {item.priority})")
@@ -628,6 +654,17 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     if today_advice:
         lines += ["", "Today advice", today_advice]
 
+    lines += [
+        "",
+        "Diary",
+        diary or "—",
+        "",
+        "Summary",
+        f"- Expenses total: {expenses_total}",
+        f"- Location summary: {location_summary}",
+        f"- Weight: {weight}",
+        "",
+    ]
     sleep_lines = [
         ("Sleep Analysis JP", sleep_analysis_jp),
         ("Today Condition Forecast JP", today_condition_forecast_jp),
@@ -646,33 +683,20 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         ("Sleep Source", sleep_source),
     ]
     visible_sleep_lines = [f"- {label}: {value}" for label, value in sleep_lines if value]
-    lines += [
-        "",
-        "Diary",
-        diary or "—",
-        "",
-    ]
     if visible_sleep_lines:
-        lines += ["", "Sleep & Condition", *visible_sleep_lines]
-
+        lines += ["Sleep & Condition", *visible_sleep_lines, ""]
     lines += [
-        "",
-        "Summary",
-        f"- Expenses total: {expenses_total}",
-        f"- Location summary: {location_summary}",
-        f"- Weight: {weight}",
-        "",
         "Expenses (昨日の支出)",
         f"Total: {_format_yen(expenses_total_value)}",
         *expenses_lines,
         "",
-        f"🎉 昨日完了したこと（Done: {len(done_items)}）",
+        f"🎉 昨日完了したこと（Done: {done_count_display}）",
         *render_items(done_visible, done_more),
         "",
-        f"🧹 昨日手放したこと（Drop: {len(drop_items)}）",
+        f"🧹 昨日手放したこと（Drop: {drop_count_display}）",
         *render_items(drop_visible, drop_more),
         "",
-        "Meal summary",
+        "🍽️ Meal summary",
         f"- {meal_summary}",
         "Meal Photos",
         *([f"- {url}" for url in meal_photos] if meal_photos else ["- —"]),

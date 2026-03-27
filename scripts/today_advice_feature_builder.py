@@ -58,6 +58,8 @@ def _sleep_validity(summary: DailyLogSummary) -> tuple[bool, str | None, float |
         if duration == 0 and score == 0:
             return False, "zero_duration_and_score_zero", None
         return False, "duration_non_positive", None
+    if duration < 30 and score == 0:
+        return False, "stub_sleep_window", duration
     return True, None, duration
 
 

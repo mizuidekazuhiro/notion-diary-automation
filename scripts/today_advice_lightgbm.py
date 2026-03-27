@@ -24,6 +24,8 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
         "prediction_probability_for_today": None,
         "today_contribution_features": [],
         "skipped_reason": None,
+        "skipped_columns": [],
+        "feature_columns": [],
     }
 
     import importlib
@@ -43,18 +45,28 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
 
     feature_cols = [c for c in train.columns if c not in LEAKAGE_COLUMNS]
     x = train[feature_cols].copy()
-    for col in x.columns:
+    unsupported_columns: list[str] = []
+    for col in list(x.columns):
         if x[col].dtype == bool:
             x[col] = x[col].astype(int)
         elif str(x[col].dtype) == "object":
             if col == "notes_sentiment_label":
-                x[col] = x[col].map({"positive": 1, "neutral": 0, "negative": -1})
+                x[col] = x[col].map({"positive": 1, "neutral": 0, "negative": -1}).fillna(0).astype(int)
             else:
-                return {**base, "sample_size": len(train), "skipped_reason": "unsupported_dtype"}
+                unsupported_columns.append(col)
+    if unsupported_columns:
+        x = x.drop(columns=unsupported_columns)
+    x = x.select_dtypes(include=["number", "bool"]).copy()
+    for col in x.columns:
+        if x[col].dtype == bool:
+            x[col] = x[col].astype(int)
+    feature_cols = list(x.columns)
+    if not feature_cols:
+        return {**base, "sample_size": len(train), "skipped_reason": "unsupported_dtype", "skipped_columns": unsupported_columns}
 
     missing_rate = float(x.isna().mean().mean()) if len(x.columns) else 1.0
     if missing_rate > 0.8:
-        return {**base, "sample_size": len(train), "skipped_reason": "too_many_missing_values"}
+        return {**base, "sample_size": len(train), "skipped_reason": "too_many_missing_values", "skipped_columns": unsupported_columns, "feature_columns": feature_cols}
 
     y = train["target"].astype(int)
     try:
@@ -67,7 +79,7 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
         )
         model.fit(x, y)
     except Exception:
-        return {**base, "sample_size": len(train), "skipped_reason": "fit_exception"}
+        return {**base, "sample_size": len(train), "skipped_reason": "fit_exception", "skipped_columns": unsupported_columns, "feature_columns": feature_cols}
 
     importances = model.feature_importances_
     fi = sorted(zip(feature_cols, importances), key=lambda p: p[1], reverse=True)
@@ -112,4 +124,6 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
         "prediction_probability_for_today": today_prob,
         "today_contribution_features": today_contrib,
         "skipped_reason": None,
+        "skipped_columns": unsupported_columns,
+        "feature_columns": feature_cols,
     }

@@ -46,6 +46,10 @@ def _summary(**overrides: object) -> DailyLogSummary:
         sleep_start=None,
         sleep_end=None,
         sleep_duration_min=None,
+        resolved_sleep_duration_min=None,
+        resolved_sleep_duration_hours=None,
+        resolved_sleep_duration_text=None,
+        sleep_duration_source="missing",
         sleep_score=None,
         sleep_source=None,
         readiness_stars=None,
@@ -63,6 +67,15 @@ def _summary(**overrides: object) -> DailyLogSummary:
         diary_notification_sent=None,
     )
     payload.update(overrides)
+    if "resolved_sleep_duration_min" not in overrides:
+        payload["resolved_sleep_duration_min"] = payload.get("sleep_duration_min")
+    if "resolved_sleep_duration_hours" not in overrides:
+        minutes = payload.get("resolved_sleep_duration_min")
+        payload["resolved_sleep_duration_hours"] = (round(float(minutes) / 60.0, 2) if isinstance(minutes, (int, float)) else None)
+    if "resolved_sleep_duration_text" not in overrides:
+        payload["resolved_sleep_duration_text"] = None
+    if "sleep_duration_source" not in overrides:
+        payload["sleep_duration_source"] = "derived_from_start_end"
     return DailyLogSummary(**payload)
 
 

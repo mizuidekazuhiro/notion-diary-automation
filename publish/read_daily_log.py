@@ -5,6 +5,7 @@ from typing import Any, Iterable, List, Mapping, Optional
 from urllib.parse import urlencode
 
 from ingest.http_client import fetch_json
+from scripts.sleep_utils import format_sleep_duration_text, resolve_sleep_duration_minutes
 
 
 def _safe_text(value: object) -> Optional[str]:
@@ -160,6 +161,10 @@ class DailyLogSummary:
     sleep_start: Optional[str]
     sleep_end: Optional[str]
     sleep_duration_min: Optional[float]
+    resolved_sleep_duration_min: Optional[float]
+    resolved_sleep_duration_hours: Optional[float]
+    resolved_sleep_duration_text: Optional[str]
+    sleep_duration_source: str
     sleep_score: Optional[float]
     sleep_source: Optional[str]
     readiness_stars: Optional[float]
@@ -226,6 +231,14 @@ def read_daily_log(
         remaining=int(expenses_payload.get("remaining") or 0),
     )
 
+    sleep_start = _safe_text(_get_sleep_value(payload, "sleep_start"))
+    sleep_end = _safe_text(_get_sleep_value(payload, "sleep_end"))
+    raw_sleep_duration_min = _safe_float(_get_sleep_value(payload, "sleep_duration_min"))
+    resolved_sleep = resolve_sleep_duration_minutes(sleep_start, sleep_end, raw_sleep_duration_min)
+    resolved_sleep_duration_min = resolved_sleep.resolved_sleep_duration_min
+    resolved_sleep_duration_hours = (round(resolved_sleep_duration_min / 60.0, 2) if resolved_sleep_duration_min is not None else None)
+    resolved_sleep_duration_text = format_sleep_duration_text(resolved_sleep_duration_min)
+
     return DailyLogSummary(
         target_date=_safe_text(payload.get("target_date")) or target_date,
         date=_safe_text(payload.get("date")),
@@ -256,9 +269,13 @@ def read_daily_log(
         mood=_safe_text(payload.get("mood")),
         notes=_safe_text(payload.get("notes")),
         weight=_safe_float(payload.get("weight")),
-        sleep_start=_safe_text(_get_sleep_value(payload, "sleep_start")),
-        sleep_end=_safe_text(_get_sleep_value(payload, "sleep_end")),
-        sleep_duration_min=_safe_float(_get_sleep_value(payload, "sleep_duration_min")),
+        sleep_start=sleep_start,
+        sleep_end=sleep_end,
+        sleep_duration_min=raw_sleep_duration_min,
+        resolved_sleep_duration_min=resolved_sleep_duration_min,
+        resolved_sleep_duration_hours=resolved_sleep_duration_hours,
+        resolved_sleep_duration_text=resolved_sleep_duration_text,
+        sleep_duration_source=resolved_sleep.duration_source,
         sleep_score=_safe_float(_get_sleep_value(payload, "sleep_score")),
         sleep_source=_safe_text(_get_sleep_value(payload, "sleep_source")),
         readiness_stars=_safe_float(_get_sleep_value(payload, "readiness_stars")),
