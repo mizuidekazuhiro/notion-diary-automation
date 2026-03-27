@@ -24,7 +24,7 @@ def build_analysis_json(
     notes_parse_success_rate = float(notes_quality.get("notes_parse_success_rate", 1.0) or 0.0)
     notes_label_quality_low = bool(notes_quality.get("label_quality_low")) or notes_parse_success_rate < 0.5
     if notes_label_quality_low:
-        behavior = [f"直近7日で夜遅い外出が{late_count}回", "Notesから明確な傾向は十分抽出できませんでした"]
+        behavior = [f"直近7日で夜遅い外出が{late_count}回", "Notes由来の傾向はまだ弱く、明確な傾向は十分抽出できませんでした。今回は睡眠と完了・支出の変化を重めに見ています"]
     else:
         behavior = [f"直近7日で夜遅い外出が{late_count}回", f"疲労系Notesが{fatigue_count}日"]
     note_days = int((recent7["notes_present_flag"].fillna(False)).sum()) if len(recent7) and "notes_present_flag" in recent7 else 0
@@ -33,6 +33,12 @@ def build_analysis_json(
     today_row = features_df.sort_values("date").tail(1).iloc[0] if len(features_df) else None
     resolved = resolve_sleep_duration_minutes(today_summary.sleep_start, today_summary.sleep_end, today_summary.sleep_duration_min)
     resolved_minutes = resolved.resolved_sleep_duration_min
+    if (
+        today_summary.resolved_sleep_duration_min is not None
+        and today_summary.resolved_sleep_duration_min > 0
+        and today_summary.sleep_duration_source == "derived_from_start_end"
+    ):
+        resolved_minutes = today_summary.resolved_sleep_duration_min
     summary_sleep_score = float(today_summary.sleep_score) if isinstance(today_summary.sleep_score, (int, float)) else None
     today_sleep_valid = bool(
         (resolved_minutes is not None and resolved_minutes > 0)
@@ -109,11 +115,32 @@ def build_analysis_json(
 
 
 def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model: str, chat_completion: Callable[..., str]) -> str:
+    def _fallback_text() -> str:
+        sleep = analysis_json.get("today_sleep_context", {})
+        recent = analysis_json.get("recent_7d_summary", {}).get("behavior_trend", [])
+        recent_text = "、".join(str(x) for x in recent[:2] if x) or "直近7日では行動パターンの偏りは小さめ"
+        focus = analysis_json.get("primary_focus", "負荷調整")
+        notes_quality = analysis_json.get("data_quality", {}).get("notes_label_quality", {})
+        notes_low = bool(notes_quality.get("label_quality_low")) or float(notes_quality.get("notes_parse_success_rate", 1.0) or 0.0) < 0.5
+        notes_clause = "Notes由来の傾向はまだ弱いため、今日は睡眠と完了傾向を主根拠に進めます。" if notes_low else "Notes由来の傾向も補助的に使い、判断の粒度を上げる進め方が有効です。"
+        if sleep.get("sleep_available"):
+            sleep_text = f"昨夜の睡眠は{sleep.get('sleep_hours', '不明')}時間で、起床直後の集中立ち上がりは{focus}寄りに設計するのが安全です。"
+        else:
+            sleep_text = "睡眠データは不明で、当日睡眠の確定値が弱いため、午前の判断負荷を先に下げる前提で計画を組むのが安全です。"
+        return (
+            f"{sleep_text}{recent_text}という流れから、過去30日で再現性の高いパターンは限定的ですが、今日は午前中の重い判断を前半に詰め込まず、完了を先に1〜2件作ってから難度の高い案件へ入る順が適しています。"
+            f"{notes_clause}最初の一手は、いま着手中の案件を20〜30分で区切れる最小単位に分解し、午前の最初のブロックで1つ完了させることです。これにより午後の判断コストを下げつつ、{focus}の軸を実行面で維持できます。進捗の観測点も午前中に固定してください。"
+        )
+
     if analysis_json.get("today_sleep_context", {}).get("sleep_available") is False and analysis_json.get("matched_patterns_count", 0) == 0:
-        return "睡眠データが不明です。過去30〜60日の探索では再現性の高い単独パターンは限定的でした。今日は支出やタスクの重い判断を午前後半に寄せ、先に完了を2件作る進め方が安全です。Notes由来の低信頼シグナルは断定せず、進捗観測を優先してください。"
+        return _fallback_text()
     prompt = (
-        "analysis JSONのみを根拠にToday adviceを日本語3〜5文で作成。"
-        "睡眠invalidなら『睡眠データ不明』と書く。"
+        "analysis JSONのみを根拠にToday adviceを日本語4〜6文で作成。"
+        "文字数は320〜520字。"
+        "構成順は『今日の睡眠状態の要約→直近7日または30日の傾向→今日の実務上の注意点→最初の一手』。"
+        "Notes品質が低い場合は断定を避けつつ、睡眠・完了・支出傾向を重めに扱う。"
+        "一般論は禁止。"
+        "睡眠available時に『睡眠データ不明』は書かない。"
         "一般論を避け、根拠が弱い場合は弱いと明記。"
         "analysis JSON以外の因果は追加禁止。\n"
         f"analysis={json.dumps(analysis_json, ensure_ascii=False)}"
@@ -125,16 +152,15 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
             user_prompt=prompt,
         ).strip()
         sleep = analysis_json.get("today_sleep_context", {})
+        sentence_count = len([s for s in generated.replace("。", "。\n").splitlines() if s.strip()])
+        if "analysis=" in generated:
+            return generated
+        if sleep.get("sleep_available") and "睡眠データ不明" in generated:
+            return _fallback_text()
+        if sentence_count > 10:
+            return _fallback_text()
         if sleep.get("sleep_available") and "睡眠" not in generated:
-            hours = sleep.get("sleep_hours")
-            prefix = f"昨夜の睡眠は{hours}時間で、今日は負荷調整を意識してください。" if hours is not None else "昨夜の睡眠データを踏まえ、今日は負荷調整を意識してください。"
-            return f"{prefix}{generated}"
+            return f"昨夜の睡眠は{sleep.get('sleep_hours', '不明')}時間でした。{generated}"
         return generated
     except Exception:
-        sleep = analysis_json.get("today_sleep_context", {})
-        if sleep.get("sleep_available") is False:
-            return "睡眠データが不明です。過去30〜60日の探索では同条件で支出増・完了率低下が重なる日に翌日ムードが落ちやすい傾向があります。今日は新規着手より進行中タスク完了を2件先に作り、支出判断は午後に回してください。"
-        return (
-            f"睡眠は{sleep.get('sleep_hours', '不明')}時間で、今日は{analysis_json.get('primary_focus', '負荷調整')}を意識する日です。"
-            "過去30日の傾向では同条件で負荷が上がりやすいため、午前中の重い判断を絞ってください。"
-        )
+        return _fallback_text()

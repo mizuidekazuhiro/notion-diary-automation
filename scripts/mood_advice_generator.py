@@ -1219,6 +1219,11 @@ def generate_today_advice(
             safe_json(notes_payload["top_tags"]),
             notes_payload["matched_dates_count"],
         )
+        audit.info(
+            "[TodayAdvice][Notes] unmatched_input_dates=%s unmatched_response_dates=%s",
+            safe_json(note_label_audit.get("unmatched_input_dates", [])),
+            safe_json(note_label_audit.get("unmatched_response_dates", [])),
+        )
         audit.info("[TodayAdvice][Notes] raw_response_paths=%s", safe_json(notes_payload["raw_response_paths"]))
         if notes_payload["raw_response_paths"]:
             audit.info("[TodayAdvice][Notes] raw_responses_saved=%s", safe_json(notes_payload["raw_response_paths"]))
@@ -1333,7 +1338,14 @@ def generate_today_advice(
             )
         lightgbm_summary = run_lightgbm_low_mood(feature_df)
         audit.put("lightgbm", lightgbm_summary)
-        audit.info("[TodayAdvice][LightGBM] available=%s sample=%s reason=%s", lightgbm_summary.get("available"), lightgbm_summary.get("sample_size"), lightgbm_summary.get("skipped_reason"))
+        audit.info(
+            "[TodayAdvice][LightGBM] available=%s sample=%s reason=%s skipped_columns=%s feature_columns=%s",
+            lightgbm_summary.get("available"),
+            lightgbm_summary.get("sample_size"),
+            lightgbm_summary.get("skipped_reason"),
+            safe_json(lightgbm_summary.get("skipped_columns", [])),
+            safe_json(lightgbm_summary.get("feature_columns", [])),
+        )
 
         analysis_json = build_analysis_json(
             target_date=target_date,

@@ -92,3 +92,14 @@ def resolve_sleep_target_date(
         return fallback_date
     attributed = (base - timedelta(hours=DAILY_BOUNDARY_HOUR)).date()
     return attributed.isoformat()
+
+
+def format_sleep_duration_text(duration_min: object) -> Optional[str]:
+    minutes_float = _safe_float(duration_min)
+    if minutes_float is None or minutes_float <= 0:
+        return None
+    minutes = int(round(minutes_float))
+    hours, remain = divmod(minutes, 60)
+    if hours <= 0:
+        return f"{remain}分"
+    return f"{hours}時間{remain}分"

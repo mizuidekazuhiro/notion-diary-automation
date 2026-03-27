@@ -37,6 +37,10 @@ def _summary(**overrides):
         sleep_start=None,
         sleep_end=None,
         sleep_duration_min=None,
+        resolved_sleep_duration_min=None,
+        resolved_sleep_duration_hours=None,
+        resolved_sleep_duration_text=None,
+        sleep_duration_source="missing",
         sleep_score=None,
         sleep_source=None,
         readiness_stars=None,
@@ -64,6 +68,10 @@ def _summary(**overrides):
 def test_build_sleep_insight_context_partial_history():
     today = _summary(
         sleep_duration_min=420,
+        resolved_sleep_duration_min=420,
+        resolved_sleep_duration_hours=7.0,
+        resolved_sleep_duration_text="7時間0分",
+        sleep_duration_source="derived_from_start_end",
         sleep_score=78,
         readiness_hrv=55,
         readiness_bpm=52,
