@@ -146,8 +146,8 @@ def test_html_and_text_section_order_is_identical() -> None:
 def test_today_advice_fallback_is_dense() -> None:
     text = render_today_advice_from_analysis(
         analysis_json={
-            "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7},
-            "recent_7d_summary": {"behavior_trend": ["直近7日で夜遅い外出が2回", "Notes由来の傾向はまだ弱いため、今回は睡眠と完了・支出の変化を重めに見ています"]},
+            "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7, "sleep_should_mention": False},
+            "recent_7d_summary": {"behavior_trend": ["直近7日で夜遅い外出が2回", "外出は週後半に偏りがありました"]},
             "primary_focus": "負荷調整",
             "data_quality": {"notes_label_quality": {"label_quality_low": True, "notes_parse_success_rate": 0.3}},
         },
@@ -155,17 +155,32 @@ def test_today_advice_fallback_is_dense() -> None:
         chat_completion=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     sentence_count = len([s for s in re.split(r"。", text) if s.strip()])
-    assert len(text) >= 320
+    assert len(text) >= 240
     assert sentence_count <= 6
-    assert "睡眠" in text and "直近7日" in text and "最初の一手" in text
+    assert "直近7日" in text and "最初の一手" in text
+    assert "品質が低い" not in text
+    assert "parse" not in text
+    assert "unknown" not in text
 
 
 def test_note_date_matching_normalizes_multiple_formats() -> None:
-    raw = '{"rows":[{"date":" 2026/03/26 ","tags":["gym"]},{"date":"2026-03-26T00:00:00Z","tags":["fatigue"]}]}'
-    parsed, meta = parse_note_label_json_with_meta(raw, [{"date": "2026-03-26", "notes": "ジム"}])
+    raw = '{"rows":[{"date":" 2026/03/25 ","tags":["gym"]},{"date":"2026-03-25T00:00:00Z","tags":["fatigue"]},{"date":"2026-03-25","tags":["stress"]}]}'
+    parsed, meta = parse_note_label_json_with_meta(raw, [{"date": "2026-03-25", "notes": "ジム"}])
     assert meta["schema_mismatch"] is False
-    assert parsed[0].date == "2026-03-26"
-    assert meta["matched_dates"] == {"2026-03-26"}
+    assert parsed[0].date == "2026-03-25"
+    assert meta["matched_dates"] == {"2026-03-25"}
+
+
+def test_diary_input_ignores_stale_sleep_analysis_duration() -> None:
+    summary = _summary(
+        sleep_analysis_jp="深夜1時35分から朝8時17分までの約4時間28分でした。",
+        today_condition_forecast_jp="今日は4時間28分睡眠の影響で集中に波が出る見込みです。",
+    )
+    used, _, _ = build_diary_input_fields(summary)
+    assert used["Sleep Duration"] == "402.0"
+    assert used["Sleep Duration Text"] == "6時間42分"
+    assert "Sleep Analysis JP" not in used
+    assert "Today Condition Forecast JP" not in used
 
 
 def test_lightgbm_preprocess_drops_unsupported_object_columns(monkeypatch: pytest.MonkeyPatch) -> None:

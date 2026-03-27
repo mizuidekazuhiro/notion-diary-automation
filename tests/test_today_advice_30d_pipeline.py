@@ -165,7 +165,7 @@ def test_analysis_json_weakens_notes_assertion_when_label_quality_low() -> None:
         lightgbm_summary={"available": False, "sample_size": 0},
         notes_label_quality={"notes_parse_success_rate": 0.4, "label_quality_low": True},
     )
-    assert "十分抽出できませんでした" in payload["recent_7d_summary"]["behavior_trend"][1]
+    assert "疲労系Notes" in payload["recent_7d_summary"]["behavior_trend"][1]
     assert any("断定を抑制" in x for x in payload["evidence_used"])
 
 
@@ -443,15 +443,28 @@ def test_saved_sleep_properties_are_prioritized_for_today_advice_context() -> No
     assert payload["today_sleep_context"]["sleep_hours"] == 6.7
 
 
-def test_render_today_advice_contains_sleep_sentence_when_sleep_is_available() -> None:
+def test_render_today_advice_sleep_optional_no_forced_prefix() -> None:
     text = render_today_advice_from_analysis(
         analysis_json={
-            "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7},
+            "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7, "sleep_should_mention": False},
             "matched_patterns_count": 1,
             "primary_focus": "負荷調整",
         },
         model="x",
         chat_completion=lambda **kwargs: "今日はまず進行中タスクを2件終わらせましょう。",
+    )
+    assert "睡眠" not in text
+
+
+def test_render_today_advice_allows_sleep_when_delta_is_large() -> None:
+    text = render_today_advice_from_analysis(
+        analysis_json={
+            "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7, "sleep_should_mention": True},
+            "matched_patterns_count": 1,
+            "primary_focus": "負荷調整",
+        },
+        model="x",
+        chat_completion=lambda **kwargs: "睡眠が長めなので午前に難しい判断を進められます。",
     )
     assert "睡眠" in text
 
@@ -538,5 +551,5 @@ def test_fallback_text_does_not_add_new_causality() -> None:
         model="x",
         chat_completion=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    assert "睡眠データ" in text and "不明" in text
+    assert "午前の判断負荷" in text and "最初の一手" in text
     assert "限定的" in text or "過去傾向" in text

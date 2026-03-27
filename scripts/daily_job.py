@@ -32,6 +32,7 @@ from scripts.sleep_condition_generator import (
     load_recent_daily_logs,
     maybe_generate_sleep_insights,
 )
+from scripts.sleep_utils import validate_generated_sleep_text
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -213,6 +214,21 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
 
     done_tasks_detail = _build_done_tasks_detail_text(summary)
 
+    canonical_sleep_duration_min = summary.resolved_sleep_duration_min
+    canonical_sleep_duration_text = summary.resolved_sleep_duration_text
+    validated_sleep_analysis = _validated_sleep_prose(
+        summary.sleep_analysis_jp,
+        canonical_sleep_duration_min=canonical_sleep_duration_min,
+        canonical_sleep_duration_text=canonical_sleep_duration_text,
+        field_name="sleep_analysis_jp",
+    )
+    validated_today_forecast = _validated_sleep_prose(
+        summary.today_condition_forecast_jp,
+        canonical_sleep_duration_min=canonical_sleep_duration_min,
+        canonical_sleep_duration_text=canonical_sleep_duration_text,
+        field_name="today_condition_forecast_jp",
+    )
+
     candidates = [
         ("Date", summary.date),
         ("Target Date", summary.target_date_value),
@@ -240,7 +256,9 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Weight", str(summary.weight) if summary.weight is not None else None),
         ("Sleep Start", summary.sleep_start),
         ("Sleep End", summary.sleep_end),
-        ("Sleep Duration", str(summary.resolved_sleep_duration_min) if summary.resolved_sleep_duration_min is not None else None),
+        ("Sleep Duration", str(canonical_sleep_duration_min) if canonical_sleep_duration_min is not None else None),
+        ("Sleep Duration Text", canonical_sleep_duration_text),
+        ("Canonical Sleep Duration Min", str(canonical_sleep_duration_min) if canonical_sleep_duration_min is not None else None),
         ("Sleep Duration Source", summary.sleep_duration_source),
         ("Sleep Score", str(summary.sleep_score) if summary.sleep_score is not None else None),
         ("Sleep Source", summary.sleep_source),
@@ -252,8 +270,8 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Readiness BPM", str(summary.readiness_bpm) if summary.readiness_bpm is not None else None),
         ("Baseline HRV", str(summary.baseline_hrv) if summary.baseline_hrv is not None else None),
         ("Baseline Waking BPM", str(summary.baseline_waking_bpm) if summary.baseline_waking_bpm is not None else None),
-        ("Sleep Analysis JP", summary.sleep_analysis_jp),
-        ("Today Condition Forecast JP", summary.today_condition_forecast_jp),
+        ("Sleep Analysis JP", validated_sleep_analysis),
+        ("Today Condition Forecast JP", validated_today_forecast),
         ("Today advice", summary.today_advice),
     ]
 
@@ -273,6 +291,31 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         overview_parts.append(f"{name}({len(value)} chars): {preview}")
 
     return used, skipped, " | ".join(overview_parts)
+
+
+def _validated_sleep_prose(
+    text: Optional[str],
+    *,
+    canonical_sleep_duration_min: object,
+    canonical_sleep_duration_text: object,
+    field_name: str,
+) -> Optional[str]:
+    if not text:
+        return text
+    validation = validate_generated_sleep_text(
+        text,
+        canonical_sleep_duration_min=canonical_sleep_duration_min,
+        canonical_sleep_duration_text=canonical_sleep_duration_text,
+    )
+    if validation.is_consistent:
+        return text
+    logging.warning(
+        "sleep_text_consistency_error field=%s expected_sleep_duration_text=%s found_duration_text=%s action=drop_from_diary_input",
+        field_name,
+        canonical_sleep_duration_text,
+        validation.found_duration_text,
+    )
+    return None
 
 
 def _normalize_hash_value(value: object) -> object:

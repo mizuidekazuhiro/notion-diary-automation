@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from collections import Counter
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -168,8 +169,18 @@ def _normalize_date_key(value: object) -> str:
     if not text:
         return ""
     text = text.replace("/", "-")
-    if "T" in text:
-        text = text.split("T", 1)[0]
+    if "T" in text or text.endswith("Z"):
+        iso_candidate = text.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(iso_candidate).date().isoformat()
+        except ValueError:
+            text = text.split("T", 1)[0]
+    if len(text) >= 10:
+        basic = text[:10]
+        try:
+            return datetime.strptime(basic, "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return basic
     return text
 
 
@@ -181,7 +192,15 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         normalized = _normalize_date_key(raw_date)
         fallback[normalized or raw_date] = neutral_label(raw_date)
         input_by_date[normalized or raw_date] = raw_date
-    meta: dict[str, Any] = {"parse_error": False, "empty_response": False, "matched_dates": set(), "schema_mismatch": False, "unmatched_response_dates": set()}
+    meta: dict[str, Any] = {
+        "parse_error": False,
+        "empty_response": False,
+        "matched_dates": set(),
+        "schema_mismatch": False,
+        "unmatched_response_dates": set(),
+        "unmatched_input_dates": set(),
+        "matched_dates_count": 0,
+    }
     if not str(raw_text or "").strip():
         meta["empty_response"] = True
         return list(fallback.values()), meta
@@ -218,6 +237,8 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         raw_date = str(row.get("date"))
         normalized = _normalize_date_key(raw_date) or raw_date
         parsed.append(fallback[normalized])
+    meta["matched_dates_count"] = len(set(meta.get("matched_dates") or set()))
+    meta["unmatched_input_dates"] = set(input_by_date.values()) - set(meta.get("matched_dates") or set())
     return parsed, meta
 
 
