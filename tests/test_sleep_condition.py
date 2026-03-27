@@ -1,6 +1,10 @@
+import json
+
+import pytest
+
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
-from scripts.sleep_condition_generator import build_sleep_insight_context
+from scripts.sleep_condition_generator import build_sleep_insight_context, generate_sleep_insights
 
 
 def _summary(**overrides):
@@ -124,3 +128,44 @@ def test_render_mail_sleep_section_only_when_values_exist():
     assert "22:53" in html and "08:33" in html and "9時間45分" in html
     assert "Sleep & Condition" in text
     assert "- 睡眠時間: 9時間45分" in text
+
+
+def test_generate_sleep_insights_retries_and_falls_back_on_duration_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    today = _summary(
+        sleep_start="2026-03-27T01:35:00+09:00",
+        sleep_end="2026-03-27T08:17:00+09:00",
+        sleep_duration_min=268.0,
+        resolved_sleep_duration_min=402.0,
+        resolved_sleep_duration_text="6時間42分",
+        sleep_duration_source="derived_from_start_end",
+        sleep_score=75,
+    )
+    context = build_sleep_insight_context(today_summary=today, history_summaries=[])
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class DummyResponse:
+        status_code = 200
+        text = "ok"
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "sleep_analysis_jp": "深夜1時35分から朝8時17分までの約4時間28分でした。",
+                                "today_condition_forecast_jp": "今日は4時間28分睡眠の影響を受ける見込みです。",
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }]
+            }
+
+    monkeypatch.setattr("scripts.sleep_condition_generator.requests.post", lambda *args, **kwargs: DummyResponse())
+    result = generate_sleep_insights(target_date="2026-03-27", context=context)
+    assert "6時間42分" in result["sleep_analysis_jp"]
+    assert "4時間28分" not in result["sleep_analysis_jp"]

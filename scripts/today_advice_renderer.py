@@ -6,6 +6,8 @@ from typing import Any, Callable, Mapping
 from publish.read_daily_log import DailyLogSummary
 from scripts.sleep_utils import resolve_sleep_duration_minutes
 
+INTERNAL_NOTES_TERMS = ("Notesの記録品質", "品質が低い", "parse", "unknown_rate", "unknown")
+
 
 def build_analysis_json(
     *,
@@ -23,10 +25,7 @@ def build_analysis_json(
     notes_quality = dict(notes_label_quality or {})
     notes_parse_success_rate = float(notes_quality.get("notes_parse_success_rate", 1.0) or 0.0)
     notes_label_quality_low = bool(notes_quality.get("label_quality_low")) or notes_parse_success_rate < 0.5
-    if notes_label_quality_low:
-        behavior = [f"直近7日で夜遅い外出が{late_count}回", "Notes由来の傾向はまだ弱く、明確な傾向は十分抽出できませんでした。今回は睡眠と完了・支出の変化を重めに見ています"]
-    else:
-        behavior = [f"直近7日で夜遅い外出が{late_count}回", f"疲労系Notesが{fatigue_count}日"]
+    behavior = [f"直近7日で夜遅い外出が{late_count}回", f"疲労系Notesが{fatigue_count}日"]
     note_days = int((recent7["notes_present_flag"].fillna(False)).sum()) if len(recent7) and "notes_present_flag" in recent7 else 0
     recording = [f"Notes記録あり{note_days}/{len(recent7)}日", f"睡眠有効日{int(recent7['sleep_valid_flag'].fillna(False).sum())}/{len(recent7)}日"] if len(recent7) else []
 
@@ -76,7 +75,29 @@ def build_analysis_json(
         evidence_used.append(f"recent_7d: {behavior[0]}")
         if notes_label_quality_low:
             evidence_used.append("notes: 構造化品質が低く、Notes由来の断定を抑制")
-    evidence_used.append("sleep: 睡眠データ不明" if not today_sleep_valid else f"sleep: 睡眠時間{sleep_hours}時間・スコア{sleep_score if sleep_score is not None else '不明'}")
+    trend_values = today_row if today_row is not None else None
+    sleep_delta = None
+    sleep_score_delta = None
+    if trend_values is not None:
+        raw_duration_delta = trend_values.get("sleep_duration_min_delta_vs_7d")
+        raw_score_delta = trend_values.get("sleep_score_delta_vs_7d")
+        sleep_delta = float(raw_duration_delta) / 60.0 if raw_duration_delta == raw_duration_delta and raw_duration_delta is not None else None
+        sleep_score_delta = float(raw_score_delta) if raw_score_delta == raw_score_delta and raw_score_delta is not None else None
+    sleep_valid_history_days = int(features_df["sleep_valid_flag"].fillna(False).sum()) if "sleep_valid_flag" in features_df else 0
+    reason_codes = [str(code) for code in list(exploratory_summary.get("reason_codes") or [])]
+    sleep_primary_reason = any("sleep" in code.lower() for code in reason_codes)
+    sleep_should_mention = bool(
+        today_sleep_valid
+        and (
+            (sleep_delta is not None and abs(sleep_delta) >= 0.75)
+            or (sleep_score_delta is not None and abs(sleep_score_delta) >= 10)
+            or sleep_primary_reason
+            or primary_focus == "回復優先"
+            or sleep_valid_history_days >= 5
+        )
+    )
+    if sleep_should_mention:
+        evidence_used.append("sleep: 睡眠データ不明" if not today_sleep_valid else f"sleep: 睡眠時間{sleep_hours}時間・スコア{sleep_score if sleep_score is not None else '不明'}")
     if not matched_patterns:
         evidence_used.append("good_bad: 過去30日で明確な再現パターンは限定的")
 
@@ -89,6 +110,9 @@ def build_analysis_json(
             "duration_source": resolved.duration_source,
             "bedtime": (today_summary.sleep_start or "")[11:16] if today_sleep_valid and today_summary.sleep_start else None,
             "sleep_score": sleep_score if today_sleep_valid else None,
+            "sleep_vs_7d_delta_hours": sleep_delta,
+            "sleep_score_vs_7d_delta": sleep_score_delta,
+            "sleep_should_mention": sleep_should_mention,
         },
         "data_quality": {
             "sleep_valid_history_days": int(features_df["sleep_valid_flag"].fillna(False).sum()) if "sleep_valid_flag" in features_df else 0,
@@ -110,7 +134,7 @@ def build_analysis_json(
         "evidence_used": evidence_used,
         "risk_level": risk_level,
         "primary_focus": primary_focus,
-        "reason_codes": list(exploratory_summary.get("reason_codes") or []),
+        "reason_codes": reason_codes,
     }
 
 
@@ -120,27 +144,26 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
         recent = analysis_json.get("recent_7d_summary", {}).get("behavior_trend", [])
         recent_text = "、".join(str(x) for x in recent[:2] if x) or "直近7日では行動パターンの偏りは小さめ"
         focus = analysis_json.get("primary_focus", "負荷調整")
-        notes_quality = analysis_json.get("data_quality", {}).get("notes_label_quality", {})
-        notes_low = bool(notes_quality.get("label_quality_low")) or float(notes_quality.get("notes_parse_success_rate", 1.0) or 0.0) < 0.5
-        notes_clause = "Notes由来の傾向はまだ弱いため、今日は睡眠と完了傾向を主根拠に進めます。" if notes_low else "Notes由来の傾向も補助的に使い、判断の粒度を上げる進め方が有効です。"
-        if sleep.get("sleep_available"):
+        if sleep.get("sleep_available") and sleep.get("sleep_should_mention"):
             sleep_text = f"昨夜の睡眠は{sleep.get('sleep_hours', '不明')}時間で、起床直後の集中立ち上がりは{focus}寄りに設計するのが安全です。"
         else:
-            sleep_text = "睡眠データは不明で、当日睡眠の確定値が弱いため、午前の判断負荷を先に下げる前提で計画を組むのが安全です。"
+            sleep_text = f"今日は{focus}を軸に、午前の判断負荷を先に下げる前提で計画を組むのが安全です。"
         return (
             f"{sleep_text}{recent_text}という流れから、過去30日で再現性の高いパターンは限定的ですが、今日は午前中の重い判断を前半に詰め込まず、完了を先に1〜2件作ってから難度の高い案件へ入る順が適しています。"
-            f"{notes_clause}最初の一手は、いま着手中の案件を20〜30分で区切れる最小単位に分解し、午前の最初のブロックで1つ完了させることです。これにより午後の判断コストを下げつつ、{focus}の軸を実行面で維持できます。進捗の観測点も午前中に固定してください。"
+            f"最初の一手は、いま着手中の案件を20〜30分で区切れる最小単位に分解し、午前の最初のブロックで1つ完了させることです。これにより午後の判断コストを下げつつ、{focus}の軸を実行面で維持できます。進捗の観測点も午前中に固定してください。"
         )
 
     if analysis_json.get("today_sleep_context", {}).get("sleep_available") is False and analysis_json.get("matched_patterns_count", 0) == 0:
         return _fallback_text()
     prompt = (
         "analysis JSONのみを根拠にToday adviceを日本語4〜6文で作成。"
-        "文字数は320〜520字。"
-        "構成順は『今日の睡眠状態の要約→直近7日または30日の傾向→今日の実務上の注意点→最初の一手』。"
-        "Notes品質が低い場合は断定を避けつつ、睡眠・完了・支出傾向を重めに扱う。"
+        "文字数は260〜420字。"
+        "3〜5文。最初の文は必ずしも睡眠から始めない。"
+        "構成順は『強い根拠→直近7日または30日の傾向→今日の実務上の注意点→最初の一手』。"
+        "睡眠は optional。today_sleep_context.sleep_should_mention が true のときだけ睡眠へ言及する。"
         "一般論は禁止。"
         "睡眠available時に『睡眠データ不明』は書かない。"
+        "Notes の内部品質事情（品質が低い/parse/unknown等）は本文に書かない。"
         "一般論を避け、根拠が弱い場合は弱いと明記。"
         "analysis JSON以外の因果は追加禁止。\n"
         f"analysis={json.dumps(analysis_json, ensure_ascii=False)}"
@@ -159,8 +182,8 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
             return _fallback_text()
         if sentence_count > 10:
             return _fallback_text()
-        if sleep.get("sleep_available") and "睡眠" not in generated:
-            return f"昨夜の睡眠は{sleep.get('sleep_hours', '不明')}時間でした。{generated}"
+        if any(term in generated for term in INTERNAL_NOTES_TERMS):
+            return _fallback_text()
         return generated
     except Exception:
         return _fallback_text()

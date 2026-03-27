@@ -35,6 +35,8 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         ("Sleep Start", input_fields.get("Sleep Start", "")),
         ("Sleep End", input_fields.get("Sleep End", "")),
         ("Sleep Duration", input_fields.get("Sleep Duration", "")),
+        ("Sleep Duration Text", input_fields.get("Sleep Duration Text", "")),
+        ("Canonical Sleep Duration Min", input_fields.get("Canonical Sleep Duration Min", "")),
         ("Sleep Score", input_fields.get("Sleep Score", "")),
         ("Sleep Source", input_fields.get("Sleep Source", "")),
         ("Sleep Heart Rate", input_fields.get("Sleep Heart Rate", "")),
@@ -61,6 +63,8 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         "- 支出情報は `Expenses Total` と `Expenses` の両方を参照してください\n"
         "- 睡眠情報がある場合は、活動・食事・タスク・場所とバランスよく自然に織り込んでください\n"
         "- 睡眠だけを過剰に主題化せず、軽いコンディション整理に留めてください\n"
+        "- 睡眠時間は supplied canonical value（Sleep Duration Text / Canonical Sleep Duration Min）をそのまま使い、時刻から再計算しないでください\n"
+        "- Sleep Analysis JP や Today Condition Forecast JP に別の睡眠時間表現があっても、canonical sleep duration を優先してください\n"
         "- 医療診断のような表現は禁止です\n"
         "- `Sleep Analysis JP` と `Today Condition Forecast JP` があれば補助的に参照してよいですが、重複した言い換えは避けてください\n\n"
 
@@ -122,6 +126,8 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         f"Sleep Start: {input_fields.get('Sleep Start', '')}\n"
         f"Sleep End: {input_fields.get('Sleep End', '')}\n"
         f"Sleep Duration: {input_fields.get('Sleep Duration', '')}\n"
+        f"Sleep Duration Text: {input_fields.get('Sleep Duration Text', '')}\n"
+        f"Canonical Sleep Duration Min: {input_fields.get('Canonical Sleep Duration Min', '')}\n"
         f"Sleep Score: {input_fields.get('Sleep Score', '')}\n"
         f"Sleep Source: {input_fields.get('Sleep Source', '')}\n"
         f"Sleep Heart Rate: {input_fields.get('Sleep Heart Rate', '')}\n"

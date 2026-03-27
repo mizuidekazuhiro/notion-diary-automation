@@ -10,7 +10,11 @@ from typing import Any, Mapping, Optional, Sequence
 import requests
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
-from scripts.sleep_utils import resolve_sleep_duration_minutes
+from scripts.sleep_utils import (
+    resolve_sleep_duration_minutes,
+    resolve_canonical_sleep_metrics,
+    validate_generated_sleep_text,
+)
 
 OPENAI_TIMEOUT = (5, 60)
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
@@ -53,15 +57,20 @@ def build_sleep_insight_context(
     history_summaries: Sequence[DailyLogSummary],
 ) -> SleepInsightContext:
     # Fields sent to Sleep GPT as raw "today_values".
-    today_duration = resolve_sleep_duration_minutes(
+    canonical_today = resolve_canonical_sleep_metrics(
         today_summary.sleep_start,
         today_summary.sleep_end,
         today_summary.sleep_duration_min,
-    ).resolved_sleep_duration_min
+    )
+    today_duration = canonical_today.resolved_sleep_duration_min
     today_values = {
         "sleep_start": _safe_text(today_summary.sleep_start),
         "sleep_end": _safe_text(today_summary.sleep_end),
         "sleep_duration_min": today_duration,
+        "canonical_sleep_duration_min": canonical_today.resolved_sleep_duration_min,
+        "canonical_sleep_duration_hours": canonical_today.resolved_sleep_duration_hours,
+        "canonical_sleep_duration_text": canonical_today.resolved_sleep_duration_text,
+        "sleep_duration_source": canonical_today.sleep_duration_source,
         "sleep_score": _collect_numeric(today_summary, "sleep_score"),
         "sleep_source": _safe_text(today_summary.sleep_source),
         "readiness_stars": _collect_numeric(today_summary, "readiness_stars"),
@@ -281,6 +290,10 @@ def _build_prompts(target_date: str, context: SleepInsightContext) -> tuple[str,
         "キーは sleep_analysis_jp・today_condition_forecast_jp の2つです。\n"
         "sleep_analysis_jp は2〜4文で、昨夜の睡眠データの分析を書いてください。\n"
         "today_condition_forecast_jp は2〜4文で、今日の体調・集中力・疲労感・判断力の見通しを書いてください。\n"
+        "canonical sleep duration is authoritative（正規睡眠時間が唯一の真実）です。\n"
+        "時刻文字列から睡眠時間を再計算してはいけません。\n"
+        "睡眠時間は supplied canonical value をそのまま使ってください。\n"
+        "睡眠時間に言及する場合、canonical_sleep_duration_text と完全一致させてください。\n"
         "データから言えないことは断定せず、未入力の項目は無理に使わず、推測で補わないでください。\n"
         "『バランスの良い食事を心がけましょう』『適度に休憩しましょう』『無理せず過ごしましょう』のような抽象的な一般論は禁止です。\n"
         "sleep_analysis_jp は分析、today_condition_forecast_jp は予測として扱い、助言文やメール冒頭向け本文は絶対に生成しないでください。"
@@ -290,9 +303,45 @@ def _build_prompts(target_date: str, context: SleepInsightContext) -> tuple[str,
         f"today_values: {context.today_values}\n"
         f"trend_values: {context.trend_values}\n"
         f"supporting_context: {context.supporting_context}\n"
+        "注意: canonical_sleep_duration_min/canonical_sleep_duration_text が提供されている場合は必ずそれを優先し、sleep_start/sleep_end から再計算しないこと。\n"
         "today_condition_forecast_jp には今日の見通しを反映してください。today_advice のような助言文は出力しないでください。"
     )
     return system_prompt, user_prompt
+
+
+def _deterministic_sleep_fallback(context: SleepInsightContext) -> dict[str, str]:
+    today = context.today_values
+    duration_text = _safe_text(today.get("canonical_sleep_duration_text"))
+    sleep_score = _safe_float(today.get("sleep_score"))
+    score_text = f"睡眠スコアは{int(sleep_score)}" if sleep_score is not None else "睡眠スコアは未計測"
+    if duration_text:
+        analysis = f"昨夜の睡眠時間は{duration_text}です。{score_text}で、睡眠記録はcanonical値に基づいています。"
+        forecast = f"今日のコンディションは、昨夜の睡眠{duration_text}と{score_text}を前提に、午前の立ち上がりを観察しながら調整する見通しです。"
+    else:
+        analysis = "昨夜の睡眠時間は確定値を取得できませんでした。睡眠関連の指標は欠損を含むため、評価は保守的に扱います。"
+        forecast = "今日のコンディション見通しは、睡眠時間の確定値がないため、午前中の負荷を抑えて観察する前提が適切です。"
+    return {"sleep_analysis_jp": analysis, "today_condition_forecast_jp": forecast}
+
+
+def _validate_sleep_outputs(result: dict[str, str], context: SleepInsightContext) -> tuple[bool, str | None]:
+    canonical_min = context.today_values.get("canonical_sleep_duration_min")
+    canonical_text = context.today_values.get("canonical_sleep_duration_text")
+    for key in ("sleep_analysis_jp", "today_condition_forecast_jp"):
+        value = result.get(key)
+        validation = validate_generated_sleep_text(
+            value,
+            canonical_sleep_duration_min=canonical_min,
+            canonical_sleep_duration_text=canonical_text,
+        )
+        if not validation.is_consistent:
+            logging.warning(
+                "sleep_text_consistency_error field=%s expected_sleep_duration_text=%s found_duration_text=%s",
+                key,
+                canonical_text,
+                validation.found_duration_text,
+            )
+            return False, validation.found_duration_text
+    return True, None
 
 
 def generate_sleep_insights(
@@ -326,40 +375,46 @@ def generate_sleep_insights(
         input_summary=_build_sleep_advice_debug_summary(context=context),
         prompt_text=prompt_text,
     )
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        json={
-            "model": model,
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        },
-        timeout=OPENAI_TIMEOUT,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("OpenAI response did not include sleep insights")
+    for attempt in range(2):
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "model": model,
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+            timeout=OPENAI_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("OpenAI response did not include sleep insights")
 
-    import json
+        import json
 
-    parsed = json.loads(content)
-    sleep_analysis = _safe_text(parsed.get("sleep_analysis_jp"))
-    today_forecast = _safe_text(parsed.get("today_condition_forecast_jp"))
-    result: dict[str, str] = {}
-    if sleep_analysis:
-        result["sleep_analysis_jp"] = sleep_analysis
-    if today_forecast:
-        result["today_condition_forecast_jp"] = today_forecast
-    return result
+        parsed = json.loads(content)
+        sleep_analysis = _safe_text(parsed.get("sleep_analysis_jp"))
+        today_forecast = _safe_text(parsed.get("today_condition_forecast_jp"))
+        result: dict[str, str] = {}
+        if sleep_analysis:
+            result["sleep_analysis_jp"] = sleep_analysis
+        if today_forecast:
+            result["today_condition_forecast_jp"] = today_forecast
+        is_valid, _ = _validate_sleep_outputs(result, context)
+        if is_valid:
+            return result
+        logging.warning("sleep_text_consistency_retry attempt=%s", attempt + 1)
+    logging.warning("sleep_text_consistency_fallback reason=validation_failed")
+    return _deterministic_sleep_fallback(context)
 
 
 def maybe_generate_sleep_insights(

@@ -100,10 +100,10 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 
 最優先要件:
 - 出力は日本語本文のみ。見出し、タイトル、箇条書き、JSONは禁止
-- 3文構成を基本とし、内容順は「今日の睡眠状態から見たコンディション」→「過去実績から見た行動上の注意点」→「今日まず取るべき具体行動」
+- 3〜5文構成、260〜420字程度
+- 最初の文は必ずしも睡眠から始めない。強い根拠から先に書く
 - 必ず recent 7-day behavior pattern を 1 つ以上本文に入れる
 - 2段落以内
-- 220〜380字程度
 - 一般論は禁止
 - 事実 → 解釈 → 今日の優先行動 の順に自然につなぐ
 - 行動提案は 1〜2 個に絞る
@@ -113,6 +113,7 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 入力制約:
 - Today advice で当日参照してよいのは sleep 系のみ
 - today sleep only / non-sleep historical only / must include recent 7-day trend
+- 睡眠は optional。sleep_should_mention=true か、sleep差分・score差分が大きい時のみ触れる
 - 行動・支出・食事・メモ・位置情報系は当日値を使わず、過去実績のみから評価する
 - 当日の done / drop / spend / meal / notes / location summary を根拠に解釈しない
 - 当日の未入力や未完了は評価対象にしない
@@ -123,6 +124,7 @@ FINAL_SYSTEM_PROMPT = """あなたは朝メール冒頭に載せる Today advice
 - 支出から感情を断定しない
 - 食事未記録から健康状態を断定しない
 - 「把握が難しい」「低調」「停滞」などを、当日未記録や当日ゼロ件を根拠に断定しない
+- Notes品質・parse・unknown率など内部品質事情は本文に出さない
 
 禁止例:
 - バランスの良い食事を心がけましょう
