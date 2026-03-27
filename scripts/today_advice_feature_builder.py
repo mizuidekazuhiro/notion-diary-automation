@@ -5,6 +5,7 @@ from typing import Any, Mapping, Sequence
 
 from publish.read_daily_log import DailyLogSummary
 from scripts.note_batch_labeler import NoteLabel
+from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_target_date
 
 
 def _normalize_mood_to_score(raw_mood: object) -> float | None:
@@ -41,19 +42,22 @@ def _safe_float(value: object) -> float | None:
 
 
 def _sleep_validity(summary: DailyLogSummary) -> tuple[bool, str | None, float | None]:
-    duration = _safe_float(summary.sleep_duration_min)
-    all_invalid = duration is None and summary.sleep_start is None and summary.sleep_end is None
+    all_invalid = summary.sleep_duration_min is None and summary.sleep_start is None and summary.sleep_end is None
     if all_invalid:
         return False, "missing_all_sleep_fields", None
+    resolved = resolve_sleep_duration_minutes(summary.sleep_start, summary.sleep_end, summary.sleep_duration_min)
+    duration = resolved.resolved_sleep_duration_min
     if duration is None:
-        return False, "missing_duration", None
-    if duration < 0:
-        return False, "negative_duration", None
+        reason = resolved.invalid_reason or "missing_duration"
+        score = _safe_float(summary.sleep_score)
+        if reason == "duration_non_positive" and score == 0:
+            return False, "zero_duration_and_score_zero", None
+        return False, reason, None
     score = _safe_float(summary.sleep_score)
-    if duration == 0 and score == 0:
-        return False, "zero_duration_and_score_zero", None
-    if duration == 0:
-        return False, "zero_duration", None
+    if duration <= 0:
+        if duration == 0 and score == 0:
+            return False, "zero_duration_and_score_zero", None
+        return False, "duration_non_positive", None
     return True, None, duration
 
 
@@ -104,6 +108,11 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
         rows.append(
             {
                 "date": item.target_date,
+                "sleep_target_date": resolve_sleep_target_date(
+                    sleep_start=item.sleep_start,
+                    sleep_end=item.sleep_end,
+                    fallback_date=item.target_date,
+                ),
                 "mood": _normalize_mood_to_score(item.mood),
                 "sleep_valid_flag": sleep_valid_flag,
                 "sleep_invalid_reason": sleep_invalid_reason,
