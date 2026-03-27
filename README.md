@@ -185,11 +185,20 @@ Today advice は従来の Phase C 分離を維持したまま、**分析本体�
    `scripts/today_advice_lightgbm.py` が `next_day_low_mood_flag` を目的変数に `LGBMClassifier` を実行し、feature importance / リスク寄与上位 / 保護寄与上位 / 当日予測確率（可能時）を返します。失敗時は `insufficient_samples` / `single_class_target` / `unsupported_dtype` / `too_many_missing_values` / `fit_exception` など具体的 skipped reason を返します。
 6. **分析済み JSON 生成**  
    `scripts/today_advice_renderer.py` が `today_sleep_context`, `data_quality`, `exploratory_summary`, `recent_7d_summary`, `regression_summary`, `lightgbm_summary`, `matched_today_conditions` をまとめます。
-   - `sleep_duration_min <= 0`（Apple Watch 未装着日など）は短時間睡眠ではなく欠損扱いです。
-   - `sleep_valid_flag=false`, `sleep_invalid_reason=zero_duration|missing_duration|negative_duration|missing_all_sleep_fields` を付与し、sleep 系分析から除外します。
-   - 当日 sleep が invalid の場合は `today_sleep_context.sleep_available=false` となり、本文は「睡眠データ不明」として扱います。
+   - 睡眠時間は `sleep_start/sleep_end` があれば差分（起床時刻 - 就寝時刻）を再計算した値を正とし、`sleep_duration_min` は fallback です。
+   - タイムゾーンは Asia/Tokyo で扱い、`sleep_end <= sleep_start` は invalid です。
+   - `sleep_valid_flag=false`, `sleep_invalid_reason=zero_duration_and_score_zero|duration_non_positive|end_before_or_equal_start|missing_duration|missing_all_sleep_fields` を付与し、sleep 系分析から除外します。
+   - `zero_duration_and_score_zero` は「その候補単体が無効」の意味であり、別の有効候補を潰しません。
+   - 当日 sleep 判定は `sleep_start/sleep_end` 由来の有効 duration、または `sleep_score > 0` があれば `today_sleep_context.sleep_available=true` です。
 7. **分析済み JSON のみで本文生成**  
    GPT には生の30日 Notes を再投入せず、分析済み JSON のみを渡して Today advice 日本語本文を作ります。GPT 失敗時はルールベース文へフォールバックします。
+   - `today_sleep_context.sleep_available=true` の日は、最終 Today advice 本文に睡眠示唆を最低1文含めるガードを入れています。
+
+### 睡眠データの target_date 帰属ルール（共通）
+
+- sleep phase / today_advice phase / 特徴量生成は同じ帰属関数を使います。
+- ルールは `target_date = date((sleep_start または sleep_end in JST) - 5時間)` です（05:00 JST 境界）。
+- 例: `2026-03-27 01:35-08:17 (+09:00)` は `2026-03-26` に帰属します。
 
 ### Today advice 分析監査ログ（analysis_audit）
 
@@ -202,6 +211,11 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - E. 回帰分析 (`[TodayAdvice][Regression]`): 実行可否、サンプル数、上位特徴量、スキップ理由。
 - F. LightGBM (`[TodayAdvice][LightGBM]`): 実行可否、サンプル数、feature importance、予測可否、スキップ理由。
 - G. 今日一致判定 (`[TodayAdvice][TodayMatch]`): 当日 sleep の有効/欠損理由、一致パターン、risk/focus、根拠配列。
+- G2. 睡眠解決詳細 (`[TodayAdvice][SleepResolve]` / `[TodayAdvice][SleepCandidates]` / `[TodayAdvice][SleepSelected]` / `[TodayAdvice][SleepAvailability]`):
+  - 候補ごとの `candidate_date / sleep_start / sleep_end / raw_sleep_duration_min / resolved_sleep_duration_min / sleep_score / candidate_valid_flag / invalid_reason / selection_reason / duration_source / candidate_target_date`
+  - 最終採用候補
+  - `sleep_available` 最終判定理由
+  - 保存済み sleep プロパティを使ったかどうか
 - G. GPT 入力分析 JSON (`[TodayAdvice][AnalysisJSON]`)
 - H. 最終本文 (`[TodayAdvice][FinalText]`)
 
@@ -270,6 +284,7 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - Notes解析は sentiment 主体ではなく GPT 構造化抽出主体です（signals + derived flags）。
 - Notes 抽出は unknown/low-confidence を保持し、unknown を neutral に丸めません。
 - `sleep_duration_min <= 0`（または duration=0 かつ score=0）は睡眠欠損として扱い、睡眠分析文・見通し文は欠損用テンプレートを返します。
+- ただし `sleep_start/sleep_end` がある場合は差分再計算結果を優先し、`sleep_duration_min` は fallback です。
 - Today advice は固定ルールではなく 30〜60 日の探索型分析結果（exploratory/regression/LightGBM）を根拠に構成します。
 - LightGBM を正式依存として導入しています（`requirements.txt` / CI install / verify 対応）。
 - メール本文セクション順は `Today advice -> Diary -> Sleep & Condition -> Summary -> Tasks -> Meal summary` です。

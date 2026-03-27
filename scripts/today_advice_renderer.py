@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable, Mapping
 
 from publish.read_daily_log import DailyLogSummary
+from scripts.sleep_utils import resolve_sleep_duration_minutes
 
 
 def build_analysis_json(
@@ -24,10 +25,18 @@ def build_analysis_json(
     recording = [f"Notes記録あり{note_days}/{len(recent7)}日", f"睡眠有効日{int(recent7['sleep_valid_flag'].fillna(False).sum())}/{len(recent7)}日"] if len(recent7) else []
 
     today_row = features_df.sort_values("date").tail(1).iloc[0] if len(features_df) else None
-    today_sleep_valid = bool(today_row.get("sleep_valid_flag", False)) if today_row is not None else False
-    today_reason = today_row.get("sleep_invalid_reason") if today_row is not None else None
-    sleep_hours = round(float(today_row.get("sleep_hours")), 2) if today_row is not None and today_sleep_valid and today_row.get("sleep_hours") == today_row.get("sleep_hours") else None
-    sleep_score = float(today_row.get("sleep_score")) if today_row is not None and today_sleep_valid and today_row.get("sleep_score") == today_row.get("sleep_score") else None
+    resolved = resolve_sleep_duration_minutes(today_summary.sleep_start, today_summary.sleep_end, today_summary.sleep_duration_min)
+    resolved_minutes = resolved.resolved_sleep_duration_min
+    summary_sleep_score = float(today_summary.sleep_score) if isinstance(today_summary.sleep_score, (int, float)) else None
+    today_sleep_valid = bool(
+        (resolved_minutes is not None and resolved_minutes > 0)
+        or (summary_sleep_score is not None and summary_sleep_score > 0)
+    )
+    today_reason = None if today_sleep_valid else (resolved.invalid_reason or (today_row.get("sleep_invalid_reason") if today_row is not None else "missing_sleep_signal"))
+    sleep_hours = round(resolved_minutes / 60.0, 2) if today_sleep_valid and resolved_minutes is not None else None
+    sleep_score = summary_sleep_score if today_sleep_valid and summary_sleep_score is not None else (
+        float(today_row.get("sleep_score")) if today_row is not None and today_sleep_valid and today_row.get("sleep_score") == today_row.get("sleep_score") else None
+    )
 
     matched_patterns = list(exploratory_summary.get("matched_today_conditions") or [])
     prob = lightgbm_summary.get("prediction_probability_for_today")
@@ -53,7 +62,7 @@ def build_analysis_json(
             evidence_used.append(f"{source}: {feature}")
     if behavior:
         evidence_used.append(f"recent_7d: {behavior[0]}")
-    evidence_used.append("sleep: 睡眠データ不明" if not today_sleep_valid else f"sleep: 睡眠時間{sleep_hours}時間")
+    evidence_used.append("sleep: 睡眠データ不明" if not today_sleep_valid else f"sleep: 睡眠時間{sleep_hours}時間・スコア{sleep_score if sleep_score is not None else '不明'}")
     if not matched_patterns:
         evidence_used.append("good_bad: 過去30日で明確な再現パターンは限定的")
 
@@ -63,6 +72,7 @@ def build_analysis_json(
             "sleep_available": today_sleep_valid,
             "sleep_invalid_reason": today_reason if not today_sleep_valid else None,
             "sleep_hours": sleep_hours if today_sleep_valid else None,
+            "duration_source": resolved.duration_source,
             "bedtime": (today_summary.sleep_start or "")[11:16] if today_sleep_valid and today_summary.sleep_start else None,
             "sleep_score": sleep_score if today_sleep_valid else None,
         },
@@ -101,11 +111,17 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
         f"analysis={json.dumps(analysis_json, ensure_ascii=False)}"
     )
     try:
-        return chat_completion(
+        generated = chat_completion(
             model=model,
             system_prompt="あなたは朝メール用のToday adviceライター。出力は日本語本文のみ。",
             user_prompt=prompt,
         ).strip()
+        sleep = analysis_json.get("today_sleep_context", {})
+        if sleep.get("sleep_available") and "睡眠" not in generated:
+            hours = sleep.get("sleep_hours")
+            prefix = f"昨夜の睡眠は{hours}時間で、今日は負荷調整を意識してください。" if hours is not None else "昨夜の睡眠データを踏まえ、今日は負荷調整を意識してください。"
+            return f"{prefix}{generated}"
+        return generated
     except Exception:
         sleep = analysis_json.get("today_sleep_context", {})
         if sleep.get("sleep_available") is False:

@@ -260,22 +260,22 @@ def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
-    assert result.judgment_json["analysis_audit"]["final_text"]["text"] == "これは最終本文です。"
+    assert "これは最終本文です。" in result.judgment_json["analysis_audit"]["final_text"]["text"]
 
 
 def test_sleep_duration_zero_marked_invalid() -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
-    h = _summary(1, sleep_duration_min=0)
+    h = _summary(1, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0)
     df = build_daily_feature_table([h], {})
     assert bool(df.iloc[0]["sleep_valid_flag"]) is False
-    assert df.iloc[0]["sleep_invalid_reason"] == "zero_duration"
+    assert df.iloc[0]["sleep_invalid_reason"] == "zero_duration_and_score_zero"
 
 
 def test_invalid_sleep_not_treated_as_short_sleep() -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
-    h = _summary(1, sleep_duration_min=0)
+    h = _summary(1, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0)
     df = build_daily_feature_table([h], {})
     assert bool(df.iloc[0]["sleep_lt_6h_flag"]) is False
 
@@ -283,7 +283,7 @@ def test_invalid_sleep_not_treated_as_short_sleep() -> None:
 def test_invalid_sleep_excluded_from_sleep_lag_features() -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
-    hs = [_summary(1, sleep_duration_min=0), _summary(2, sleep_duration_min=420)]
+    hs = [_summary(1, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0), _summary(2, sleep_duration_min=420)]
     df = build_daily_feature_table(hs, {})
     assert str(df.iloc[0]["sleep_hours"]) == "nan"
     assert df.iloc[0]["sleep_vs_7d_delta"] != df.iloc[0]["sleep_vs_7d_delta"]
@@ -320,17 +320,95 @@ def test_analysis_json_contains_exploratory_regression_lightgbm() -> None:
 def test_today_sleep_invalid_sets_sleep_available_false() -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
-    hs = [_summary(i, sleep_duration_min=420) for i in range(1, 8)] + [_summary(8, sleep_duration_min=0)]
+    hs = [_summary(i, sleep_duration_min=420) for i in range(1, 8)] + [_summary(8, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0)]
     df = build_daily_feature_table(hs, {})
     payload = build_analysis_json(
         target_date="2026-03-08",
-        today_summary=_summary(8, sleep_duration_min=0),
+        today_summary=_summary(8, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0),
         features_df=df,
         exploratory_summary=analyze_exploratory_patterns(df),
         regression_summary={"available": False, "sample_size": 0},
         lightgbm_summary={"available": False, "sample_size": 0},
     )
     assert bool(payload["today_sleep_context"]["sleep_available"]) is False
+
+
+def test_zero_duration_score_zero_record_does_not_crush_valid_candidate() -> None:
+    import scripts.mood_advice_generator as generator
+
+    today = _summary(26, target_date="2026-03-26", sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0)
+    valid = _summary(27, target_date="2026-03-27", sleep_start="2026-03-27T01:35:00+09:00", sleep_end="2026-03-27T08:17:00+09:00", sleep_duration_min=0, sleep_score=75)
+    _, selected, source = generator._resolve_today_sleep_candidates(target_date="2026-03-26", today_summary=today, history=[valid])
+    assert selected is not None
+    assert source == "history_target_date_match"
+    assert bool(selected["candidate_valid_flag"]) is True
+
+
+def test_saved_sleep_properties_are_prioritized_for_today_advice_context() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    today = _summary(
+        26,
+        target_date="2026-03-26",
+        sleep_start="2026-03-27T01:35:00+09:00",
+        sleep_end="2026-03-27T08:17:00+09:00",
+        sleep_duration_min=0,
+        sleep_score=75,
+    )
+    df = build_daily_feature_table([today], {})
+    payload = build_analysis_json(
+        target_date="2026-03-26",
+        today_summary=today,
+        features_df=df,
+        exploratory_summary={"matched_today_conditions": []},
+        regression_summary={"available": False, "sample_size": 0},
+        lightgbm_summary={"available": False, "sample_size": 0},
+    )
+    assert bool(payload["today_sleep_context"]["sleep_available"]) is True
+    assert payload["today_sleep_context"]["sleep_hours"] == 6.7
+
+
+def test_render_today_advice_contains_sleep_sentence_when_sleep_is_available() -> None:
+    text = render_today_advice_from_analysis(
+        analysis_json={
+            "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7},
+            "matched_patterns_count": 1,
+            "primary_focus": "負荷調整",
+        },
+        model="x",
+        chat_completion=lambda **kwargs: "今日はまず進行中タスクを2件終わらせましょう。",
+    )
+    assert "睡眠" in text
+
+
+def test_real_case_like_payload_does_not_return_sleep_unknown(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+
+    target = _summary(
+        26,
+        target_date="2026-03-26",
+        sleep_start=None,
+        sleep_end=None,
+        sleep_duration_min=0,
+        sleep_score=0,
+    )
+    next_day = _summary(
+        27,
+        target_date="2026-03-27",
+        sleep_start="2026-03-27T01:35:00+09:00",
+        sleep_end="2026-03-27T08:17:00+09:00",
+        sleep_duration_min=268,
+        sleep_score=75,
+    )
+    histories = [_summary(i, target_date=f"2026-03-{i:02d}") for i in range(1, 20)]
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [next_day, target, *histories])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "今日は睡眠を踏まえて負荷を調整してください。")
+
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-26")
+    assert result is not None
+    assert "睡眠データ不明" not in result.today_advice
 
 
 def test_today_advice_prompt_prefers_exploratory_evidence() -> None:
