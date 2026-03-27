@@ -49,4 +49,4 @@ def test_email_section_order() -> None:
             "meal_summary": "meal",
         }
     )
-    assert text.index("Today advice") < text.index("Diary") < text.index("Sleep & Condition") < text.index("Summary")
+    assert text.index("Today advice") < text.index("Diary") < text.index("Summary") < text.index("Sleep & Condition")
