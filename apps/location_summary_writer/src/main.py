@@ -724,9 +724,17 @@ def fetch_prompt_from_notion(notion: NotionClient, cfg: Config, prompt_type: str
     return None
 
 
-def generate_diary_from_gpt(payload: dict[str, Any], api_key: str, model: str, notion: NotionClient, cfg: Config) -> str:
+def generate_diary_from_gpt(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    notion: NotionClient | None,
+    cfg: Config | None,
+) -> str:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for GPT diary generation")
+    if notion is None or cfg is None:
+        raise RuntimeError("notion and cfg are required for GPT diary generation")
 
     system_prompt = (
         "あなたは行動ログを自然な日本語の日記文に整えるアシスタントです。\n"
@@ -833,8 +841,8 @@ def generate_location_summary(
     expenses: list[ExpenseEvent],
     openai_api_key: str,
     openai_model: str,
-    notion: NotionClient,
-    cfg: Config,
+    notion: NotionClient | None = None,
+    cfg: Config | None = None,
 ) -> str:
     main_sessions, short_sessions = partition_sessions(sessions, min_duration_min=30)
     movement_segments = classify_movement_segments(short_sessions, main_sessions)
