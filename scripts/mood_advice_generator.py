@@ -20,6 +20,7 @@ from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
 from scripts.today_advice_lightgbm import run_lightgbm_low_mood
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
+from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_target_date
 from scripts.today_advice_audit import (
     TodayAdviceAuditLogger,
     count_missing,
@@ -293,9 +294,19 @@ def load_daily_logs_for_period(
     bearer_token: Optional[str],
     target_date: str,
     days: int = LOOKBACK_DAYS,
+    include_next_day: bool = True,
 ) -> list[DailyLogSummary]:
     base_day = datetime.strptime(target_date, "%Y-%m-%d")
     summaries: list[DailyLogSummary] = []
+    if include_next_day:
+        next_day = (base_day + timedelta(days=1)).strftime("%Y-%m-%d")
+        next_summary = read_daily_log(
+            daily_log_read_url=daily_log_read_url,
+            target_date=next_day,
+            bearer_token=bearer_token,
+        )
+        if next_summary:
+            summaries.append(next_summary)
     for offset in range(days):
         day = (base_day - timedelta(days=offset)).strftime("%Y-%m-%d")
         summary = read_daily_log(
@@ -343,6 +354,77 @@ def _format_number(value: Optional[float]) -> str:
     if float(value).is_integer():
         return str(int(value))
     return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _build_sleep_candidate(*, candidate_date: str, source: str, sleep_start: object, sleep_end: object, raw_sleep_duration_min: object, sleep_score: object) -> dict[str, Any]:
+    resolved = resolve_sleep_duration_minutes(sleep_start, sleep_end, raw_sleep_duration_min)
+    score = _safe_float(sleep_score)
+    is_valid = bool(
+        (resolved.resolved_sleep_duration_min is not None and resolved.resolved_sleep_duration_min > 0)
+        or (score is not None and score > 0)
+    )
+    invalid_reason = None if is_valid else (resolved.invalid_reason or "missing_sleep_signal")
+    return {
+        "candidate_date": candidate_date,
+        "source": source,
+        "sleep_start": sleep_start,
+        "sleep_end": sleep_end,
+        "raw_sleep_duration_min": _safe_float(raw_sleep_duration_min),
+        "resolved_sleep_duration_min": resolved.resolved_sleep_duration_min,
+        "sleep_score": score,
+        "duration_source": resolved.duration_source,
+        "candidate_target_date": resolve_sleep_target_date(
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+            fallback_date=candidate_date,
+        ),
+        "candidate_valid_flag": is_valid,
+        "invalid_reason": invalid_reason,
+    }
+
+
+def _resolve_today_sleep_candidates(*, target_date: str, today_summary: DailyLogSummary, history: Sequence[DailyLogSummary]) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]], str]:
+    candidates: list[dict[str, Any]] = []
+    candidates.append(
+        _build_sleep_candidate(
+            candidate_date=today_summary.target_date,
+            source="today_saved_properties",
+            sleep_start=today_summary.sleep_start,
+            sleep_end=today_summary.sleep_end,
+            raw_sleep_duration_min=today_summary.sleep_duration_min,
+            sleep_score=today_summary.sleep_score,
+        )
+    )
+    for item in history:
+        candidates.append(
+            _build_sleep_candidate(
+                candidate_date=item.target_date,
+                source="history",
+                sleep_start=item.sleep_start,
+                sleep_end=item.sleep_end,
+                raw_sleep_duration_min=item.sleep_duration_min,
+                sleep_score=item.sleep_score,
+            )
+        )
+
+    preferred = [c for c in candidates if c.get("source") == "today_saved_properties" and c.get("candidate_valid_flag")]
+    if preferred:
+        selected = preferred[0]
+        selected["selection_reason"] = "use_saved_today_properties"
+        return candidates, selected, "saved_today_properties"
+
+    same_target_valid = [c for c in candidates if c.get("candidate_target_date") == target_date and c.get("candidate_valid_flag")]
+    if same_target_valid:
+        selected = same_target_valid[0]
+        selected["selection_reason"] = "match_target_date_with_05_boundary"
+        return candidates, selected, "history_target_date_match"
+
+    fallback_valid = [c for c in candidates if c.get("candidate_valid_flag")]
+    if fallback_valid:
+        selected = fallback_valid[0]
+        selected["selection_reason"] = "fallback_any_valid_candidate"
+        return candidates, selected, "fallback_any_valid"
+    return candidates, None, "no_valid_candidate"
 
 
 def _build_metric_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
@@ -457,7 +539,11 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
     recent_14_metrics = _build_metric_snapshot(recent_14)
     recent_30_metrics = _build_metric_snapshot(recent_30)
 
-    today_sleep_duration = _safe_float(today_summary.sleep_duration_min)
+    today_sleep_duration = resolve_sleep_duration_minutes(
+        today_summary.sleep_start,
+        today_summary.sleep_end,
+        today_summary.sleep_duration_min,
+    ).resolved_sleep_duration_min
     today_sleep_score = _safe_float(today_summary.sleep_score)
 
     return {
@@ -468,6 +554,7 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "sleep_start": today_summary.sleep_start or "未記録",
             "sleep_end": today_summary.sleep_end or "未記録",
             "sleep_duration_min": today_summary.sleep_duration_min,
+            "resolved_sleep_duration_min": today_sleep_duration,
             "sleep_score": today_summary.sleep_score,
             "sleep_heart_rate": today_summary.sleep_heart_rate,
             "deep_duration_min": today_summary.deep_duration_min,
@@ -705,10 +792,25 @@ def build_today_advice_generation_context(
         return None
 
     today_summary = next((item for item in history if item.target_date == target_date), history[0])
-    historical_summaries = [item for item in history if item.target_date != target_date]
+    historical_summaries = [item for item in history if item.target_date != target_date and item.target_date < target_date]
+    sleep_candidates, selected_sleep_candidate, sleep_properties_source = _resolve_today_sleep_candidates(
+        target_date=target_date,
+        today_summary=today_summary,
+        history=history,
+    )
     structured = _build_structured_comparison(historical_summaries)
     recent_prior_days = historical_summaries[:RECENT_WINDOW_DAYS]
     today_state = _build_today_state(today_summary, recent_prior_days)
+    if selected_sleep_candidate:
+        today_state["today_sleep"]["sleep_duration_min"] = selected_sleep_candidate.get("resolved_sleep_duration_min")
+        today_state["today_sleep"]["sleep_score"] = selected_sleep_candidate.get("sleep_score")
+        today_state["today_sleep"]["sleep_start"] = selected_sleep_candidate.get("sleep_start") or "未記録"
+        today_state["today_sleep"]["sleep_end"] = selected_sleep_candidate.get("sleep_end") or "未記録"
+        today_state["today_sleep"]["sleep_available"] = True
+        today_state["today_sleep"]["duration_source"] = selected_sleep_candidate.get("duration_source")
+    else:
+        today_state["today_sleep"]["sleep_available"] = False
+        today_state["today_sleep"]["duration_source"] = "missing"
     notes_used = any(_safe_text(item.notes) for item in historical_summaries)
     judgment_input = {
         "today_sleep": today_state["today_sleep"],
@@ -737,6 +839,9 @@ def build_today_advice_generation_context(
         "today_state": today_state,
         "notes_used": notes_used,
         "judgment_input": judgment_input,
+        "sleep_candidates": sleep_candidates,
+        "selected_sleep_candidate": selected_sleep_candidate,
+        "sleep_properties_source": sleep_properties_source,
     }
 
 
@@ -933,6 +1038,9 @@ def generate_today_advice(
     structured = context["structured"]
     today_summary = context["today_summary"]
     historical_summaries = context["historical_summaries"]
+    sleep_candidates = list(context.get("sleep_candidates") or [])
+    selected_sleep_candidate = context.get("selected_sleep_candidate")
+    sleep_properties_source = context.get("sleep_properties_source")
     debug_enabled = is_today_advice_debug_enabled()
     audit = TodayAdviceAuditLogger(target_date=target_date, debug=debug_enabled)
     final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
@@ -978,6 +1086,43 @@ def generate_today_advice(
         fetch_payload["missing"]["task_done"],
         fetch_payload["missing"]["task_drop"],
         fetch_payload["missing"]["spending"],
+    )
+    audit.put(
+        "sleep_resolve",
+        {
+            "target_date": target_date,
+            "rule": "target_date = date((sleep_start or sleep_end) in JST - 5h)",
+            "used_saved_sleep_properties": sleep_properties_source == "saved_today_properties",
+            "sleep_properties_source": sleep_properties_source,
+            "candidates": sleep_candidates,
+            "selected": selected_sleep_candidate,
+        },
+    )
+    audit.info(
+        "[TodayAdvice][SleepResolve] target_date=%s rule=05:00JST start_or_end_minus_5h used_saved_sleep_properties=%s source=%s",
+        target_date,
+        sleep_properties_source == "saved_today_properties",
+        sleep_properties_source,
+    )
+    for idx, candidate in enumerate(sleep_candidates):
+        audit.info(
+            "[TodayAdvice][SleepCandidates] idx=%s candidate_date=%s sleep_start=%s sleep_end=%s raw_sleep_duration_min=%s resolved_sleep_duration_min=%s sleep_score=%s candidate_valid_flag=%s invalid_reason=%s selection_reason=%s candidate_target_date=%s duration_source=%s",
+            idx,
+            candidate.get("candidate_date"),
+            candidate.get("sleep_start"),
+            candidate.get("sleep_end"),
+            candidate.get("raw_sleep_duration_min"),
+            candidate.get("resolved_sleep_duration_min"),
+            candidate.get("sleep_score"),
+            candidate.get("candidate_valid_flag"),
+            candidate.get("invalid_reason"),
+            candidate.get("selection_reason"),
+            candidate.get("candidate_target_date"),
+            candidate.get("duration_source"),
+        )
+    audit.info(
+        "[TodayAdvice][SleepSelected] selected=%s",
+        safe_json(selected_sleep_candidate) if selected_sleep_candidate else "{}",
     )
     try:
         note_label_audit: dict[str, Any] = {}
@@ -1199,6 +1344,14 @@ def generate_today_advice(
             "reason_codes": analysis_json.get("reason_codes", []),
         }
         audit.put("today_match", today_match_payload)
+        final_sleep_context = analysis_json.get("today_sleep_context", {})
+        audit.info(
+            "[TodayAdvice][SleepAvailability] sleep_available=%s reason=%s duration_source=%s selected_candidate_date=%s",
+            final_sleep_context.get("sleep_available"),
+            final_sleep_context.get("sleep_invalid_reason") or (selected_sleep_candidate or {}).get("selection_reason"),
+            final_sleep_context.get("duration_source"),
+            (selected_sleep_candidate or {}).get("candidate_date"),
+        )
         audit.info("[TodayAdvice][TodayMatch] sleep_hours=%s bedtime=%s sleep_score=%s", today_sleep_hours, today_bedtime, today_sleep_score)
         audit.info(
             "[TodayAdvice][TodayMatch] matched=%s ids=%s risk=%s focus=%s",
