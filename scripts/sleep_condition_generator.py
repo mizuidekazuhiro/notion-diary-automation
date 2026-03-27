@@ -10,6 +10,7 @@ from typing import Any, Mapping, Optional, Sequence
 import requests
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
+from scripts.sleep_utils import resolve_sleep_duration_minutes
 
 OPENAI_TIMEOUT = (5, 60)
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
@@ -52,10 +53,15 @@ def build_sleep_insight_context(
     history_summaries: Sequence[DailyLogSummary],
 ) -> SleepInsightContext:
     # Fields sent to Sleep GPT as raw "today_values".
+    today_duration = resolve_sleep_duration_minutes(
+        today_summary.sleep_start,
+        today_summary.sleep_end,
+        today_summary.sleep_duration_min,
+    ).resolved_sleep_duration_min
     today_values = {
         "sleep_start": _safe_text(today_summary.sleep_start),
         "sleep_end": _safe_text(today_summary.sleep_end),
-        "sleep_duration_min": _collect_numeric(today_summary, "sleep_duration_min"),
+        "sleep_duration_min": today_duration,
         "sleep_score": _collect_numeric(today_summary, "sleep_score"),
         "sleep_source": _safe_text(today_summary.sleep_source),
         "readiness_stars": _collect_numeric(today_summary, "readiness_stars"),
@@ -78,11 +84,14 @@ def build_sleep_insight_context(
     ]
     trend_values: dict[str, Any] = {}
     for field_name in trend_fields:
-        values = [
-            value
-            for value in (_collect_numeric(item, field_name) for item in history_summaries)
-            if value is not None
-        ]
+        values = []
+        for item in history_summaries:
+            if field_name == "sleep_duration_min":
+                value = resolve_sleep_duration_minutes(item.sleep_start, item.sleep_end, item.sleep_duration_min).resolved_sleep_duration_min
+            else:
+                value = _collect_numeric(item, field_name)
+            if value is not None:
+                values.append(value)
         avg = round(sum(values) / len(values), 2) if values else None
         trend_values[f"{field_name}_7d_avg"] = avg
 
@@ -115,13 +124,18 @@ def build_sleep_insight_context(
         return None
 
     recent_3day_trend = {
-        "sleep_duration_min": _trend([item.sleep_duration_min for item in recent_3]),
+        "sleep_duration_min": _trend([resolve_sleep_duration_minutes(item.sleep_start, item.sleep_end, item.sleep_duration_min).resolved_sleep_duration_min for item in recent_3]),
         "sleep_score": _trend([item.sleep_score for item in recent_3]),
         "readiness_hrv": _trend([item.readiness_hrv for item in recent_3]),
         "readiness_bpm": _trend([item.readiness_bpm for item in recent_3]),
     }
+    yesterday_duration = (
+        resolve_sleep_duration_minutes(yesterday.sleep_start, yesterday.sleep_end, yesterday.sleep_duration_min).resolved_sleep_duration_min
+        if yesterday
+        else None
+    )
     vs_yesterday = {
-        "sleep_duration_min_delta": round((today_values["sleep_duration_min"] - yesterday.sleep_duration_min), 2) if yesterday and today_values["sleep_duration_min"] is not None and yesterday.sleep_duration_min is not None else None,
+        "sleep_duration_min_delta": round((today_values["sleep_duration_min"] - yesterday_duration), 2) if yesterday and today_values["sleep_duration_min"] is not None and yesterday_duration is not None else None,
         "sleep_score_delta": round((today_values["sleep_score"] - yesterday.sleep_score), 2) if yesterday and today_values["sleep_score"] is not None and yesterday.sleep_score is not None else None,
         "readiness_hrv_delta": round((today_values["readiness_hrv"] - yesterday.readiness_hrv), 2) if yesterday and today_values["readiness_hrv"] is not None and yesterday.readiness_hrv is not None else None,
         "readiness_bpm_delta": round((today_values["readiness_bpm"] - yesterday.readiness_bpm), 2) if yesterday and today_values["readiness_bpm"] is not None and yesterday.readiness_bpm is not None else None,
@@ -154,14 +168,13 @@ def build_sleep_insight_context(
 
 
 def _is_invalid_sleep_record(summary: DailyLogSummary) -> tuple[bool, str | None]:
-    duration = _safe_float(summary.sleep_duration_min)
+    resolved = resolve_sleep_duration_minutes(summary.sleep_start, summary.sleep_end, summary.sleep_duration_min)
+    duration = resolved.resolved_sleep_duration_min
     score = _safe_float(summary.sleep_score)
     if duration is None:
-        return True, "missing_duration"
-    if duration <= 0:
-        if duration == 0 and score == 0:
+        if resolved.invalid_reason == "duration_non_positive" and score == 0:
             return True, "duration_and_score_zero"
-        return True, "duration_non_positive"
+        return True, resolved.invalid_reason or "missing_duration"
     return False, None
 
 def load_recent_daily_logs(
