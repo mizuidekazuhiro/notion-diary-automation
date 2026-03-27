@@ -1140,14 +1140,16 @@ def generate_today_advice(
         )
         notes_total_count = len(historical_summaries)
         notes_non_empty_count = sum(1 for item in historical_summaries if _safe_text(item.notes))
-        notes_batch_api_calls = int(math.ceil(notes_non_empty_count / 15)) if notes_non_empty_count else 0
         notes_labeled = list(note_labels.values())
+        notes_parse_success_rate = float(note_label_audit.get("notes_parse_success_rate", 0.0) or 0.0)
+        notes_unknown_rate = float(note_label_audit.get("unknown_rate", note_label_audit.get("notes_unknown_rate", 0.0)) or 0.0)
+        notes_signals_detected_count = int(note_label_audit.get("signals_detected_count", 0) or 0)
         notes_payload = {
             "total_count": notes_total_count,
             "non_empty_count": notes_non_empty_count,
-            "api_calls": notes_batch_api_calls,
+            "api_calls": note_label_audit.get("api_calls", 0),
             "labeled_count": len(notes_labeled),
-            "fallback_neutral_count": sum(1 for item in notes_labeled if item.confidence == "low" and item.sentiment_label == "neutral"),
+            "fallback_unknown_count": sum(1 for item in notes_labeled if item.confidence == "low" and item.sentiment_label == "unknown"),
             "dataframe_sentiment_counts": {
                 "positive": sum(1 for item in notes_labeled if item.sentiment_label == "positive"),
                 "neutral": sum(1 for item in notes_labeled if item.sentiment_label == "neutral"),
@@ -1168,11 +1170,21 @@ def generate_today_advice(
             "top_evidence_keywords": [k for k, _v in sorted({kw: sum(kw in item.evidence_keywords for item in notes_labeled) for item in notes_labeled for kw in item.evidence_keywords}.items(), key=lambda p: p[1], reverse=True)[:5]],
             "fallback_reason_counts": note_label_audit.get("fallback_reason_counts", {}),
             "raw_response_paths": note_label_audit.get("raw_response_paths", []),
+            "notes_classifier_success_rate": note_label_audit.get("notes_classifier_success_rate", 0.0),
+            "notes_parse_success_rate": notes_parse_success_rate,
+            "unknown_rate": notes_unknown_rate,
+            "tag_extract_failed_count": note_label_audit.get("tag_extract_failed_count", 0),
+            "parse_low_confidence_count": note_label_audit.get("parse_low_confidence_count", 0),
+            "top_tags": note_label_audit.get("top_tags", []),
+            "matched_dates_count": note_label_audit.get("matched_dates_count", 0),
+            "matched_dates": note_label_audit.get("matched_dates", []),
+            "signals_detected_count": notes_signals_detected_count,
+            "notes_label_quality_low": bool(notes_parse_success_rate < 0.5),
         }
         audit.put("notes_labeling", notes_payload)
         audit.info(
-            "[TodayAdvice][Notes] total=%s non_empty=%s api_calls=%s labeled=%s fallback_neutral=%s",
-            notes_payload["total_count"], notes_payload["non_empty_count"], notes_payload["api_calls"], notes_payload["labeled_count"], notes_payload["fallback_neutral_count"],
+            "[TodayAdvice][Notes] total=%s non_empty=%s api_calls=%s labeled=%s fallback_unknown=%s",
+            notes_payload["total_count"], notes_payload["non_empty_count"], notes_payload["api_calls"], notes_payload["labeled_count"], notes_payload["fallback_unknown_count"],
         )
         audit.info(
             "[TodayAdvice][Notes] raw_sentiment=%s normalized_sentiment=%s dataframe_sentiment=%s",
@@ -1194,8 +1206,30 @@ def generate_today_advice(
             reason_counts.get("date_match_failure_count", 0),
             reason_counts.get("empty_response_count", 0),
         )
+        audit.info(
+            "[TodayAdvice][Notes] classifier_success_rate=%s parse_success_rate=%s unknown_rate=%s tag_extract_failed=%s parse_low_confidence=%s",
+            notes_payload["notes_classifier_success_rate"],
+            notes_payload["notes_parse_success_rate"],
+            notes_payload["unknown_rate"],
+            notes_payload["tag_extract_failed_count"],
+            notes_payload["parse_low_confidence_count"],
+        )
+        audit.info(
+            "[TodayAdvice][Notes] top_tags=%s matched_dates_count=%s",
+            safe_json(notes_payload["top_tags"]),
+            notes_payload["matched_dates_count"],
+        )
+        audit.info("[TodayAdvice][Notes] raw_response_paths=%s", safe_json(notes_payload["raw_response_paths"]))
         if notes_payload["raw_response_paths"]:
             audit.info("[TodayAdvice][Notes] raw_responses_saved=%s", safe_json(notes_payload["raw_response_paths"]))
+        if notes_non_empty_count > 0 and notes_signals_detected_count == 0:
+            logging.warning("notes_label_quality_warning target_date=%s reason=non_empty_but_no_signals", target_date)
+        if notes_non_empty_count > 0 and notes_unknown_rate >= 0.9:
+            logging.warning("notes_label_quality_warning target_date=%s reason=unknown_rate_high unknown_rate=%.3f", target_date, notes_unknown_rate)
+        if not any(notes_payload["dataframe_flag_counts"].values()):
+            logging.warning("notes_label_quality_warning target_date=%s reason=dataframe_flags_all_zero", target_date)
+        if not notes_payload["top_tags"]:
+            logging.warning("notes_label_quality_warning target_date=%s reason=top_tags_empty", target_date)
 
         feature_df = build_daily_feature_table(historical_summaries, note_labels)
         history_by_date = {item.target_date: item for item in historical_summaries}
@@ -1316,6 +1350,10 @@ def generate_today_advice(
                 "dataframe_sentiment_counts": notes_payload.get("dataframe_sentiment_counts", {}),
                 "dataframe_flag_counts": notes_payload.get("dataframe_flag_counts", {}),
                 "top_keywords": notes_payload.get("top_evidence_keywords", []),
+                "notes_parse_success_rate": notes_payload.get("notes_parse_success_rate", 0.0),
+                "unknown_rate": notes_payload.get("unknown_rate", 0.0),
+                "top_tags": notes_payload.get("top_tags", []),
+                "label_quality_low": notes_payload.get("notes_label_quality_low", False),
             },
         )
         today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")

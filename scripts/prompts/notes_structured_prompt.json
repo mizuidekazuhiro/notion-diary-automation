@@ -1,10 +1,253 @@
 {
-  "system_prompt": "あなたは短い日本語メモを構造化タグに変換するアシスタントです。出力はJSONのみ。感情分類だけで終わらず必ずsignalsを返してください。書かれていないことは推測しないでください。曖昧な場合はunknownやlow confidenceを返してください。confidenceは必須です。evidence_textは元テキストの抜粋だけを入れてください。parse_qualityを返してください。断片文・箇条書き・省略表現にも対応してください。",
+  "system_prompt": "あなたは日本語の短いNotesを構造化するアシスタントです。出力はJSONのみ。top-levelは配列または {\"rows\": [...]} のどちらか。各rowは必ず date, summary_short_ja, signals, derived_flags, meta を含める。signalsは allowed_tags の enum だけを使い、各signalに tag/category/polarity/intensity/confidence/evidence_text を必ず含める。signalsが空の場合は meta.unknown_reason を必須にし、meta.parse_quality と meta.has_clear_signal も必ず返す。推測は禁止。evidence_text は入力本文の抜粋のみ。",
+  "allowed_tags": [
+    "exercise",
+    "gym",
+    "social",
+    "drinking",
+    "work_focus",
+    "work_progress",
+    "late_work",
+    "early_home",
+    "commute_train",
+    "taxi_use",
+    "shopping_small",
+    "overeating",
+    "diet_control",
+    "meal_disruption",
+    "sleep_late",
+    "early_wake",
+    "recovery_action",
+    "presentation_work",
+    "dc_work",
+    "business_trip",
+    "fatigue",
+    "stress",
+    "conflict",
+    "regret",
+    "stable",
+    "productive",
+    "moderate_productivity",
+    "distracted",
+    "low_motivation",
+    "achievement",
+    "money_saved",
+    "spending_pressure",
+    "sleep_issue",
+    "family_event",
+    "interview_memo",
+    "admin_task",
+    "health_management"
+  ],
+  "output_schema": {
+    "top_level": "[{...}] or {\"rows\":[...]} only",
+    "row": {
+      "date": "YYYY-MM-DD",
+      "summary_short_ja": "string",
+      "signals": [
+        {
+          "tag": "allowed_tags enum",
+          "category": "behavior|state|context",
+          "polarity": "positive|negative|neutral|mixed|unknown",
+          "intensity": "low|medium|high|unknown",
+          "confidence": "0.0-1.0",
+          "evidence_text": "quoted substring"
+        }
+      ],
+      "derived_flags": {
+        "type": "object"
+      },
+      "meta": {
+        "parse_quality": "high|medium|low",
+        "has_clear_signal": "bool",
+        "unknown_reason": "string|null"
+      }
+    }
+  },
   "few_shots": [
-    {"input": "仕事はそこそこ。夜は家に帰りジム。", "tags": ["moderate_productivity", "early_home", "exercise", "gym"]},
-    {"input": "飲み会、食事若干乱れ。電車で帰宅、お金セーブ。", "tags": ["social", "drinking", "meal_disruption", "commute_train", "money_saved"]},
-    {"input": "朝早く起きた。仕事も結構できた。食事もそこそこ調整", "tags": ["early_wake", "productive", "diet_control"]},
-    {"input": "ゆいさんと喧嘩。鍵を家に忘れた。", "tags": ["conflict", "regret", "stress"]},
-    {"input": "大阪から帰ってきてすごく疲れた。22時まで仕事。", "tags": ["fatigue", "late_work", "business_trip"]}
+    {
+      "input": "仕事はそこそこ。夜は家に帰りジム。",
+      "row": {
+        "date": "2026-03-20",
+        "summary_short_ja": "仕事は中程度に進み、早めに帰宅してジムに行った。",
+        "signals": [
+          {
+            "tag": "moderate_productivity",
+            "category": "state",
+            "polarity": "positive",
+            "intensity": "medium",
+            "confidence": 0.9,
+            "evidence_text": "仕事はそこそこ"
+          },
+          {
+            "tag": "early_home",
+            "category": "behavior",
+            "polarity": "mixed",
+            "intensity": "medium",
+            "confidence": 0.86,
+            "evidence_text": "家に帰り"
+          },
+          {
+            "tag": "gym",
+            "category": "behavior",
+            "polarity": "mixed",
+            "intensity": "medium",
+            "confidence": 0.95,
+            "evidence_text": "ジム"
+          }
+        ],
+        "derived_flags": {
+          "exercise": true
+        },
+        "meta": {
+          "parse_quality": "high",
+          "has_clear_signal": true,
+          "unknown_reason": null
+        }
+      }
+    },
+    {
+      "input": "飲み会、食事若干乱れ。電車で帰宅、お金セーブ。",
+      "row": {
+        "date": "2026-03-21",
+        "summary_short_ja": "飲み会で食事が乱れたが、電車帰宅で節約した。",
+        "signals": [
+          {
+            "tag": "social",
+            "category": "behavior",
+            "polarity": "mixed",
+            "intensity": "medium",
+            "confidence": 0.92,
+            "evidence_text": "飲み会"
+          },
+          {
+            "tag": "drinking",
+            "category": "behavior",
+            "polarity": "mixed",
+            "intensity": "medium",
+            "confidence": 0.9,
+            "evidence_text": "飲み会"
+          },
+          {
+            "tag": "meal_disruption",
+            "category": "context",
+            "polarity": "negative",
+            "intensity": "medium",
+            "confidence": 0.88,
+            "evidence_text": "食事若干乱れ"
+          },
+          {
+            "tag": "commute_train",
+            "category": "context",
+            "polarity": "neutral",
+            "intensity": "low",
+            "confidence": 0.87,
+            "evidence_text": "電車で帰宅"
+          },
+          {
+            "tag": "money_saved",
+            "category": "state",
+            "polarity": "positive",
+            "intensity": "medium",
+            "confidence": 0.86,
+            "evidence_text": "お金セーブ"
+          }
+        ],
+        "derived_flags": {
+          "self_control_flag": true
+        },
+        "meta": {
+          "parse_quality": "high",
+          "has_clear_signal": true,
+          "unknown_reason": null
+        }
+      }
+    },
+    {
+      "input": "大阪から帰ってきてすごく疲れた。22時まで仕事。",
+      "row": {
+        "date": "2026-03-22",
+        "summary_short_ja": "出張帰りで強い疲労があり、遅くまで勤務した。",
+        "signals": [
+          {
+            "tag": "business_trip",
+            "category": "behavior",
+            "polarity": "mixed",
+            "intensity": "medium",
+            "confidence": 0.84,
+            "evidence_text": "大阪から帰ってきて"
+          },
+          {
+            "tag": "fatigue",
+            "category": "state",
+            "polarity": "negative",
+            "intensity": "high",
+            "confidence": 0.93,
+            "evidence_text": "すごく疲れた"
+          },
+          {
+            "tag": "late_work",
+            "category": "behavior",
+            "polarity": "mixed",
+            "intensity": "medium",
+            "confidence": 0.9,
+            "evidence_text": "22時まで仕事"
+          }
+        ],
+        "derived_flags": {},
+        "meta": {
+          "parse_quality": "high",
+          "has_clear_signal": true,
+          "unknown_reason": null
+        }
+      }
+    },
+    {
+      "input": "ゆいさんと喧嘩。鍵を家に忘れた。",
+      "row": {
+        "date": "2026-03-23",
+        "summary_short_ja": "対人衝突と忘れ物で心理的負荷が高い。",
+        "signals": [
+          {
+            "tag": "conflict",
+            "category": "state",
+            "polarity": "negative",
+            "intensity": "high",
+            "confidence": 0.94,
+            "evidence_text": "喧嘩"
+          },
+          {
+            "tag": "regret",
+            "category": "state",
+            "polarity": "negative",
+            "intensity": "medium",
+            "confidence": 0.78,
+            "evidence_text": "鍵を家に忘れた"
+          }
+        ],
+        "derived_flags": {
+          "life_disruption_flag": true
+        },
+        "meta": {
+          "parse_quality": "high",
+          "has_clear_signal": true,
+          "unknown_reason": null
+        }
+      }
+    },
+    {
+      "input": "特に書くことなし。",
+      "row": {
+        "date": "2026-03-24",
+        "summary_short_ja": "明確な行動シグナルなし。",
+        "signals": [],
+        "derived_flags": {},
+        "meta": {
+          "parse_quality": "medium",
+          "has_clear_signal": false,
+          "unknown_reason": "no_clear_event_or_state_in_note"
+        }
+      }
+    }
   ]
 }

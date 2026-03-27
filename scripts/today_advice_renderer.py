@@ -20,7 +20,13 @@ def build_analysis_json(
     recent7 = features_df.sort_values("date").tail(7)
     late_count = int(recent7["late_outing_flag"].fillna(False).sum()) if len(recent7) and "late_outing_flag" in recent7 else 0
     fatigue_count = int(recent7["notes_fatigue_flag"].fillna(False).sum()) if len(recent7) else 0
-    behavior = [f"直近7日で夜遅い外出が{late_count}回", f"疲労系Notesが{fatigue_count}日"]
+    notes_quality = dict(notes_label_quality or {})
+    notes_parse_success_rate = float(notes_quality.get("notes_parse_success_rate", 1.0) or 0.0)
+    notes_label_quality_low = bool(notes_quality.get("label_quality_low")) or notes_parse_success_rate < 0.5
+    if notes_label_quality_low:
+        behavior = [f"直近7日で夜遅い外出が{late_count}回", "Notesから明確な傾向は十分抽出できませんでした"]
+    else:
+        behavior = [f"直近7日で夜遅い外出が{late_count}回", f"疲労系Notesが{fatigue_count}日"]
     note_days = int((recent7["notes_present_flag"].fillna(False)).sum()) if len(recent7) and "notes_present_flag" in recent7 else 0
     recording = [f"Notes記録あり{note_days}/{len(recent7)}日", f"睡眠有効日{int(recent7['sleep_valid_flag'].fillna(False).sum())}/{len(recent7)}日"] if len(recent7) else []
 
@@ -62,6 +68,8 @@ def build_analysis_json(
             evidence_used.append(f"{source}: {feature}")
     if behavior:
         evidence_used.append(f"recent_7d: {behavior[0]}")
+        if notes_label_quality_low:
+            evidence_used.append("notes: 構造化品質が低く、Notes由来の断定を抑制")
     evidence_used.append("sleep: 睡眠データ不明" if not today_sleep_valid else f"sleep: 睡眠時間{sleep_hours}時間・スコア{sleep_score if sleep_score is not None else '不明'}")
     if not matched_patterns:
         evidence_used.append("good_bad: 過去30日で明確な再現パターンは限定的")
