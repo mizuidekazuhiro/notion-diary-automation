@@ -24,6 +24,9 @@ from publish.read_daily_log import read_daily_log
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 from scripts.diary_generator import generate_diary_from_daily_log
+from scripts.expense_f_aggregator import aggregate_daily_expense_f
+from scripts.f_risk_generator import generate_f_risk
+from scripts.location_for_weather import resolve_location_for_weather
 from scripts.mood_advice_generator import (
     build_today_advice_generation_context,
     generate_today_advice,
@@ -33,6 +36,7 @@ from scripts.sleep_condition_generator import (
     maybe_generate_sleep_insights,
 )
 from scripts.sleep_utils import validate_generated_sleep_text
+from scripts.weather_client import fetch_weather_for_date
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -625,6 +629,227 @@ def _generate_and_save_today_advice(
     return refreshed_summary or summary
 
 
+def _generate_and_save_weather(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    logging.info("phase_c_weather_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+    resolved_location = resolve_location_for_weather(summary=summary)
+    weather_hash_payload = {
+        "target_date": summary.target_date,
+        "location_name": resolved_location.name,
+        "location_source": resolved_location.source,
+    }
+    current_input_hash, normalized_hash_payload, _ = _build_input_hash(weather_hash_payload)
+    previous_input_hash = (summary.weather_input_hash or "").strip() or None
+    has_weather = bool((summary.weather_summary or "").strip())
+    input_changed = current_input_hash != previous_input_hash
+    logging.info(
+        "phase_c_weather_input_summary target_date(JST)=%s run_id=%s has_weather=%s location=%s location_source=%s debug_summary=%s",
+        summary.target_date,
+        run_id,
+        has_weather,
+        resolved_location.name,
+        resolved_location.source,
+        json.dumps(
+            {
+                "current_input_hash": current_input_hash,
+                "previous_input_hash": previous_input_hash,
+                "input_hash_changed": input_changed,
+                "hash_input_summary": normalized_hash_payload,
+                "location_debug": resolved_location.debug_summary,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ),
+    )
+    if has_weather and not input_changed:
+        logging.info(
+            "phase_c_weather_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input",
+            summary.target_date,
+            run_id,
+        )
+        logging.info(
+            "phase_c_weather_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=unchanged_input generated_properties=[]",
+            summary.target_date,
+            run_id,
+            False,
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
+    weather = fetch_weather_for_date(location_label=resolved_location.name, target_date=summary.target_date)
+    if not weather.available:
+        logging.info(
+            "phase_c_weather_skip target_date(JST)=%s run_id=%s skip_reason=%s weather_debug=%s",
+            summary.target_date,
+            run_id,
+            weather.skip_reason or "weather_api_failed",
+            json.dumps(weather.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+        )
+        logging.info(
+            "phase_c_weather_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=%s generated_properties=[]",
+            summary.target_date,
+            run_id,
+            False,
+            weather.skip_reason or "weather_api_failed",
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
+    payload = {
+        "weather_location": weather.location_label,
+        "weather_summary": weather.summary,
+        "weather_temp_max_c": weather.temp_max_c,
+        "weather_temp_min_c": weather.temp_min_c,
+        "weather_precip_probability_max": weather.precip_probability_max,
+        "weather_code": weather.weather_code,
+        "weather_retrieved_at": weather.retrieved_at,
+        "weather_input_hash": current_input_hash,
+        "weather_generated_at": _utc_timestamp(),
+    }
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    logging.info(
+        "phase_c_weather_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s weather_debug=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        sorted(payload.keys()),
+        json.dumps(weather.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
+
+
+def _generate_and_save_expense_f(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    aggregate = aggregate_daily_expense_f(summary.target_date)
+    payload = {
+        "expense_f_count": aggregate.count,
+        "expense_f_total": aggregate.total,
+        "expense_f_merchants": ", ".join(aggregate.merchants),
+        "expense_f_categories": ", ".join(aggregate.categories),
+        "expense_f_first_time": aggregate.first_time,
+        "expense_f_last_time": aggregate.last_time,
+        "expense_f_data_status": aggregate.data_status,
+    }
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    logging.info(
+        "phase_c_expense_f_saved target_date(JST)=%s run_id=%s updated=%s reason=%s skip_reason=%s debug_summary=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        aggregate.skip_reason,
+        json.dumps(aggregate.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
+
+
+def _generate_and_save_f_risk(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    logging.info("phase_c_f_risk_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+    hash_payload = {
+        "target_date": summary.target_date,
+        "sleep": {
+            "sleep_hours": summary.resolved_sleep_duration_hours,
+            "sleep_score": summary.sleep_score,
+        },
+        "weather": {
+            "weather_code": summary.weather_code,
+            "weather_temp_max_c": summary.weather_temp_max_c,
+            "weather_temp_min_c": summary.weather_temp_min_c,
+            "weather_precip_probability_max": summary.weather_precip_probability_max,
+        },
+        "expense_f": {
+            "count": summary.expense_f_count,
+            "total": summary.expense_f_total,
+        },
+    }
+    current_input_hash, normalized_hash_payload, _ = _build_input_hash(hash_payload)
+    previous_input_hash = (summary.f_risk_input_hash or "").strip() or None
+    has_risk = bool((summary.f_risk_reason or "").strip())
+    input_changed = current_input_hash != previous_input_hash
+    logging.info(
+        "phase_c_f_risk_input_summary target_date(JST)=%s run_id=%s has_f_risk=%s debug_summary=%s",
+        summary.target_date,
+        run_id,
+        has_risk,
+        json.dumps(
+            {
+                "current_input_hash": current_input_hash,
+                "previous_input_hash": previous_input_hash,
+                "input_hash_changed": input_changed,
+                "hash_input_summary": normalized_hash_payload,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ),
+    )
+    if has_risk and not input_changed:
+        logging.info(
+            "phase_c_f_risk_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input",
+            summary.target_date,
+            run_id,
+        )
+        logging.info(
+            "phase_c_f_risk_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=unchanged_input generated_properties=[]",
+            summary.target_date,
+            run_id,
+            False,
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
+    result = generate_f_risk(
+        daily_log_read_url=config.daily_log_read_url,
+        bearer_token=config.bearer_token,
+        target_date=summary.target_date,
+    )
+    if result.skip_reason:
+        logging.info(
+            "phase_c_f_risk_skip target_date(JST)=%s run_id=%s skip_reason=%s debug_summary=%s",
+            summary.target_date,
+            run_id,
+            result.skip_reason,
+            json.dumps(result.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+        )
+
+    payload = {
+        "f_risk_alert": result.alert_text or "",
+        "f_risk_score": result.score,
+        "f_risk_reason": result.reason or (result.skip_reason or ""),
+        "f_risk_matched_patterns": " / ".join(result.matched_patterns),
+        "f_risk_input_hash": current_input_hash,
+        "f_risk_generated_at": _utc_timestamp(),
+    }
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    logging.info(
+        "phase_c_f_risk_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        sorted(payload.keys()),
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
+
+
 def _generate_and_save_diary(
     config: Config,
     *,
@@ -756,7 +981,13 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     if not summary:
         logging.info("phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]", target_date, run_id, False)
         return
+    summary = _generate_and_save_weather(config, summary=summary, run_id=run_id)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _generate_and_save_f_risk(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary

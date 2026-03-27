@@ -178,12 +178,34 @@ class DailyLogSummary:
     sleep_analysis_jp: Optional[str]
     today_condition_forecast_jp: Optional[str]
     today_advice: Optional[str]
-    diary_input_hash: Optional[str]
-    today_advice_input_hash: Optional[str]
-    diary_generated_at: Optional[str]
-    today_advice_generated_at: Optional[str]
-    page_url: Optional[str]
-    diary_notification_sent: Optional[bool]
+    diary_input_hash: Optional[str] = None
+    today_advice_input_hash: Optional[str] = None
+    diary_generated_at: Optional[str] = None
+    today_advice_generated_at: Optional[str] = None
+    page_url: Optional[str] = None
+    diary_notification_sent: Optional[bool] = None
+    weather_location: Optional[str] = None
+    weather_summary: Optional[str] = None
+    weather_temp_max_c: Optional[float] = None
+    weather_temp_min_c: Optional[float] = None
+    weather_precip_probability_max: Optional[float] = None
+    weather_code: Optional[int] = None
+    weather_retrieved_at: Optional[str] = None
+    weather_input_hash: Optional[str] = None
+    weather_generated_at: Optional[str] = None
+    expense_f_count: Optional[int] = None
+    expense_f_total: Optional[float] = None
+    expense_f_merchants: Optional[str] = None
+    expense_f_categories: Optional[str] = None
+    expense_f_first_time: Optional[str] = None
+    expense_f_last_time: Optional[str] = None
+    expense_f_data_status: Optional[str] = None
+    f_risk_alert: Optional[str] = None
+    f_risk_score: Optional[float] = None
+    f_risk_reason: Optional[str] = None
+    f_risk_matched_patterns: Optional[str] = None
+    f_risk_input_hash: Optional[str] = None
+    f_risk_generated_at: Optional[str] = None
 
 
 def read_daily_log(
@@ -295,4 +317,26 @@ def read_daily_log(
         today_advice_generated_at=_safe_text(_get_case_insensitive_value(payload, "Today Advice Generated At", "today_advice_generated_at")),
         page_url=_safe_text(payload.get("page_url")),
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
+        weather_location=_safe_text(_get_case_insensitive_value(payload, "Weather Location", "weather_location")),
+        weather_summary=_safe_text(_get_case_insensitive_value(payload, "Weather Summary", "weather_summary")),
+        weather_temp_max_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Max C", "weather_temp_max_c")),
+        weather_temp_min_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Min C", "weather_temp_min_c")),
+        weather_precip_probability_max=_safe_float(_get_case_insensitive_value(payload, "Weather Precip Probability Max", "weather_precip_probability_max")),
+        weather_code=_safe_int(_get_case_insensitive_value(payload, "Weather Code", "weather_code")),
+        weather_retrieved_at=_safe_text(_get_case_insensitive_value(payload, "Weather Retrieved At", "weather_retrieved_at")),
+        weather_input_hash=_safe_text(_get_case_insensitive_value(payload, "Weather Input Hash", "weather_input_hash")),
+        weather_generated_at=_safe_text(_get_case_insensitive_value(payload, "Weather Generated At", "weather_generated_at")),
+        expense_f_count=_safe_int(_get_case_insensitive_value(payload, "Expense F Count", "expense_f_count")),
+        expense_f_total=_safe_float(_get_case_insensitive_value(payload, "Expense F Total", "expense_f_total")),
+        expense_f_merchants=_safe_text(_get_case_insensitive_value(payload, "Expense F Merchants", "expense_f_merchants")),
+        expense_f_categories=_safe_text(_get_case_insensitive_value(payload, "Expense F Categories", "expense_f_categories")),
+        expense_f_first_time=_safe_text(_get_case_insensitive_value(payload, "Expense F First Time", "expense_f_first_time")),
+        expense_f_last_time=_safe_text(_get_case_insensitive_value(payload, "Expense F Last Time", "expense_f_last_time")),
+        expense_f_data_status=_safe_text(_get_case_insensitive_value(payload, "Expense F Data Status", "expense_f_data_status")),
+        f_risk_alert=_safe_text(_get_case_insensitive_value(payload, "F Risk Alert", "f_risk_alert")),
+        f_risk_score=_safe_float(_get_case_insensitive_value(payload, "F Risk Score", "f_risk_score")),
+        f_risk_reason=_safe_text(_get_case_insensitive_value(payload, "F Risk Reason", "f_risk_reason")),
+        f_risk_matched_patterns=_safe_text(_get_case_insensitive_value(payload, "F Risk Matched Patterns", "f_risk_matched_patterns")),
+        f_risk_input_hash=_safe_text(_get_case_insensitive_value(payload, "F Risk Input Hash", "f_risk_input_hash")),
+        f_risk_generated_at=_safe_text(_get_case_insensitive_value(payload, "F Risk Generated At", "f_risk_generated_at")),
     )

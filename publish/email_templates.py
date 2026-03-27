@@ -8,7 +8,9 @@ from typing import Iterable, List, Mapping, Optional, Tuple
 
 MAX_TASK_ITEMS = 30
 SECTION_ORDER = [
+    "weather",
     "today_advice",
+    "f_risk",
     "diary",
     "summary",
     "sleep",
@@ -47,6 +49,15 @@ def _format_yen(value: Optional[float]) -> str:
     if isinstance(value, bool):
         return "—"
     return f"¥{value:g}"
+
+
+def _format_percent(value: object) -> Optional[str]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return f"{float(value):g}%"
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_photo_urls(value: object) -> List[str]:
@@ -276,6 +287,15 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     today_advice = _optional_text(
         payload.get("today_advice") if isinstance(payload, Mapping) else None
     )
+    f_risk_alert = _optional_text(payload.get("f_risk_alert") if isinstance(payload, Mapping) else None)
+    f_risk_score = _normalize_number(payload.get("f_risk_score") if isinstance(payload, Mapping) else None)
+    f_risk_reason = _optional_text(payload.get("f_risk_reason") if isinstance(payload, Mapping) else None)
+    f_risk_patterns = _optional_text(payload.get("f_risk_matched_patterns") if isinstance(payload, Mapping) else None)
+    weather_location = _optional_text(payload.get("weather_location") if isinstance(payload, Mapping) else None)
+    weather_summary = _optional_text(payload.get("weather_summary") if isinstance(payload, Mapping) else None)
+    weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
+    weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
+    weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
     )
@@ -300,6 +320,36 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;\">"
             "<div style=\"font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;\">Today advice</div>"
             f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(today_advice)}</div>"
+            "</div>"
+        )
+    weather_html = ""
+    if weather_location or weather_summary or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip:
+        weather_html = (
+            "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
+            "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
+            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary or '—')} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 降水確率: {html.escape(weather_precip or '—')}</div>"
+            "</div>"
+        )
+    f_risk_html = ""
+    if f_risk_alert:
+        detail_parts = []
+        if f_risk_score != "—":
+            detail_parts.append(f"score={f_risk_score}")
+        if f_risk_patterns:
+            detail_parts.append(f"patterns={f_risk_patterns}")
+        if f_risk_reason:
+            detail_parts.append(f"reason={f_risk_reason}")
+        detail_line = " | ".join(detail_parts)
+        detail_html = (
+            f"<div style=\"font-size:12px;color:#7c2d12;margin-top:8px;\">{html.escape(detail_line)}</div>"
+            if detail_line
+            else ""
+        )
+        f_risk_html = (
+            "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#fff7ed;border:1px solid #fed7aa;\">"
+            "<div style=\"font-size:13px;font-weight:700;color:#9a3412;margin-bottom:8px;\">F Risk Alert</div>"
+            f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(f_risk_alert)}</div>"
+            f"{detail_html}"
             "</div>"
         )
 
@@ -455,7 +505,9 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <p style=\"margin: 0; font-size: 13px; color: #6b7280;\">Run ID: {html.escape(run_id)}</p>
               </td>
             </tr>
+            {weather_html}
             {today_advice_html}
+            {f_risk_html}
 
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
@@ -615,6 +667,15 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     today_advice = _optional_text(
         payload.get("today_advice") if isinstance(payload, Mapping) else None
     )
+    f_risk_alert = _optional_text(payload.get("f_risk_alert") if isinstance(payload, Mapping) else None)
+    f_risk_score = _normalize_number(payload.get("f_risk_score") if isinstance(payload, Mapping) else None)
+    f_risk_reason = _optional_text(payload.get("f_risk_reason") if isinstance(payload, Mapping) else None)
+    f_risk_patterns = _optional_text(payload.get("f_risk_matched_patterns") if isinstance(payload, Mapping) else None)
+    weather_location = _optional_text(payload.get("weather_location") if isinstance(payload, Mapping) else None)
+    weather_summary = _optional_text(payload.get("weather_summary") if isinstance(payload, Mapping) else None)
+    weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
+    weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
+    weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
     )
@@ -651,8 +712,25 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"Daily Log | {target_date}",
         f"Run ID: {run_id}",
     ]
+    if weather_location or weather_summary or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip:
+        lines += [
+            "",
+            "Weather",
+            f"- 地点: {weather_location or '—'}",
+            f"- 概要: {weather_summary or '—'}",
+            f"- 最高/最低: {weather_temp_max}℃ / {weather_temp_min}℃",
+            f"- 降水確率: {weather_precip or '—'}",
+        ]
     if today_advice:
         lines += ["", "Today advice", today_advice]
+    if f_risk_alert:
+        lines += ["", "F Risk Alert", f_risk_alert]
+        if f_risk_score != "—":
+            lines.append(f"- score: {f_risk_score}")
+        if f_risk_patterns:
+            lines.append(f"- matched patterns: {f_risk_patterns}")
+        if f_risk_reason:
+            lines.append(f"- reason: {f_risk_reason}")
 
     lines += [
         "",

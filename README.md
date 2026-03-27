@@ -26,20 +26,27 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 ### Phase C: generate/notify
 `scripts/daily_job.py --phase notify_diary` は次の順番で**直列実行**します。
 
-1. sleep insights 生成
-2. sleep insights 保存
-3. Daily Log 再読込
-4. Today advice 生成
-5. Today advice 保存
+1. weather 生成（最新 location 解決 → 天気 API）
+2. weather 保存
+3. Expenses DB の `F` 日次集計保存
+4. sleep insights 生成
+5. sleep insights 保存
 6. Daily Log 再読込
-7. Diary 生成
-8. Diary 保存
+7. F risk 生成（Today advice と独立）
+8. F risk 保存
 9. Daily Log 再読込
-10. notify 判定
+10. Today advice 生成
+11. Today advice 保存
+12. Daily Log 再読込
+13. Diary 生成
+14. Diary 保存
+15. Daily Log 再読込
+16. notify 判定
 
 #### 役割分離
 - `scripts/sleep_condition_generator.py` は **`sleep_analysis_jp` / `today_condition_forecast_jp` の2項目だけ**生成します。
 - `scripts/mood_advice_generator.py` は **`today_advice` だけ**生成します。
+- `scripts/f_risk_generator.py` は **`F Risk Alert` 系だけ**生成します（Today advice とは独立責務）。
 - `scripts/diary_generator.py` は Diary だけを生成します。
 - Diary は後段で sleep insights と Today advice を参照できますが、責務としては「後段参照」のみです。
 - `scripts/mood_advice_generator.py` の Today advice 入力は **`today_sleep` / `historical_behavior_patterns` / `historical_recording_patterns` / `historical_context`** に役割分離されます。
@@ -117,18 +124,20 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `missing_page_url` や送信失敗時も notified は更新しません。
 
 ### Phase D: publish mail
-- `publish/render_mail.py` が payload に `today_advice` / sleep 系 / Diary を渡します。
+- `publish/render_mail.py` が payload に weather / `today_advice` / F alert / sleep 系 / Diary を渡します。
 - `publish/email_templates.py` は値があるセクションだけ描画します。
 - メール本文の表示順は次のとおりです。
-  1. `Today advice`
-  2. `Sleep Analysis JP`
-  3. `Today Condition Forecast JP`
-  4. `就寝時間`
-  5. `起床時間`
-  6. `睡眠時間`
-  7. `Diary`
-  8. `Summary`
-  9. `Expenses / Done / Drop / Meal`
+  1. `Weather`
+  2. `Today advice`
+  3. `F Risk Alert`（alert がある日だけ表示）
+  4. `Sleep Analysis JP`
+  5. `Today Condition Forecast JP`
+  6. `就寝時間`
+  7. `起床時間`
+  8. `睡眠時間`
+  9. `Diary`
+  10. `Summary`
+  11. `Expenses / Done / Drop / Meal`
 
 ## Daily Log DB に必要なプロパティ
 
@@ -152,17 +161,50 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Today Advice Input Hash`
 - `Diary Generated At`
 - `Today Advice Generated At`
+- `Weather Location`
+- `Weather Summary`
+- `Weather Temp Max C`
+- `Weather Temp Min C`
+- `Weather Precip Probability Max`
+- `Weather Code`
+- `Weather Retrieved At`
+- `Weather Input Hash`
+- `Weather Generated At`
+- `Expense F Count`
+- `Expense F Total`
+- `Expense F Merchants`
+- `Expense F Categories`
+- `Expense F First Time`
+- `Expense F Last Time`
+- `Expense F Data Status`
+- `F Risk Alert`
+- `F Risk Score`
+- `F Risk Reason`
+- `F Risk Matched Patterns`
+- `F Risk Input Hash`
+- `F Risk Generated At`
 
 推奨型:
 - `Diary Input Hash`: `rich_text`
 - `Today Advice Input Hash`: `rich_text`
 - `Diary Generated At`: `date` または `datetime` 互換の `date`
 - `Today Advice Generated At`: `date` または `datetime` 互換の `date`
+- `Weather Temp Max C` / `Weather Temp Min C` / `Weather Precip Probability Max`: `number`
+- `Weather Code`: `number`
+- `Expense F Count`: `number`
+- `Expense F Total`: `number`
+- `Expense F Merchants` / `Expense F Categories` / `F Risk Alert` / `F Risk Reason` / `F Risk Matched Patterns`: `rich_text`
+- `F Risk Score`: `number`
 
 ## 実装メモ
 
 - `publish/read_daily_log.py` は sleep 系・Today advice 系プロパティを `DailyLogSummary` に揃えて返します。
+- weather / Expense F 集計 / F risk 系プロパティも `DailyLogSummary` へ追加し、mail / feature builder / Phase C で再利用します。
 - `scripts/daily_job.py` は Phase C の各保存後に Daily Log を再読込します。
+- weather の地点解決は、`apps/location_summary_writer` と同じ生 location 系（Stay Sessions DB）を優先し、届かない場合のみ `place` / `location_summary` / `東京都` へフォールバックします。
+- weather API は key 不要の Open-Meteo（geocoding + forecast）を利用し、失敗時は Phase C 全体を落とさず `phase_c_weather_skip` を出します。
+- F risk は `f_event_flag = Expense F Count > 0` を主ラベルとして機械学習（LightGBM 優先、失敗時 LogisticRegression）を実行し、`insufficient_samples` / `single_class_target` / `no_f_history` などを skip_reason で記録します。
+- Today advice と F risk は責務・入力・保存先・ログを分離しています。
 - `scripts/diary_generator.py` の `event_date / done_date` ルールは維持しています。future event を当日実施と誤認しません。
 - 現在の設計では **Today advice は diary 本文を現在・過去とも参照しません**。`notes` は過去履歴のみ使い、当日 `notes` は使いません。
 - hash は JSON 正規化 + SHA-256 で作ります。キー順固定・余計な空白なし・`None`/空文字/空配列の揺れを吸収して、不要な再生成を抑えます。
