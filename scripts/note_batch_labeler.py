@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections import Counter
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from publish.read_daily_log import DailyLogSummary
@@ -50,7 +51,32 @@ def _confidence_band(score: float) -> str:
 
 
 def _normalize_result(date: str, payload: Mapping[str, Any]) -> NoteLabel:
+    def _signal_from_tag(tag: str) -> dict[str, Any]:
+        negative_state = {"fatigue", "stress", "conflict", "regret", "sleep_issue"}
+        positive_state = {"productive", "moderate_productivity", "achievement", "money_saved"}
+        behavior_tags = {"social", "drinking", "exercise", "gym", "late_work", "early_home", "business_trip", "presentation_work", "dc_work"}
+        category = "context"
+        polarity = "unknown"
+        if tag in negative_state:
+            category, polarity = "state", "negative"
+        elif tag in positive_state:
+            category, polarity = "state", "positive"
+        elif tag in behavior_tags:
+            category, polarity = "behavior", "mixed"
+        return {
+            "tag": tag,
+            "category": category,
+            "polarity": polarity,
+            "intensity": "medium",
+            "confidence": 0.8,
+            "evidence_text": "",
+        }
+
     signals_raw = payload.get("signals") if isinstance(payload.get("signals"), list) else []
+    tags_raw = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+    allowed_tags = [str(tag).strip() for tag in tags_raw if str(tag).strip() in ALLOWED_TAGS]
+    if not signals_raw and allowed_tags:
+        signals_raw = [_signal_from_tag(tag) for tag in allowed_tags]
     if not signals_raw and any(k in payload for k in ["fatigue_flag", "stress_flag", "sleep_issue_flag", "achievement_flag", "social_load_flag"]):
         legacy = []
         if payload.get("fatigue_flag"):
@@ -148,10 +174,18 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
     except Exception:
         meta["parse_error"] = True
         return list(fallback.values()), meta
-    if not isinstance(raw, list):
+    rows: list[Any] = []
+    if isinstance(raw, list):
+        rows = raw
+    elif isinstance(raw, Mapping) and isinstance(raw.get("rows"), list):
+        rows = list(raw.get("rows") or [])
+    elif isinstance(raw, Mapping) and isinstance(raw.get("results"), list):
+        rows = list(raw.get("results") or [])
+    else:
         meta["schema_mismatch"] = True
         return list(fallback.values()), meta
-    for row in raw:
+
+    for row in rows:
         if not isinstance(row, Mapping):
             continue
         date = str(row.get("date") or "")
@@ -172,6 +206,14 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     api_calls = 0
+    parse_error_count = 0
+    schema_mismatch_count = 0
+    date_match_failure_count = 0
+    empty_response_count = 0
+    raw_response_paths: list[str] = []
+    matched_dates: set[str] = set()
+    raw_sentiment_counts: Counter[str] = Counter()
+    raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
@@ -197,11 +239,33 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
         for _ in range(2):
             raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(user_payload, ensure_ascii=False))
             parsed, meta = parse_note_label_json_with_meta(raw, targets)
+            parse_error_count += int(bool(meta.get("parse_error")))
+            schema_mismatch_count += int(bool(meta.get("schema_mismatch")))
+            empty_response_count += int(bool(meta.get("empty_response")))
+            matched_dates.update(set(meta.get("matched_dates") or set()))
+            if not meta["parse_error"] and not meta["schema_mismatch"]:
+                date_match_failure_count += max(0, len(targets) - len(set(meta.get("matched_dates") or set())))
+            for row in parsed:
+                raw_sentiment_counts[row.sentiment_label] += 1
+                if row.fatigue_flag:
+                    raw_flag_counts["fatigue"] += 1
+                if row.stress_flag:
+                    raw_flag_counts["stress"] += 1
+                if row.social_load_flag:
+                    raw_flag_counts["social_load"] += 1
+                if row.achievement_flag:
+                    raw_flag_counts["achievement"] += 1
+                if row.self_care_flag:
+                    raw_flag_counts["self_care"] += 1
+                if row.sleep_issue_flag:
+                    raw_flag_counts["sleep_issue"] += 1
             if not meta["parse_error"] and not meta["schema_mismatch"]:
                 break
         parsed, _ = parse_note_label_json_with_meta(raw, targets)
         if debug_dir:
-            (debug_dir / f"notes_batch_{i // batch_size:02d}.json").write_text(str(raw), encoding="utf-8")
+            path = debug_dir / f"notes_batch_{i // batch_size:02d}.json"
+            path.write_text(str(raw), encoding="utf-8")
+            raw_response_paths.append(str(path))
         for item in parsed:
             results[item.date] = item
 
@@ -210,6 +274,27 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
         labels = list(ordered.values())
         all_tags = [sig.get("tag") for x in labels for sig in x.signals if sig.get("tag")]
         parse_success = sum(1 for x in labels if not x.tag_extract_failed)
+        normalized_sentiment_counts = Counter(x.sentiment_label for x in labels)
+        normalized_flag_counts: Counter[str] = Counter()
+        for x in labels:
+            if x.fatigue_flag:
+                normalized_flag_counts["fatigue"] += 1
+            if x.stress_flag:
+                normalized_flag_counts["stress"] += 1
+            if x.social_load_flag:
+                normalized_flag_counts["social_load"] += 1
+            if x.achievement_flag:
+                normalized_flag_counts["achievement"] += 1
+            if x.self_care_flag:
+                normalized_flag_counts["self_care"] += 1
+            if x.sleep_issue_flag:
+                normalized_flag_counts["sleep_issue"] += 1
+        fallback_reason_counts = {
+            "parse_error_count": parse_error_count,
+            "schema_mismatch_count": schema_mismatch_count,
+            "date_match_failure_count": date_match_failure_count,
+            "empty_response_count": empty_response_count,
+        }
         audit.update({
             "api_calls": api_calls,
             "notes_classifier_success_rate": round(parse_success / len(labels), 3) if labels else 0.0,
@@ -220,6 +305,25 @@ def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_complet
             "notes_top_tags": sorted({t: all_tags.count(t) for t in set(all_tags)}.items(), key=lambda p: p[1], reverse=True)[:10],
             "notes_avg_confidence": round(sum({"low": 0.3, "medium": 0.6, "high": 0.9}.get(x.confidence, 0.0) for x in labels) / len(labels), 3) if labels else 0.0,
             "notes_parse_quality_distribution": {k: sum(1 for x in labels if x.parse_quality == k) for k in ["high", "medium", "low"]},
+            "parse_error_count": parse_error_count,
+            "schema_mismatch_count": schema_mismatch_count,
+            "date_match_failure_count": date_match_failure_count,
+            "empty_response_count": empty_response_count,
+            "raw_response_paths": raw_response_paths,
+            "matched_dates_count": len(matched_dates),
+            "matched_dates": sorted(matched_dates),
+            "tags_detected_count": len(all_tags),
+            "signals_detected_count": len(all_tags),
+            "unknown_count": sum(1 for x in labels if x.sentiment_label == "unknown"),
+            "unknown_rate": round(sum(1 for x in labels if x.sentiment_label == "unknown") / len(labels), 3) if labels else 0.0,
+            "tag_extract_failed_count": sum(1 for x in labels if x.tag_extract_failed),
+            "parse_low_confidence_count": sum(1 for x in labels if x.parse_low_confidence),
+            "top_tags": sorted({t: all_tags.count(t) for t in set(all_tags)}.items(), key=lambda p: p[1], reverse=True)[:10],
+            "raw_sentiment_counts": dict(raw_sentiment_counts),
+            "normalized_sentiment_counts": dict(normalized_sentiment_counts),
+            "raw_flag_counts": dict(raw_flag_counts),
+            "normalized_flag_counts": dict(normalized_flag_counts),
+            "fallback_reason_counts": fallback_reason_counts,
         })
     logging.info("notes batch label count=%s", len(rows))
     return ordered

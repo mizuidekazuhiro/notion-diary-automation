@@ -137,6 +137,25 @@ def test_analysis_json_builder() -> None:
     assert "recent_7d_summary" in payload
 
 
+def test_analysis_json_weakens_notes_assertion_when_label_quality_low() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    histories = [_summary(i) for i in range(1, 10)]
+    labels = {h.target_date: parse_note_label_json('[{"date":"%s","tags":["fatigue"]}]' % h.target_date, [{"date": h.target_date, "notes": h.notes}])[0] for h in histories}
+    df = build_daily_feature_table(histories, labels)
+    payload = build_analysis_json(
+        target_date="2026-03-10",
+        today_summary=_summary(10),
+        features_df=df,
+        exploratory_summary={"matched_today_conditions": [], "top_single_features_for_low_mood": []},
+        regression_summary={"available": False, "sample_size": 0},
+        lightgbm_summary={"available": False, "sample_size": 0},
+        notes_label_quality={"notes_parse_success_rate": 0.4, "label_quality_low": True},
+    )
+    assert "十分抽出できませんでした" in payload["recent_7d_summary"]["behavior_trend"][1]
+    assert any("断定を抑制" in x for x in payload["evidence_used"])
+
+
 def test_gpt_failure_fallback_message() -> None:
     text = render_today_advice_from_analysis(
         analysis_json={"today_sleep_context": {"sleep_hours": 5.5}, "primary_focus": "回復優先"},
@@ -227,6 +246,49 @@ def test_notes_label_count_reflected_in_audit_log(monkeypatch) -> None:
     notes = result.judgment_json["analysis_audit"]["notes_labeling"]
     assert notes["total_count"] == len(histories)
     assert notes["non_empty_count"] == len([h for h in histories if (h.notes or "").strip()])
+
+
+def test_notes_quality_warning_when_non_empty_but_no_signals(monkeypatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import scripts.mood_advice_generator as generator
+    from scripts.note_batch_labeler import neutral_label
+
+    histories = [_summary(i, notes="疲れ") for i in range(1, 8)]
+    target = _summary(20, target_date="2026-03-20")
+    monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
+    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+
+    def _fake_labeler(**kwargs: object) -> dict[str, object]:
+        audit = kwargs.get("audit")
+        if isinstance(audit, dict):
+            audit.update(
+                {
+                    "api_calls": 1,
+                    "notes_classifier_success_rate": 0.0,
+                    "notes_parse_success_rate": 0.0,
+                    "unknown_rate": 1.0,
+                    "signals_detected_count": 0,
+                    "top_tags": [],
+                    "raw_response_paths": [],
+                    "raw_sentiment_counts": {},
+                    "normalized_sentiment_counts": {},
+                    "raw_flag_counts": {},
+                    "normalized_flag_counts": {},
+                    "fallback_reason_counts": {},
+                    "tag_extract_failed_count": len(histories),
+                    "parse_low_confidence_count": len(histories),
+                }
+            )
+        return {item.target_date: neutral_label(item.target_date) for item in histories}
+
+    warnings: list[str] = []
+    monkeypatch.setattr(generator, "label_notes_in_batches", _fake_labeler)
+    monkeypatch.setattr(generator.logging, "warning", lambda msg, *args: warnings.append(msg % args if args else msg))
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result is not None
+    assert any("non_empty_but_no_signals" in line for line in warnings)
 
 
 def test_regression_availability_reflected_in_audit_log(monkeypatch) -> None:
