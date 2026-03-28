@@ -2,14 +2,14 @@
   "by_date": {
     "2026-03-28": {
       "alert_text": null,
-      "generated_at": "2026-03-28T16:37:23Z",
-      "input_hash": "bde2b9155b46928abdc13de53f78f307cc44a86dda76cac869e254169a10828d",
+      "generated_at": "2026-03-28T17:08:31Z",
+      "input_hash": "54216cd25abca641fb625201db1787b6108cbe6061659a5cf1dbe8c0e80aa378",
       "matched_patterns": [],
       "no_alert_reason": "insufficient_evidence",
       "reason": "labeling_failed",
       "score": null
     }
   },
-  "updated_at": "2026-03-28T16:37:24Z",
+  "updated_at": "2026-03-28T17:08:31Z",
   "version": 1
 }
