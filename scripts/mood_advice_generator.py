@@ -15,6 +15,7 @@ import requests
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
 from scripts.note_batch_labeler import label_notes_in_batches
+from scripts.openai_chat_utils import chat_completion as shared_chat_completion
 from scripts.today_advice_feature_builder import build_daily_feature_table
 from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
@@ -874,29 +875,7 @@ def _count_input_tokens(*, model: str, messages: Sequence[Mapping[str, Any]]) ->
 
 
 def _chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is missing")
-    messages = _build_chat_messages(system_prompt=system_prompt, user_prompt=user_prompt)
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        json={
-            "model": model,
-            "temperature": 0.3,
-            "messages": messages,
-        },
-        timeout=OPENAI_TIMEOUT,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("OpenAI response did not include content")
-    return content.strip()
+    return shared_chat_completion(model=model, system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.3)
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

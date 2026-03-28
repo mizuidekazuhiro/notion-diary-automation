@@ -29,8 +29,24 @@ class ExpenseFAggregate:
 def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
     token = os.getenv("NOTION_TOKEN", "").strip()
     db_id = os.getenv("EXPENSES_DB_ID", "").strip()
-    if not token or not db_id:
-        return ExpenseFAggregate(False, 0, 0.0, [], [], None, None, "unavailable", {"reason": "missing_env"}, "expenses_data_unavailable")
+    missing_env: list[str] = []
+    if not token:
+        missing_env.append("NOTION_TOKEN")
+    if not db_id:
+        missing_env.append("EXPENSES_DB_ID")
+    if missing_env:
+        return ExpenseFAggregate(
+            False,
+            0,
+            0.0,
+            [],
+            [],
+            None,
+            None,
+            "unavailable",
+            {"reason": "missing_env", "missing": missing_env},
+            "expenses_data_unavailable",
+        )
 
     f_prop = os.getenv("EXPENSE_F_PROP", "F")
     date_prop = os.getenv("EXPENSE_DATE_PROP", "Date")

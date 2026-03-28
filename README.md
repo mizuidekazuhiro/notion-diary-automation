@@ -43,6 +43,15 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 15. Daily Log 再読込
 16. notify 判定
 
+> Expense F 集計（3）は Workers 経由ではなく `scripts/expense_f_aggregator.py` が `NOTION_TOKEN` と `EXPENSES_DB_ID` を使って Notion API を直接参照します。
+
+#### Phase C 実行に必要な secrets / env（最低限）
+- `NOTION_TOKEN`
+- `EXPENSES_DB_ID`
+- `OPENAI_API_KEY`
+- `DAILY_LOG_UPSERT_URL`
+- `WORKERS_BEARER_TOKEN`
+
 #### 役割分離
 - `scripts/sleep_condition_generator.py` は **`sleep_analysis_jp` / `today_condition_forecast_jp` の2項目だけ**生成します。
 - `scripts/mood_advice_generator.py` は **`today_advice` だけ**生成します。
