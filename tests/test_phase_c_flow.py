@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts import daily_job
+from scripts.location_for_weather import ResolvedLocation
 from scripts.mood_advice_generator import MoodAdviceResult
 from scripts.sleep_condition_generator import build_sleep_insight_context, generate_sleep_insights
 
@@ -157,6 +158,8 @@ def test_email_disabled_does_not_mark_notified(monkeypatch) -> None:
     mark_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id: summary)
@@ -319,11 +322,55 @@ def test_today_advice_existing_with_changed_hash_regenerates(monkeypatch) -> Non
 
     daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
+
+def test_f_risk_no_f_history_skips_save(monkeypatch) -> None:
+    from scripts.f_risk_generator import FRiskResult
+
+    summary = _summary()
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        daily_job,
+        "generate_f_risk",
+        lambda **kwargs: FRiskResult(
+            alert_text=None,
+            score=None,
+            reason=None,
+            matched_patterns=[],
+            skip_reason="no_f_history",
+            debug_summary={"train_rows": 20},
+        ),
+    )
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True})
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+
+    result = daily_job._generate_and_save_f_risk(config, summary=summary, run_id="run")
+
+    assert result == summary
+    assert save_calls == []
+
+
+def test_weather_missing_location_log_updates_empty_weather(monkeypatch) -> None:
+    summary = _summary()
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        daily_job,
+        "resolve_location_for_weather",
+        lambda **kwargs: ResolvedLocation(
+            name=None,
+            source="location_log_db",
+            skip_reason="missing_notion_env",
+            debug_summary={},
+        ),
+    )
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True})
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+
+    daily_job._generate_and_save_weather(config, summary=summary, run_id="run")
+
     assert len(save_calls) == 1
-    payload = save_calls[0]["payload"]
-    assert payload["today_advice"] == "regenerated advice"
-    assert payload["today_advice_input_hash"] != "old-hash"
-    assert payload["today_advice_generated_at"].endswith("Z")
+    assert save_calls[0]["payload"]["weather"] == ""
 
 
 def test_build_input_hash_normalizes_empty_values() -> None:

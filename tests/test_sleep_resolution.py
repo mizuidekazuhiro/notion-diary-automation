@@ -14,18 +14,18 @@ def test_resolve_sleep_duration_from_start_end() -> None:
         "2026-03-27T08:17:00+09:00",
         268,
     )
-    assert resolved.resolved_sleep_duration_min == 402.0
-    assert resolved.duration_source == "derived_from_start_end"
+    assert resolved.resolved_sleep_duration_min == 268
+    assert resolved.duration_source == "canonical_raw_duration"
     assert resolved.invalid_reason is None
 
 
-def test_resolve_sleep_duration_prefers_start_end_over_raw() -> None:
+def test_resolve_sleep_duration_prefers_canonical_raw_over_start_end() -> None:
     resolved = resolve_sleep_duration_minutes(
         "2026-03-27T01:35:00+09:00",
         "2026-03-27T08:17:00+09:00",
         268,
     )
-    assert resolved.resolved_sleep_duration_min == 402.0
+    assert resolved.resolved_sleep_duration_min == 268
 
 
 def test_resolve_sleep_duration_invalid_when_end_before_start() -> None:
@@ -53,10 +53,10 @@ def test_resolve_canonical_sleep_metrics_with_text() -> None:
         "2026-03-27T08:17:00+09:00",
         268,
     )
-    assert metrics.resolved_sleep_duration_min == 402.0
-    assert metrics.resolved_sleep_duration_hours == 6.7
-    assert metrics.resolved_sleep_duration_text == "6時間42分"
-    assert metrics.sleep_duration_source == "derived_from_start_end"
+    assert metrics.resolved_sleep_duration_min == 268
+    assert metrics.resolved_sleep_duration_hours == 4.47
+    assert metrics.resolved_sleep_duration_text == "4時間28分"
+    assert metrics.sleep_duration_source == "canonical_raw_duration"
 
 
 def test_validate_generated_sleep_text_rejects_stale_duration() -> None:

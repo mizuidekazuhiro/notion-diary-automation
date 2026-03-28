@@ -318,7 +318,7 @@ def read_daily_log(
         page_url=_safe_text(payload.get("page_url")),
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
         weather_location=_safe_text(_get_case_insensitive_value(payload, "Weather Location", "weather_location")),
-        weather_summary=_safe_text(_get_case_insensitive_value(payload, "Weather Summary", "weather_summary")),
+        weather_summary=_safe_text(_get_case_insensitive_value(payload, "Weather", "weather", "Weather Summary", "weather_summary")),
         weather_temp_max_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Max C", "weather_temp_max_c")),
         weather_temp_min_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Min C", "weather_temp_min_c")),
         weather_precip_probability_max=_safe_float(_get_case_insensitive_value(payload, "Weather Precip Probability Max", "weather_precip_probability_max")),

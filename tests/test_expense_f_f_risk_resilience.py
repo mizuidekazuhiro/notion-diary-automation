@@ -87,6 +87,38 @@ def test_expense_f_missing_env_includes_missing_keys(monkeypatch: pytest.MonkeyP
     assert sorted(result.debug_summary["missing"]) == ["EXPENSES_DB_ID", "NOTION_TOKEN"]
 
 
+def test_expense_f_uses_default_props_and_ignores_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "results": [
+                    {
+                        "properties": {
+                            "Amount": {"type": "number", "number": 1234},
+                            "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "Shop"}]},
+                            "Received At": {"type": "date", "date": {"start": "2026-03-20T09:00:00+09:00"}},
+                        }
+                    }
+                ],
+                "has_more": False,
+            }
+
+    monkeypatch.setenv("NOTION_TOKEN", "token")
+    monkeypatch.setenv("EXPENSES_DB_ID", "db")
+    monkeypatch.delenv("EXPENSE_CATEGORY_PROP", raising=False)
+    monkeypatch.setattr("scripts.expense_f_aggregator.requests.post", lambda *args, **kwargs: _Resp())
+
+    result = aggregate_daily_expense_f("2026-03-20")
+
+    assert result.available is True
+    assert result.count == 1
+    assert result.total == 1234
+    assert result.debug_summary["category_unused"] is True
+
+
 def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.MonkeyPatch) -> None:
     if not HAS_PANDAS:
         pytest.skip("pandas not installed")
