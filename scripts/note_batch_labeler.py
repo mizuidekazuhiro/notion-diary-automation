@@ -77,6 +77,22 @@ def _normalize_result(date: str, payload: Mapping[str, Any]) -> NoteLabel:
 
     signals_raw = payload.get("signals") if isinstance(payload.get("signals"), list) else []
     tags_raw = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+    flags_payload = payload.get("flags") if isinstance(payload.get("flags"), Mapping) else {}
+    if not signals_raw and isinstance(flags_payload, Mapping):
+        mapped_tags: list[str] = []
+        if flags_payload.get("fatigue"):
+            mapped_tags.append("fatigue")
+        if flags_payload.get("stress"):
+            mapped_tags.append("stress")
+        if flags_payload.get("social_load"):
+            mapped_tags.append("social")
+        if flags_payload.get("achievement"):
+            mapped_tags.append("achievement")
+        if flags_payload.get("self_care"):
+            mapped_tags.append("recovery_action")
+        if flags_payload.get("sleep_issue"):
+            mapped_tags.append("sleep_issue")
+        tags_raw = mapped_tags
     allowed_tags = [str(tag).strip() for tag in tags_raw if str(tag).strip() in ALLOWED_TAGS]
     if not signals_raw and allowed_tags:
         signals_raw = [_signal_from_tag(tag) for tag in allowed_tags]
@@ -216,6 +232,12 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         "missing_ids": set(),
         "input_count": len(input_rows),
         "output_count": 0,
+        "input_dates_count": len(input_rows),
+        "output_dates_count": 0,
+        "missing_dates": set(),
+        "duplicate_dates": set(),
+        "merge_failed": False,
+        "merge_failed_reason": None,
     }
     if not str(raw_text or "").strip():
         meta["empty_response"] = True
@@ -242,6 +264,15 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         row_id = str(row.get("id") or "").strip()
         raw_date = str(row.get("date") or "")
         date = _normalize_date_key(raw_date)
+        if not date:
+            meta["merge_failed"] = True
+            meta["merge_failed_reason"] = "missing_date"
+            continue
+        if date in meta["matched_dates"]:
+            meta["duplicate_dates"].add(date)
+            meta["merge_failed"] = True
+            meta["merge_failed_reason"] = "duplicate_date"
+            continue
         key = row_id or date
         if row_id:
             if row_id in meta["matched_ids"]:
@@ -267,6 +298,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
     if input_ids:
         meta["missing_ids"] = set(input_ids) - set(meta["matched_ids"])
     meta["output_count"] = len(rows)
+    meta["output_dates_count"] = len({str(_normalize_date_key(row.get("date"))) for row in rows if isinstance(row, Mapping)})
     parsed = []
     for row in input_rows:
         row_id = str(row.get("id") or "").strip()
@@ -276,6 +308,19 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         parsed.append(fallback[key])
     meta["matched_dates_count"] = len(set(meta.get("matched_dates") or set()))
     meta["unmatched_input_dates"] = set(row_key_to_date.values()) - set(meta.get("matched_dates") or set())
+    input_date_set = set(row_key_to_date.values())
+    output_date_set = {str(_normalize_date_key(row.get("date"))) for row in rows if isinstance(row, Mapping) and _normalize_date_key(row.get("date"))}
+    missing_dates = sorted(input_date_set - output_date_set)
+    meta["missing_dates"] = set(missing_dates)
+    if len(rows) != len(input_rows):
+        meta["merge_failed"] = True
+        meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "count_mismatch"
+    if missing_dates:
+        meta["merge_failed"] = True
+        meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "missing_dates"
+    if output_date_set != input_date_set:
+        meta["merge_failed"] = True
+        meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "date_set_mismatch"
     return parsed, meta
 
 
@@ -398,9 +443,16 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                 "id": "input.id",
                 "date": "YYYY-MM-DD",
                 "sentiment": "positive|neutral|negative|mixed|unknown",
-                "flags": ["fatigue|stress|social_load|achievement|self_care|sleep_issue"],
+                "flags": {
+                    "fatigue": "boolean",
+                    "stress": "boolean",
+                    "social_load": "boolean",
+                    "achievement": "boolean",
+                    "self_care": "boolean",
+                    "sleep_issue": "boolean",
+                },
+                "tags": ["string"],
                 "confidence": "0.0-1.0",
-                "reasoning_short": "short ja",
             },
         }
         raw = ""
@@ -435,6 +487,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             quality_ok = (
                 not meta["parse_error"]
                 and not meta["schema_mismatch"]
+                and not meta.get("merge_failed")
                 and not meta.get("duplicate_ids")
                 and not meta.get("unknown_ids")
                 and not meta.get("missing_ids")
@@ -506,9 +559,14 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "empty_response_count": empty_response_count,
             "raw_response_paths": raw_response_paths,
             "matched_dates_count": len(matched_dates),
+            "input_dates_count": len(all_input_dates),
+            "output_dates_count": len(matched_dates) + len(unmatched_response_dates),
             "matched_dates": sorted(matched_dates),
             "unmatched_input_dates": unmatched_input_dates,
             "unmatched_response_dates": sorted(unmatched_response_dates),
+            "missing_dates": unmatched_input_dates,
+            "duplicate_dates": sorted(duplicate_ids),
+            "merge_failed_reason": "merge_failed" if (date_match_failure_count or missing_ids or unknown_ids or duplicate_ids) else None,
             "duplicate_ids": sorted(duplicate_ids),
             "missing_ids": sorted(missing_ids),
             "unknown_ids": sorted(unknown_ids),
@@ -528,7 +586,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "fallback_reason_counts": fallback_reason_counts,
             "cache_hit_count": cache_hit_count,
             "cache_miss_count": max(0, len([r for r in rows if r.get("notes")]) - cache_hit_count),
-            "labeling_failed": bool(parse_error_count or schema_mismatch_count or date_match_failure_count or empty_response_count),
+            "labeling_failed": bool(parse_error_count or schema_mismatch_count or date_match_failure_count or empty_response_count or unmatched_input_dates),
         })
     logging.info("notes batch label count=%s", len(rows))
     return ordered

@@ -18,7 +18,6 @@ class ExpenseFAggregate:
     count: int
     total: float
     merchants: list[str]
-    categories: list[str]
     first_time: Optional[str]
     last_time: Optional[str]
     data_status: str
@@ -35,7 +34,6 @@ def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
             count=0,
             total=0.0,
             merchants=[],
-            categories=[],
             first_time=None,
             last_time=None,
             data_status="query_failed",
@@ -96,7 +94,6 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             count=0,
             total=0.0,
             merchants=[],
-            categories=[],
             first_time=None,
             last_time=None,
             data_status="query_failed",
@@ -112,24 +109,25 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
         "received_at": _resolve_prop_name(env_value=_env_or_none("EXPENSE_RECEIVED_AT_PROP"), aliases=["Received At", "受領日時", "Timestamp", "Created time"], schema=schema),
         "merchant": _resolve_prop_name(env_value=_env_or_none("EXPENSE_MERCHANT_PROP"), aliases=["Merchant", "店名", "支出先"], schema=schema),
         "amount": _resolve_prop_name(env_value=_env_or_none("EXPENSE_AMOUNT_PROP"), aliases=["Amount", "金額"], schema=schema),
-        "category": _resolve_prop_name(env_value=_env_or_none("EXPENSE_CATEGORY_PROP"), aliases=["Category", "カテゴリ", "費目"], schema=schema),
     }
     resolved_names = {k: v[0] for k, v in resolved_props.items()}
-    unresolved = [k for k, v in resolved_names.items() if not v]
-    if unresolved or not resolved_names["f"] or not (resolved_names["received_at"] or resolved_names["date"]):
+    required_fields = ["f", "merchant", "amount"]
+    unresolved_required = [k for k in required_fields if not resolved_names.get(k)]
+    if not (resolved_names["received_at"] or resolved_names["date"]):
+        unresolved_required.append("date_or_received_at")
+    if unresolved_required:
         unavailable = ExpenseFAggregate(
             available=False,
             count=0,
             total=0.0,
             merchants=[],
-            categories=[],
             first_time=None,
             last_time=None,
             data_status="schema_unresolved",
             debug_summary={
                 "schema_fetch": schema_debug,
                 "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()},
-                "unresolved_required": unresolved,
+                "unresolved_required": unresolved_required,
             },
             skip_reason="expenses_data_unavailable",
         )
@@ -140,7 +138,6 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
     recv_prop = resolved_names["received_at"]
     merchant_prop = resolved_names["merchant"]
     amount_prop = resolved_names["amount"]
-    category_prop = resolved_names["category"]
 
     target_date_set = {item for item in target_dates}
     start_day = min(datetime.fromisoformat(item).replace(tzinfo=JST) for item in target_date_set)
@@ -199,7 +196,6 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                     0,
                     0.0,
                     [],
-                    [],
                     None,
                     None,
                     "query_failed",
@@ -218,7 +214,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             cursor = data.get("next_cursor")
 
         grouped: dict[str, dict[str, Any]] = {
-            target_date: {"total": 0.0, "merchants": [], "categories": [], "times": [], "count": 0}
+            target_date: {"total": 0.0, "merchants": [], "times": [], "count": 0}
             for target_date in target_date_set
         }
         matching_rows = 0
@@ -232,18 +228,14 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             grouped[day_key]["total"] += _parse_number(props.get(amount_prop) if amount_prop else None) or 0.0
             merchant = _parse_rich_text(props.get(merchant_prop) if merchant_prop else None) or "Unknown"
             grouped[day_key]["merchants"].append(merchant)
-            category = _parse_category(props.get(category_prop) if category_prop else None)
-            if category:
-                grouped[day_key]["categories"].append(category)
             dt = _parse_date_start(props.get(recv_prop) if recv_prop else None) or _parse_date_start(props.get(date_prop) if date_prop else None)
             if dt:
                 grouped[day_key]["times"].append(dt)
 
         result: dict[str, ExpenseFAggregate] = {}
         for target_date in target_dates:
-            item = grouped.get(target_date, {"count": 0, "total": 0.0, "merchants": [], "categories": [], "times": []})
+            item = grouped.get(target_date, {"count": 0, "total": 0.0, "merchants": [], "times": []})
             uniq_merchants = sorted({m for m in item["merchants"] if m})
-            uniq_categories = sorted({c for c in item["categories"] if c})
             times = item["times"]
             count_value = int(item["count"])
             if not pages:
@@ -259,7 +251,6 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 count=count_value,
                 total=round(float(item["total"]), 2),
                 merchants=uniq_merchants,
-                categories=uniq_categories,
                 first_time=times[0] if times else None,
                 last_time=times[-1] if times else None,
                 data_status=status,
@@ -281,7 +272,6 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             False,
             0,
             0.0,
-            [],
             [],
             None,
             None,
@@ -314,22 +304,6 @@ def _parse_number(prop: dict[str, Any] | None) -> Optional[float]:
     if prop.get("type") == "number":
         n = prop.get("number")
         return float(n) if n is not None else None
-    return None
-
-
-def _parse_category(prop: dict[str, Any] | None) -> Optional[str]:
-    if not prop:
-        return None
-    ptype = prop.get("type")
-    if ptype == "select":
-        sel = prop.get("select")
-        return (sel or {}).get("name")
-    if ptype == "multi_select":
-        items = prop.get("multi_select", [])
-        names = [item.get("name") for item in items if isinstance(item, dict) and item.get("name")]
-        return ",".join(names) if names else None
-    if ptype in {"rich_text", "title"}:
-        return _parse_rich_text(prop)
     return None
 
 

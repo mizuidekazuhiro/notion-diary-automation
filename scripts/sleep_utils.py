@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import re
-from typing import Optional
+from typing import Any, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -55,6 +55,13 @@ class SleepTextValidationResult:
     is_consistent: bool
     found_duration_text: Optional[str]
     reason: Optional[str]
+
+
+def _safe_score(value: object) -> Optional[float]:
+    scored = _safe_float(value)
+    if scored is None:
+        return None
+    return round(scored, 2)
 
 
 def resolve_sleep_duration_minutes(
@@ -111,6 +118,91 @@ def resolve_sleep_target_date(
         return fallback_date
     attributed = (base - timedelta(hours=DAILY_BOUNDARY_HOUR)).date()
     return attributed.isoformat()
+
+
+def build_sleep_candidate(
+    *,
+    candidate_date: str,
+    source: str,
+    sleep_start: object,
+    sleep_end: object,
+    raw_sleep_duration_min: object,
+    sleep_score: object,
+) -> dict[str, Any]:
+    resolved = resolve_sleep_duration_minutes(sleep_start, sleep_end, raw_sleep_duration_min)
+    score = _safe_score(sleep_score)
+    resolved_sleep_duration_min = resolved.resolved_sleep_duration_min
+    is_valid = bool(
+        (resolved_sleep_duration_min is not None and resolved_sleep_duration_min > 0)
+        or (score is not None and score > 0)
+    )
+    return {
+        "candidate_date": candidate_date,
+        "source": source,
+        "sleep_start": sleep_start,
+        "sleep_end": sleep_end,
+        "raw_sleep_duration_min": _safe_float(raw_sleep_duration_min),
+        "resolved_sleep_duration_min": resolved_sleep_duration_min,
+        "sleep_score": score,
+        "duration_source": resolved.duration_source,
+        "candidate_valid_flag": is_valid,
+        "invalid_reason": None if is_valid else (resolved.invalid_reason or "missing_sleep_signal"),
+        "candidate_target_date": resolve_sleep_target_date(
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+            fallback_date=candidate_date,
+        ),
+        "selection_reason": None,
+    }
+
+
+def resolve_sleep_for_target_date(
+    *,
+    target_date: str,
+    today_summary: Any,
+    history_summaries: Sequence[Any],
+) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]], str]:
+    candidates: list[dict[str, Any]] = [
+        build_sleep_candidate(
+            candidate_date=str(getattr(today_summary, "target_date", target_date)),
+            source="today_saved_properties",
+            sleep_start=getattr(today_summary, "sleep_start", None),
+            sleep_end=getattr(today_summary, "sleep_end", None),
+            raw_sleep_duration_min=getattr(today_summary, "sleep_duration_min", None),
+            sleep_score=getattr(today_summary, "sleep_score", None),
+        )
+    ]
+    for item in history_summaries:
+        candidates.append(
+            build_sleep_candidate(
+                candidate_date=str(getattr(item, "target_date", "")),
+                source="history",
+                sleep_start=getattr(item, "sleep_start", None),
+                sleep_end=getattr(item, "sleep_end", None),
+                raw_sleep_duration_min=getattr(item, "sleep_duration_min", None),
+                sleep_score=getattr(item, "sleep_score", None),
+            )
+        )
+
+    preferred = [c for c in candidates if c.get("source") == "today_saved_properties" and c.get("candidate_valid_flag")]
+    if preferred:
+        selected = dict(preferred[0])
+        selected["selection_reason"] = "use_saved_today_properties"
+        return candidates, selected, "saved_today_properties"
+
+    same_target_valid = [c for c in candidates if c.get("candidate_target_date") == target_date and c.get("candidate_valid_flag")]
+    if same_target_valid:
+        selected = dict(same_target_valid[0])
+        selected["selection_reason"] = "match_target_date_with_05_boundary"
+        return candidates, selected, "history_target_date_match"
+
+    fallback_valid = [c for c in candidates if c.get("candidate_valid_flag")]
+    if fallback_valid:
+        selected = dict(fallback_valid[0])
+        selected["selection_reason"] = "fallback_any_valid_candidate"
+        return candidates, selected, "fallback_any_valid"
+
+    return candidates, None, "no_valid_candidate"
 
 
 def format_sleep_duration_text(duration_min: object) -> Optional[str]:

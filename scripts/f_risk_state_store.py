@@ -32,14 +32,16 @@ class FRiskStateStore:
     def __init__(self) -> None:
         self._token = (os.getenv("GITHUB_TOKEN") or "").strip()
         self._repo = (os.getenv("GITHUB_REPOSITORY") or "").strip()
+        self._is_ci = (os.getenv("GITHUB_ACTIONS") or "").strip().lower() == "true"
         self._github_enabled = bool(self._token and self._repo)
         self._cached_sha: Optional[str] = None
+        backend = "github_branch" if self._github_enabled else ("unavailable" if self._is_ci else "local_fallback")
         self._meta = StateStoreMeta(
-            backend="github_branch" if self._github_enabled else "local_fallback",
+            backend=backend,
             branch_name=STATE_BRANCH,
-            path=STATE_PATH if self._github_enabled else str(LOCAL_FALLBACK_PATH),
-            fallback_used=not self._github_enabled,
-            state_read_ok=False,
+            path=STATE_PATH if self._github_enabled else ("" if self._is_ci else str(LOCAL_FALLBACK_PATH)),
+            fallback_used=(not self._github_enabled) and (not self._is_ci),
+            state_read_ok=self._github_enabled,
             state_write_ok=False,
         )
 
@@ -50,6 +52,9 @@ class FRiskStateStore:
     def load_all(self) -> dict[str, Any]:
         if self._github_enabled:
             return self._load_all_from_github()
+        if self._is_ci:
+            self._meta = StateStoreMeta("unavailable", STATE_BRANCH, "", False, False, False)
+            return self._empty_state()
         return self._load_all_from_local()
 
     def get_for_date(self, target_date: str) -> dict[str, Any]:
@@ -70,6 +75,8 @@ class FRiskStateStore:
         payload["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         if self._github_enabled:
             ok = self._save_all_to_github(payload)
+        elif self._is_ci:
+            ok = False
         else:
             ok = self._save_all_to_local(payload)
         self._meta = StateStoreMeta(
@@ -126,6 +133,9 @@ class FRiskStateStore:
 
     def _load_all_from_github(self) -> dict[str, Any]:
         if not self._ensure_state_branch():
+            if self._is_ci:
+                self._meta = StateStoreMeta("unavailable", STATE_BRANCH, "", False, False, False)
+                return self._empty_state()
             return self._load_all_from_local()
         url = self._repo_api(f"/contents/{STATE_PATH}")
         resp = requests.get(
@@ -140,6 +150,9 @@ class FRiskStateStore:
             self._meta = StateStoreMeta("github_branch", STATE_BRANCH, STATE_PATH, False, True, self._meta.state_write_ok)
             return payload
         if resp.status_code >= 400:
+            if self._is_ci:
+                self._meta = StateStoreMeta("unavailable", STATE_BRANCH, "", False, False, False)
+                return self._empty_state()
             return self._load_all_from_local()
         body = resp.json() or {}
         self._cached_sha = body.get("sha")

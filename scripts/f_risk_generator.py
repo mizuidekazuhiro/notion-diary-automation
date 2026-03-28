@@ -226,7 +226,7 @@ def _hydrate_expense_f_from_expenses_db(histories: list[DailyLogSummary]) -> lis
                 expense_f_count=aggregate.count,
                 expense_f_total=aggregate.total,
                 expense_f_merchants=" / ".join(aggregate.merchants),
-                expense_f_categories=" / ".join(aggregate.categories),
+                expense_f_categories=None,
                 expense_f_first_time=aggregate.first_time,
                 expense_f_last_time=aggregate.last_time,
                 expense_f_data_status=aggregate.data_status,

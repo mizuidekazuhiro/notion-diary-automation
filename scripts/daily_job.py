@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import logging
@@ -37,6 +38,7 @@ from scripts.sleep_condition_generator import (
     maybe_generate_sleep_insights,
 )
 from scripts.sleep_utils import validate_generated_sleep_text
+from scripts.sleep_utils import resolve_sleep_for_target_date
 from scripts.weather_client import fetch_weather_for_date
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -453,7 +455,23 @@ def _generate_and_save_sleep_insights(
             if (value or "").strip()
         ),
     )
-    if summary.resolved_sleep_duration_min is None:
+    sleep_candidates, selected_sleep, sleep_selection_mode = resolve_sleep_for_target_date(
+        target_date=summary.target_date,
+        today_summary=summary,
+        history_summaries=history_summaries,
+    )
+    logging.info(
+        "phase_c_sleep_resolver target_date(JST)=%s run_id=%s candidate_count=%s selected=%s selection_mode=%s selection_reason=%s candidate_target_date=%s invalid_reason=%s",
+        summary.target_date,
+        run_id,
+        len(sleep_candidates),
+        bool(selected_sleep),
+        sleep_selection_mode,
+        (selected_sleep or {}).get("selection_reason"),
+        (selected_sleep or {}).get("candidate_target_date"),
+        (selected_sleep or {}).get("invalid_reason"),
+    )
+    if not selected_sleep:
         fallback_payload = {
             "sleep_analysis_jp": "睡眠データが不足しているため分析をスキップしました",
             "today_condition_forecast_jp": "",
@@ -479,9 +497,23 @@ def _generate_and_save_sleep_insights(
         refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
         return refreshed_summary or summary
 
+    resolver_applied_summary = dataclasses.replace(
+        summary,
+        sleep_start=selected_sleep.get("sleep_start"),
+        sleep_end=selected_sleep.get("sleep_end"),
+        sleep_duration_min=selected_sleep.get("raw_sleep_duration_min"),
+        resolved_sleep_duration_min=selected_sleep.get("resolved_sleep_duration_min"),
+        resolved_sleep_duration_hours=(
+            round(float(selected_sleep.get("resolved_sleep_duration_min")) / 60.0, 2)
+            if selected_sleep.get("resolved_sleep_duration_min") is not None
+            else None
+        ),
+        sleep_score=selected_sleep.get("sleep_score"),
+        sleep_duration_source=str(selected_sleep.get("duration_source") or "missing"),
+    )
     sleep_payload = maybe_generate_sleep_insights(
         target_date=summary.target_date,
-        today_summary=summary,
+        today_summary=resolver_applied_summary,
         history_summaries=history_summaries,
     )
     if not sleep_payload:
@@ -674,9 +706,11 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s geocode_status=skipped weather_status=skipped saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=skipped latlon_available=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             "",
+            resolved_location.resolution_method,
+            bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
             save_result.get("updated"),
             skip_reason,
             json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
@@ -740,19 +774,31 @@ def _generate_and_save_weather(
         longitude=resolved_location.longitude,
     )
     if not weather.available:
+        reason = (
+            weather.debug_summary.get("reason")
+            or (resolved_location.debug_summary.get("geocode_debug") or {}).get("reason")
+            or weather.skip_reason
+            or "weather_api_failed"
+        )
+        debug_payload = dict(weather.debug_summary)
+        debug_payload["reason"] = reason
+        debug_payload["resolution_method"] = resolved_location.resolution_method
+        debug_payload["location_source"] = resolved_location.source
         save_result = _save_daily_log_fields(
             config,
             target_date=summary.target_date,
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s geocode_status=%s weather_status=failed saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             resolved_location.name,
-            weather.debug_summary.get("stage"),
+            resolved_location.resolution_method,
+            (resolved_location.debug_summary.get("geocode_debug") or {}).get("status") or weather.debug_summary.get("stage"),
+            bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
             save_result.get("updated"),
-            weather.skip_reason or "weather_api_failed",
-            json.dumps(weather.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+            reason,
+            json.dumps(debug_payload, ensure_ascii=False, sort_keys=True, default=str),
         )
         return _refresh_daily_log_summary(config, summary.target_date) or summary
 
@@ -764,9 +810,13 @@ def _generate_and_save_weather(
     }
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
     logging.info(
-        "[Weather] source=%s selected_location=%s geocode_status=ok weather_status=ok saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=ok latlon_available=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
         resolved_location.source,
         weather.location_label,
+        resolved_location.resolution_method,
+        (resolved_location.debug_summary.get("geocode_debug") or {}).get("status")
+        or ("skipped_latlon_available" if resolved_location.resolution_method == "latlon_direct" else "ok"),
+        bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
         save_result.get("updated"),
         "",
         json.dumps(weather.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
@@ -792,8 +842,6 @@ def _compute_expense_f_alert(
         reasons.append(f"Fフラグ付き支出が {aggregate.count} 件検出されました")
         if aggregate.total > 0:
             reasons.append(f"合計金額は {aggregate.total:.0f} 円です")
-        if aggregate.categories:
-            reasons.append(f"カテゴリ: {', '.join(aggregate.categories[:3])}")
         if aggregate.merchants:
             reasons.append(f"利用先: {', '.join(aggregate.merchants[:3])}")
         if aggregate.first_time or aggregate.last_time:
@@ -865,6 +913,32 @@ def _compute_f_risk_alert_runtime(
     logging.info("f_risk_runtime_start source=f_risk_runtime target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     expense_f_aggregate = aggregate_daily_expense_f(summary.target_date)
     store = FRiskStateStore()
+    if store.meta.backend == "unavailable":
+        logging.info(
+            "[FRisk] source=f_risk_runtime target_date=%s skip_reason=state_backend_unavailable state_store_backend=%s risk_matched=false score=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
+            summary.target_date,
+            store.meta.backend,
+            None,
+            "state_backend_unavailable",
+            [],
+        )
+        return {
+            "matched": False,
+            "alert_text": "",
+            "score": None,
+            "reason": "state_backend_unavailable",
+            "matched_patterns": [],
+            "skip_reason": "state_backend_unavailable",
+            "no_alert_reason": "state_backend_unavailable",
+            "state_meta": {
+                "backend": store.meta.backend,
+                "state_read_ok": store.meta.state_read_ok,
+                "state_write_ok": False,
+                "branch_name": store.meta.branch_name,
+                "path": store.meta.path,
+                "fallback_used": store.meta.fallback_used,
+            },
+        }
     previous_state = store.get_for_date(summary.target_date)
     hash_payload = {
         "target_date": summary.target_date,
