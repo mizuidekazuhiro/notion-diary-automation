@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
 from scripts.note_batch_labeler import label_notes_in_batches
 from scripts.openai_chat_utils import chat_completion
+from scripts.expense_f_aggregator import aggregate_expense_f_for_dates
 from scripts.today_advice_feature_builder import build_daily_feature_table
 
 
@@ -80,6 +81,12 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         "forbidden_inputs_used": False,
     }
     histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=180)
+    histories = _hydrate_expense_f_from_expenses_db(histories)
+    logging.info(
+        "f_risk_history_source source=expenses_db_direct target_date=%s history_days=%s",
+        target_date,
+        len(histories),
+    )
     if len(histories) < 14:
         risk_json["skipped_reason"] = "insufficient_samples"
         risk_json["no_alert_reason"] = "insufficient_evidence"
@@ -200,6 +207,32 @@ def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         if summary:
             out.append(summary)
     return out
+
+
+def _hydrate_expense_f_from_expenses_db(histories: list[DailyLogSummary]) -> list[DailyLogSummary]:
+    if not histories:
+        return histories
+    target_dates = [item.target_date for item in histories]
+    aggregates = aggregate_expense_f_for_dates(target_dates)
+    hydrated: list[DailyLogSummary] = []
+    for item in histories:
+        aggregate = aggregates.get(item.target_date)
+        if not aggregate:
+            hydrated.append(item)
+            continue
+        hydrated.append(
+            replace(
+                item,
+                expense_f_count=aggregate.count,
+                expense_f_total=aggregate.total,
+                expense_f_merchants=" / ".join(aggregate.merchants),
+                expense_f_categories=" / ".join(aggregate.categories),
+                expense_f_first_time=aggregate.first_time,
+                expense_f_last_time=aggregate.last_time,
+                expense_f_data_status=aggregate.data_status,
+            )
+        )
+    return hydrated
 
 
 def _explore_patterns(train: Any) -> dict[str, Any]:

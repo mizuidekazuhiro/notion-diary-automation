@@ -287,10 +287,22 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     today_advice = _optional_text(
         payload.get("today_advice") if isinstance(payload, Mapping) else None
     )
-    f_risk_alert = _optional_text(payload.get("f_risk_alert") if isinstance(payload, Mapping) else None)
-    f_risk_score = _normalize_number(payload.get("f_risk_score") if isinstance(payload, Mapping) else None)
-    f_risk_reason = _optional_text(payload.get("f_risk_reason") if isinstance(payload, Mapping) else None)
-    f_risk_patterns = _optional_text(payload.get("f_risk_matched_patterns") if isinstance(payload, Mapping) else None)
+    f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
+    f_risk_matched = False
+    f_risk_alert = None
+    f_risk_score = "—"
+    f_risk_reason = None
+    f_risk_patterns = None
+    if isinstance(f_risk_payload, Mapping):
+        f_risk_matched = bool(f_risk_payload.get("matched"))
+        f_risk_alert = _optional_text(f_risk_payload.get("alert_text"))
+        f_risk_score = _normalize_number(f_risk_payload.get("score"))
+        f_risk_reason = _optional_text(f_risk_payload.get("reason"))
+        matched_patterns_raw = f_risk_payload.get("matched_patterns")
+        if isinstance(matched_patterns_raw, list):
+            f_risk_patterns = " / ".join(
+                str(item).strip() for item in matched_patterns_raw if str(item).strip()
+            )
     expense_f_alert_payload = payload.get("expense_f_alert") if isinstance(payload, Mapping) else None
     expense_f_alert_matched = False
     expense_f_alert_title = "注意すべき支出パターン"
@@ -347,7 +359,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             "</div>"
         )
     f_risk_html = ""
-    if f_risk_alert:
+    if f_risk_matched and f_risk_alert:
         detail_parts = []
         if f_risk_score != "—":
             detail_parts.append(f"score={f_risk_score}")
@@ -700,10 +712,22 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     today_advice = _optional_text(
         payload.get("today_advice") if isinstance(payload, Mapping) else None
     )
-    f_risk_alert = _optional_text(payload.get("f_risk_alert") if isinstance(payload, Mapping) else None)
-    f_risk_score = _normalize_number(payload.get("f_risk_score") if isinstance(payload, Mapping) else None)
-    f_risk_reason = _optional_text(payload.get("f_risk_reason") if isinstance(payload, Mapping) else None)
-    f_risk_patterns = _optional_text(payload.get("f_risk_matched_patterns") if isinstance(payload, Mapping) else None)
+    f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
+    f_risk_matched = False
+    f_risk_alert = None
+    f_risk_score = "—"
+    f_risk_reason = None
+    f_risk_patterns = None
+    if isinstance(f_risk_payload, Mapping):
+        f_risk_matched = bool(f_risk_payload.get("matched"))
+        f_risk_alert = _optional_text(f_risk_payload.get("alert_text"))
+        f_risk_score = _normalize_number(f_risk_payload.get("score"))
+        f_risk_reason = _optional_text(f_risk_payload.get("reason"))
+        matched_patterns_raw = f_risk_payload.get("matched_patterns")
+        if isinstance(matched_patterns_raw, list):
+            f_risk_patterns = " / ".join(
+                str(item).strip() for item in matched_patterns_raw if str(item).strip()
+            )
     expense_f_alert_payload = payload.get("expense_f_alert") if isinstance(payload, Mapping) else None
     expense_f_alert_matched = False
     expense_f_alert_title = "注意すべき支出パターン"
@@ -772,7 +796,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         ]
     if today_advice:
         lines += ["", "Today advice", today_advice]
-    if f_risk_alert:
+    if f_risk_matched and f_risk_alert:
         lines += ["", "F Risk Alert", f_risk_alert]
         if f_risk_score != "—":
             lines.append(f"- score: {f_risk_score}")

@@ -11,6 +11,8 @@ jobs:
   run-publish:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -38,4 +40,15 @@ jobs:
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
           PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}   # ← これを追加
           MAIL_LINK_SECRET: ${{ secrets.MAIL_LINK_SECRET }}   # ←追加
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
+          EXPENSE_F_PROP: ${{ secrets.EXPENSE_F_PROP }}
+          EXPENSE_DATE_PROP: ${{ secrets.EXPENSE_DATE_PROP }}
+          EXPENSE_RECEIVED_AT_PROP: ${{ secrets.EXPENSE_RECEIVED_AT_PROP }}
+          EXPENSE_MERCHANT_PROP: ${{ secrets.EXPENSE_MERCHANT_PROP }}
+          EXPENSE_AMOUNT_PROP: ${{ secrets.EXPENSE_AMOUNT_PROP }}
+          EXPENSE_CATEGORY_PROP: ${{ secrets.EXPENSE_CATEGORY_PROP }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/daily_job.py --phase publish

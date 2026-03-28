@@ -47,6 +47,7 @@ def render_mail(
     summary: DailyLogSummary,
     *,
     expense_f_alert: Optional[dict[str, Any]] = None,
+    f_risk_alert: Optional[dict[str, Any]] = None,
 ) -> MailContent:
     subject = f"Daily Log | {summary.target_date}"
     mood_notes_url = _build_mood_notes_url(summary.target_date)
@@ -75,10 +76,7 @@ def render_mail(
         "sleep_analysis_jp": summary.sleep_analysis_jp,
         "today_condition_forecast_jp": summary.today_condition_forecast_jp,
         "today_advice": summary.today_advice,
-        "f_risk_alert": summary.f_risk_alert,
-        "f_risk_score": summary.f_risk_score,
-        "f_risk_reason": summary.f_risk_reason,
-        "f_risk_matched_patterns": summary.f_risk_matched_patterns,
+        "f_risk_alert_payload": f_risk_alert or {},
         "sleep_start": summary.sleep_start,
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.resolved_sleep_duration_min,
