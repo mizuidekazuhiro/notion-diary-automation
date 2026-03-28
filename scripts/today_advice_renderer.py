@@ -139,6 +139,8 @@ def build_analysis_json(
 
 
 def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model: str, chat_completion: Callable[..., str]) -> str:
+    if analysis_json.get("skipped_reason"):
+        return ""
     def _fallback_text() -> str:
         sleep = analysis_json.get("today_sleep_context", {})
         recent = analysis_json.get("recent_7d_summary", {}).get("behavior_trend", [])

@@ -1423,11 +1423,26 @@ def generate_today_advice(
         audit.info("[TodayAdvice][AnalysisJSON] %s", safe_json(analysis_json))
         audit.dump_json("AnalysisJSON", analysis_json)
 
-        today_advice = render_today_advice_from_analysis(
-            analysis_json=analysis_json,
-            model=final_model,
-            chat_completion=_chat_completion,
-        )
+        try:
+            today_advice = render_today_advice_from_analysis(
+                analysis_json=analysis_json,
+                model=final_model,
+                chat_completion=_chat_completion,
+            )
+            if not (today_advice or "").strip():
+                today_advice = "【fallback】Today advice の文章化に失敗しました（analysis_json は生成済み）。"
+                analysis_json["fallback_used"] = True
+                analysis_json["final_status"] = "fallback"
+                analysis_json["stage_b_error"] = "empty_generation"
+            else:
+                analysis_json["fallback_used"] = False
+                analysis_json["final_status"] = "success"
+        except Exception as stage_b_exc:
+            logging.warning("today_advice_stage_b_failed target_date=%s error=%s", target_date, stage_b_exc)
+            today_advice = "【fallback】Today advice の文章化に失敗しました（analysis_json は生成済み）。"
+            analysis_json["fallback_used"] = True
+            analysis_json["final_status"] = "fallback"
+            analysis_json["stage_b_error"] = type(stage_b_exc).__name__
         audit.put("final_text", {"text": today_advice})
         audit.info("[TodayAdvice][FinalText] %s", today_advice)
     except Exception as exc:
@@ -1442,10 +1457,13 @@ def generate_today_advice(
             "exploratory_summary": {},
             "regression_summary": regression_summary,
             "lightgbm_summary": lightgbm_summary,
-            "risk_level": "low",
-            "primary_focus": "負荷調整",
+            "risk_level": "unknown",
+            "primary_focus": "不明",
+            "skipped_reason": "analysis_failed",
+            "fallback_used": False,
+            "final_status": "failed",
         }
-        today_advice = "睡眠コンディションを優先しつつ、今日は午前の重い判断を絞って進めるのが安全です。"
+        today_advice = ""
         audit.put("regression", summarize_regression(regression_summary))
         audit.put("analysis_json", analysis_json)
         audit.put("final_text", {"text": today_advice})
@@ -1455,7 +1473,7 @@ def generate_today_advice(
     audit.put("sleep_feature_conversion_samples", audit.payload["analysis_audit"].get("features", {}).get("sleep_feature_conversion_samples", []))
     audit.put("matched_patterns_count", int(analysis_json.get("matched_patterns_count", 0)))
     audit.put("evidence_used", list(analysis_json.get("evidence_used", [])))
-    fallback_used = not bool(today_advice.strip())
+    fallback_used = bool(analysis_json.get("fallback_used", False))
     logging.info("today_advice_fallback_used=%s", fallback_used)
     audit.emit_final()
     judgment_json = {

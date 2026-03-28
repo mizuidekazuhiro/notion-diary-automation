@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from collections import Counter
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -298,8 +300,59 @@ def _rule_based_note_label(row: Mapping[str, str]) -> NoteLabel:
     return _normalize_result(date, payload)
 
 
-def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_completion: Callable[..., str], model: str, batch_size: int = 15, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
-    rows = [{"id": f"note_{idx:04d}_{s.target_date}", "date": s.target_date, "notes": (s.notes or "").strip()} for idx, s in enumerate(summaries)]
+def _cache_dir() -> Path:
+    return Path(os.getenv("NOTES_LABEL_CACHE_DIR", ".cache/notes_labels"))
+
+
+def _cache_key(*, date: str, note_text: str, model: str) -> str:
+    digest = sha256(f"{model}\n{date}\n{note_text}".encode("utf-8")).hexdigest()
+    return f"{date}_{digest}.json"
+
+
+def _load_cached_label(*, date: str, note_text: str, model: str) -> Optional[NoteLabel]:
+    if os.getenv("NOTES_LABEL_CACHE_DISABLE", "").strip() == "1":
+        return None
+    if not note_text.strip():
+        return neutral_label(date)
+    path = _cache_dir() / _cache_key(date=date, note_text=note_text, model=model)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return _normalize_result(date, payload)
+    except Exception:
+        return None
+
+
+def _save_cached_label(*, date: str, note_text: str, model: str, label: NoteLabel) -> None:
+    if os.getenv("NOTES_LABEL_CACHE_DISABLE", "").strip() == "1":
+        return
+    if not note_text.strip():
+        return
+    try:
+        cache_dir = _cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "signals": label.signals,
+            "meta": {"parse_quality": label.parse_quality},
+            "derived_flags": label.derived_flags,
+        }
+        (cache_dir / _cache_key(date=date, note_text=note_text, model=model)).write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        return
+
+
+def _truncate_note(text: str) -> str:
+    max_chars = int(os.getenv("NOTES_LABEL_MAX_CHARS", "1200") or "1200")
+    trimmed = text.strip()
+    return trimmed[:max_chars]
+
+
+def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_completion: Callable[..., str], model: str, batch_size: int = 8, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
+    rows = [{"id": f"note_{idx:04d}_{s.target_date}", "date": s.target_date, "notes": _truncate_note((s.notes or ""))} for idx, s in enumerate(summaries)]
     if not rows:
         return {}
     assets = load_notes_prompt_assets()
@@ -321,11 +374,19 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     raw_sentiment_counts: Counter[str] = Counter()
     raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
+    cache_hit_count = 0
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
         for row in [r for r in chunk if not r["notes"]]:
             results[row["date"]] = neutral_label(row["date"])
-        targets = [r for r in chunk if r["notes"]]
+        targets: list[dict[str, str]] = []
+        for row in [r for r in chunk if r["notes"]]:
+            cached = _load_cached_label(date=row["date"], note_text=row["notes"], model=model)
+            if cached is not None:
+                results[row["date"]] = cached
+                cache_hit_count += 1
+            else:
+                targets.append(row)
         if not targets:
             continue
         api_calls += 1
@@ -394,6 +455,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             raw_response_paths.append(str(path))
         for item in parsed:
             results[item.date] = item
+            source_row = next((r for r in targets if r["date"] == item.date), None)
+            if source_row is not None:
+                _save_cached_label(date=item.date, note_text=source_row["notes"], model=model, label=item)
         for row in targets:
             if row["date"] not in results:
                 results[row["date"]] = _rule_based_note_label(row)
@@ -462,6 +526,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "raw_flag_counts": dict(raw_flag_counts),
             "normalized_flag_counts": dict(normalized_flag_counts),
             "fallback_reason_counts": fallback_reason_counts,
+            "cache_hit_count": cache_hit_count,
+            "cache_miss_count": max(0, len([r for r in rows if r.get("notes")]) - cache_hit_count),
+            "labeling_failed": bool(parse_error_count or schema_mismatch_count or date_match_failure_count or empty_response_count),
         })
     logging.info("notes batch label count=%s", len(rows))
     return ordered
