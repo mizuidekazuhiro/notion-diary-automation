@@ -242,7 +242,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
     return parsed, meta
 
 
-def label_notes_in_batches(*, summaries: Sequence[DailyLogSummary], chat_completion: Callable[..., str], model: str, batch_size: int = 15, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
+def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_completion: Callable[..., str], model: str, batch_size: int = 15, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
     rows = [{"date": s.target_date, "notes": (s.notes or "").strip()} for s in summaries]
     if not rows:
         return {}

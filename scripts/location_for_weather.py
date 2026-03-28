@@ -16,8 +16,9 @@ NOTION_VERSION = "2022-06-28"
 
 @dataclass(frozen=True)
 class ResolvedLocation:
-    name: str
+    name: Optional[str]
     source: str
+    skip_reason: Optional[str]
     debug_summary: dict[str, Any]
 
 
@@ -42,6 +43,38 @@ def _extract_place_from_location_summary(text: Optional[str]) -> Optional[str]:
             if candidate:
                 return candidate
     return None
+
+
+def _is_geocodable_location_text(text: Optional[str]) -> bool:
+    candidate = _safe_text(text)
+    if not candidate:
+        return False
+    if len(candidate) > 40:
+        return False
+    lowered = candidate.lower()
+    blocked_tokens = [
+        "には",
+        "へ",
+        "で",
+        "を",
+        "した",
+        "して",
+        "見られ",
+        "利用",
+        "外出",
+        "昼食",
+        "夕食",
+        "朝食",
+        "コンビニ",
+        "lawson",
+        "familymart",
+        "7-eleven",
+    ]
+    if any(token in lowered for token in blocked_tokens):
+        return False
+    if re.search(r"[。、「」！!？?]", candidate):
+        return False
+    return True
 
 
 def _query_latest_stay_place(now: datetime) -> tuple[Optional[str], dict[str, Any]]:
@@ -110,20 +143,50 @@ def resolve_location_for_weather(*, summary: Any, now: Optional[datetime] = None
     latest_stay_place, stay_debug = _query_latest_stay_place(now)
     debug["stay_query"] = stay_debug
     if latest_stay_place:
-        return ResolvedLocation(name=latest_stay_place, source="latest_stay_session", debug_summary=debug)
+        return ResolvedLocation(
+            name=latest_stay_place,
+            source="raw_stay_sessions",
+            skip_reason=None,
+            debug_summary=debug,
+        )
 
     place = _safe_text(getattr(summary, "place", None))
-    if place:
+    if place and _is_geocodable_location_text(place):
         debug["fallback"] = "daily_log_place"
-        return ResolvedLocation(name=place, source="daily_log_place", debug_summary=debug)
+        return ResolvedLocation(
+            name=place,
+            source="daily_log_place_structured",
+            skip_reason=None,
+            debug_summary=debug,
+        )
+    if place:
+        debug["invalid_place_text"] = place
 
     location_summary = _safe_text(getattr(summary, "location_summary", None))
     if location_summary:
         extracted = _extract_place_from_location_summary(location_summary)
-        if extracted:
+        debug["location_summary_extracted"] = extracted
+        if extracted and _is_geocodable_location_text(extracted):
             debug["fallback"] = "location_summary_extracted"
-            return ResolvedLocation(name=extracted, source="location_summary_extracted", debug_summary=debug)
+            return ResolvedLocation(
+                name=extracted,
+                source="location_summary_extracted_fallback",
+                skip_reason=None,
+                debug_summary=debug,
+            )
+        return ResolvedLocation(
+            name=None,
+            source="location_summary_extracted_fallback",
+            skip_reason="non_geocodable_location_summary",
+            debug_summary=debug,
+        )
 
-    debug["fallback"] = "tokyo_default"
-    logging.info("weather_location_fallback debug=%s", debug)
-    return ResolvedLocation(name="東京都", source="fallback_tokyo", debug_summary=debug)
+    debug["fallback"] = "missing_structured_location_source"
+    skip_reason = "invalid_location_text" if place else "missing_structured_location_source"
+    logging.info("weather_location_unresolved debug=%s", debug)
+    return ResolvedLocation(
+        name=None,
+        source="missing_location",
+        skip_reason=skip_reason,
+        debug_summary=debug,
+    )

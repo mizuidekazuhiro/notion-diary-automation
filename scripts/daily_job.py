@@ -456,12 +456,43 @@ def _generate_and_save_sleep_insights(
             if (value or "").strip()
         ),
     )
+    if summary.resolved_sleep_duration_min is None:
+        fallback_payload = {
+            "sleep_analysis_jp": "睡眠データが不足しているため分析をスキップしました",
+            "today_condition_forecast_jp": "",
+        }
+        logging.info(
+            "phase_c_sleep_skipped target_date(JST)=%s run_id=%s skip_reason=missing_required_sleep_data",
+            summary.target_date,
+            run_id,
+        )
+        save_result = _save_daily_log_fields(
+            config,
+            target_date=summary.target_date,
+            payload=fallback_payload,
+        )
+        logging.info(
+            "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s reason=%s mode=fixed_fallback generated_properties=%s",
+            summary.target_date,
+            run_id,
+            save_result.get("updated"),
+            save_result.get("reason"),
+            sorted(k for k, v in fallback_payload.items() if v),
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
     sleep_payload = maybe_generate_sleep_insights(
         target_date=summary.target_date,
         today_summary=summary,
         history_summaries=history_summaries,
     )
     if not sleep_payload:
+        logging.info(
+            "phase_c_sleep_skipped target_date(JST)=%s run_id=%s skip_reason=no_sleep_signal generated_properties=[]",
+            summary.target_date,
+            run_id,
+        )
         logging.info(
             "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_sleep_signal generated_properties=[]",
             summary.target_date,
@@ -638,6 +669,34 @@ def _generate_and_save_weather(
 ) -> "DailyLogSummary":
     logging.info("phase_c_weather_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     resolved_location = resolve_location_for_weather(summary=summary)
+    if not resolved_location.name:
+        skip_reason = resolved_location.skip_reason or "missing_structured_location_source"
+        logging.info(
+            "phase_c_weather_input_summary target_date(JST)=%s run_id=%s has_weather=%s location=%s location_source=%s debug_summary=%s",
+            summary.target_date,
+            run_id,
+            bool((summary.weather_summary or "").strip()),
+            "",
+            resolved_location.source,
+            json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+        )
+        logging.info(
+            "phase_c_weather_skip target_date(JST)=%s run_id=%s skip_reason=%s location_source=%s",
+            summary.target_date,
+            run_id,
+            skip_reason,
+            resolved_location.source,
+        )
+        logging.info(
+            "phase_c_weather_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=%s generated_properties=[]",
+            summary.target_date,
+            run_id,
+            False,
+            skip_reason,
+        )
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        return refreshed_summary or summary
+
     weather_hash_payload = {
         "target_date": summary.target_date,
         "location_name": resolved_location.name,
@@ -842,7 +901,7 @@ def _generate_and_save_f_risk(
     )
     if has_risk and not input_changed:
         logging.info(
-            "phase_c_f_risk_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input",
+            "phase_c_f_risk_skipped target_date(JST)=%s run_id=%s skip_reason=unchanged_input",
             summary.target_date,
             run_id,
         )
@@ -855,18 +914,35 @@ def _generate_and_save_f_risk(
         refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
         return refreshed_summary or summary
 
-    result = generate_f_risk(
-        daily_log_read_url=config.daily_log_read_url,
-        bearer_token=config.bearer_token,
-        target_date=summary.target_date,
-    )
+    try:
+        result = generate_f_risk(
+            daily_log_read_url=config.daily_log_read_url,
+            bearer_token=config.bearer_token,
+            target_date=summary.target_date,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.exception(
+            "phase_c_f_risk_failed target_date(JST)=%s run_id=%s reason=%s",
+            summary.target_date,
+            run_id,
+            str(exc),
+        )
+        raise
     if result.skip_reason:
         logging.info(
-            "phase_c_f_risk_skip target_date(JST)=%s run_id=%s skip_reason=%s debug_summary=%s",
+            "phase_c_f_risk_skipped target_date(JST)=%s run_id=%s skip_reason=%s debug_summary=%s",
             summary.target_date,
             run_id,
             result.skip_reason,
             json.dumps(result.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+        )
+    else:
+        logging.info(
+            "phase_c_f_risk_generated target_date(JST)=%s run_id=%s score=%s matched_patterns=%s",
+            summary.target_date,
+            run_id,
+            result.score,
+            result.matched_patterns[:3],
         )
 
     payload = {
@@ -1021,20 +1097,35 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     if not summary:
         logging.info("phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]", target_date, run_id, False)
         return
-    summary = _generate_and_save_weather(config, summary=summary, run_id=run_id)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    expense_f_alert = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id)
+    def _run_optional_enrichment(step_name: str, fn, current_summary: "DailyLogSummary") -> "DailyLogSummary":
+        try:
+            return fn(config, summary=current_summary, run_id=run_id)
+        except Exception as exc:  # noqa: BLE001
+            logging.exception(
+                "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s reason=%s",
+                current_summary.target_date,
+                run_id,
+                step_name,
+                str(exc),
+            )
+            return current_summary
+
+    summary = _run_optional_enrichment("weather", _generate_and_save_weather, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     try:
-        summary = _generate_and_save_f_risk(config, summary=summary, run_id=run_id)
-    except Exception:  # noqa: BLE001
+        expense_f_alert = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001
         logging.exception(
-            "phase_c_f_risk_error target_date(JST)=%s run_id=%s step=generate_or_save",
+            "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=expense_f reason=%s",
             summary.target_date,
             run_id,
+            str(exc),
         )
+        expense_f_alert = {"matched": False, "title": "注意すべき支出パターン", "summary": "", "reasons": [], "debug": {"error": str(exc)}}
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _run_optional_enrichment("sleep", _generate_and_save_sleep_insights, summary)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _run_optional_enrichment("f_risk", _generate_and_save_f_risk, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
