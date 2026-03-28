@@ -88,7 +88,7 @@ def main() -> None:
     assert "打合せ | done_date=2026-02-02 | event_date=2026-02-02T10:00:00+09:00" in detail_text
     assert "通常タスク | done_date=2026-02-02 | event_date=null" in detail_text
 
-    fields, skipped, _ = build_diary_input_fields(summary)
+    fields, skipped, _, _ = build_diary_input_fields(summary)
     assert "Done Tasks Detail" in fields
     assert "Drop Tasks" in skipped
 

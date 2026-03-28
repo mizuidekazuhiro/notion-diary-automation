@@ -214,7 +214,7 @@ def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:
     return "\n".join(parts)
 
 
-def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str], list[str], str]:
+def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str], list[str], str, dict[str, str]]:
     expenses_details = ""
     if summary.expenses.top:
         parts: list[str] = []
@@ -249,6 +249,7 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Location summary", summary.location_summary),
         ("Activity Summary", summary.activity_summary),
         ("Meal summary", summary.meal_summary),
+        ("Today advice", _validated_sleep_prose(summary.today_advice, canonical_sleep_duration_min=canonical_sleep_duration_min, canonical_sleep_duration_text=canonical_sleep_duration_text, field_name="Today advice")),
         ("Kcal", str(summary.kcal) if summary.kcal is not None else None),
         ("Fat", str(summary.fat) if summary.fat is not None else None),
         ("Carb", str(summary.carb) if summary.carb is not None else None),
@@ -274,12 +275,14 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
 
     used: dict[str, str] = {}
     skipped: list[str] = []
+    skipped_reason_by_field: dict[str, str] = {}
     overview_parts: list[str] = []
 
     for name, raw in candidates:
         value = (raw or "").strip()
         if not value:
             skipped.append(name)
+            skipped_reason_by_field[name] = "empty_or_missing"
             continue
         used[name] = value
         preview = value.replace("\n", " ")
@@ -287,7 +290,7 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
             preview = f"{preview[:80]}..."
         overview_parts.append(f"{name}({len(value)} chars): {preview}")
 
-    return used, skipped, " | ".join(overview_parts)
+    return used, skipped, " | ".join(overview_parts), skipped_reason_by_field
 
 
 def _validated_sleep_prose(
@@ -994,18 +997,19 @@ def _generate_and_save_diary(
     run_id: str,
 ) -> "DailyLogSummary":
     logging.info("phase_c_diary_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
-    diary_input_fields, skipped_fields, input_overview = build_diary_input_fields(summary)
+    diary_input_fields, skipped_fields, input_overview, skipped_reason_by_field = build_diary_input_fields(summary)
     diary_hash_payload, diary_hash_summary = _build_diary_hash_payload(summary, diary_input_fields)
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(diary_hash_payload)
     previous_input_hash = (summary.diary_input_hash or "").strip() or None
     has_diary = bool((summary.diary or "").strip())
     input_changed = current_input_hash != previous_input_hash
     logging.info(
-        "phase_c_diary_input_summary target_date(JST)=%s run_id=%s used_fields=%s skipped_fields=%s input_overview=%s debug_summary=%s",
+        "phase_c_diary_input_summary target_date(JST)=%s run_id=%s used_fields=%s skipped_fields=%s skipped_reason_by_field=%s input_overview=%s debug_summary=%s",
         summary.target_date,
         run_id,
         sorted(diary_input_fields.keys()),
         skipped_fields,
+        json.dumps(skipped_reason_by_field, ensure_ascii=False, sort_keys=True),
         input_overview,
         json.dumps(
             {
@@ -1114,6 +1118,7 @@ def _notify_phase_c(
 
 
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
+    logging.info("phase_c_start target_date(JST)=%s run_id=%s", target_date, run_id)
     summary = _refresh_daily_log_summary(config, target_date)
     if not summary:
         logging.info("phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]", target_date, run_id, False)
@@ -1146,11 +1151,8 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _run_optional_enrichment("sleep", _generate_and_save_sleep_insights, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    logging.info(
-        "f_risk_runtime_skipped_in_notify target_date(JST)=%s run_id=%s daily_log_write_skipped_for_f_risk=true skip_reason=notify_phase_does_not_send_mail",
-        summary.target_date,
-        run_id,
-    )
+    summary = _run_optional_enrichment("f_risk", _generate_and_save_f_risk, summary)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_diary(config, summary=summary, run_id=run_id)
@@ -1184,6 +1186,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             run_id,
             True,
         )
+    logging.info("phase_c_end target_date(JST)=%s run_id=%s", summary.target_date, run_id)
 
 
 def parse_args() -> argparse.Namespace:

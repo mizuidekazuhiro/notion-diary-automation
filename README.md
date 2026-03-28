@@ -57,6 +57,31 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `OPENAI_API_KEY`
 - `DAILY_LOG_UPSERT_URL`
 - `WORKERS_BEARER_TOKEN`
+- `LOCATION_LOG_DB_ID`
+- `LOCATION_LOG_TIME_PROP`（未設定時 `Time`）
+- `LOCATION_LOG_PLACE_PROP`（未設定時 `Place`）
+
+#### Weather の地点解決（確定仕様）
+- workflow から env が渡っていない場合、secret が存在しても未設定として扱います。
+- 優先順は **Location Log DB の place → Daily Log の Place → Daily Log の Location summary → 東京都** です。
+- debug は secret 値を出さず、`notion_token_present` / `location_log_db_id_present` / `effective_time_prop` / `effective_place_prop` / `query_status` / `fallback_used` を出します。
+- `query_status` は `missing_notion_env` / `notion_error` / `empty_result` / `empty_place` / `ok` を区別します。
+
+#### Expense F の schema 解決方針
+- env 指定があれば env 名を優先します。
+- env 未指定時は DB schema を取得して自動解決します。
+- 候補名: `F/f/F判定`, `Date/日付`, `Received At/受領日時/Timestamp/Created time`, `Merchant/店名/支出先`, `Amount/金額`, `Category/カテゴリ/費目`。
+- `resolved_props` は常に構造化ログ出力し、未解決項目は `resolved=false` で残します。
+- `data_status` は `schema_unresolved` / `query_failed` / `no_matching_rows` / `matched_zero` / `ok` を区別します。
+
+#### Today advice の睡眠 source of truth
+- 睡眠は `mood_advice_generator.py` の `selected_sleep_candidate` を唯一の source of truth とします。
+- renderer へ `today_sleep_context` を渡し、renderer 側で再判定しません。
+- ログは `sleep_candidates` / `selected_sleep_candidate` / `selected_candidate_source` / `renderer_received_sleep_context` / `final_today_sleep_context` を出します。
+
+#### notify 無効時の扱い
+- `email_disabled` は送信 skip 理由のみです。
+- 送信無効でも Weather / Expense F / Sleep insights / F risk / Today advice / Diary の生成保存は実行されます。
 
 #### 役割分離
 - `scripts/sleep_condition_generator.py` は **`sleep_analysis_jp` / `today_condition_forecast_jp` の2項目だけ**生成します。

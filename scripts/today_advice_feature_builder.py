@@ -212,6 +212,8 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
     numeric_targets = [
         "sleep_hours", "sleep_score", "kcal", "protein", "fat", "carb", "spending_total", "task_done_count", "task_drop_count"
     ]
+    numeric_updates: dict[str, Any] = {}
+    derived_cols: dict[str, Any] = {}
     for col in numeric_targets:
         if col not in df:
             continue
@@ -219,14 +221,15 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
         if col.startswith("sleep"):
             series = series.where(df["sleep_valid_flag"].fillna(False))
         baseline = series.rolling(7, min_periods=2).mean().shift(1)
-        df[col] = series
-        df[f"{col}_vs_7d_delta"] = series - baseline
+        numeric_updates[col] = series
+        derived_cols[f"{col}_vs_7d_delta"] = series - baseline
 
-    df["done_vs_7d_delta"] = df["task_done_count"] - df["task_done_count"].rolling(7, min_periods=2).mean().shift(1)
-    df["drop_vs_7d_delta"] = df["task_drop_count"] - df["task_drop_count"].rolling(7, min_periods=2).mean().shift(1)
-    df["spending_vs_7d_delta"] = df["spending_total"] - df["spending_total"].rolling(7, min_periods=2).mean().shift(1)
-    df["sleep_vs_7d_delta"] = df.get("sleep_hours_vs_7d_delta", np.nan)
-    df["sleep_score_vs_7d_delta"] = df.get("sleep_score_vs_7d_delta", np.nan)
+    derived_cols["done_vs_7d_delta"] = df["task_done_count"] - df["task_done_count"].rolling(7, min_periods=2).mean().shift(1)
+    derived_cols["drop_vs_7d_delta"] = df["task_drop_count"] - df["task_drop_count"].rolling(7, min_periods=2).mean().shift(1)
+    derived_cols["spending_vs_7d_delta"] = df["spending_total"] - df["spending_total"].rolling(7, min_periods=2).mean().shift(1)
+    derived_cols["sleep_vs_7d_delta"] = derived_cols.get("sleep_hours_vs_7d_delta", np.nan)
+    derived_cols["sleep_score_vs_7d_delta"] = derived_cols.get("sleep_score_vs_7d_delta", np.nan)
+    df = df.assign(**numeric_updates, **derived_cols)
 
     q = df["spending_total"].dropna()
     threshold = float(q.quantile(0.75)) if len(q) else float("inf")
@@ -235,6 +238,7 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
 
 
     # aliases required by regression/exploratory naming
+    alias_cols: dict[str, Any] = {}
     for src, dst in [
         ("notes_fatigue_flag", "notes_has_fatigue"),
         ("notes_stress_flag", "notes_has_stress"),
@@ -242,10 +246,13 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
         ("notes_sleep_issue_flag", "notes_has_sleep_issue"),
     ]:
         if src in df.columns and dst not in df.columns:
-            df[dst] = df[src].fillna(False).astype(bool)
+            alias_cols[dst] = df[src].fillna(False).astype(bool)
+    if alias_cols:
+        df = df.assign(**alias_cols)
 
     quality_cols = ["notes_present_flag", "meal_logged_flag", "location_present_flag", "sleep_valid_flag"]
     df["data_quality_score"] = df[quality_cols].astype(int).mean(axis=1).round(2)
+    df = df.copy()
     df = _add_temporal_features(df=df, np=np)
     df["forbidden_inputs_used"] = False
     df["forbidden_inputs_used_detail"] = ""
@@ -261,6 +268,8 @@ def _is_weekend(date_text: str) -> bool:
 
 
 def _add_temporal_features(*, df: Any, np: Any) -> Any:
+    import importlib
+    pd = importlib.import_module("pandas")
     lag_periods = (1, 2, 3, 5, 7, 14)
     roll_windows = (3, 5, 7, 14)
     lag_targets = [
@@ -275,6 +284,7 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
         "notes_has_exercise",
         "carb",
     ]
+    derived_cols: dict[str, Any] = {}
     for col in lag_targets:
         if col not in df.columns:
             continue
@@ -282,30 +292,34 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
         if series.dtype == bool:
             series = series.astype(int)
         for lag in lag_periods:
-            df[f"{col}_lag_{lag}"] = series.shift(lag)
+            derived_cols[f"{col}_lag_{lag}"] = series.shift(lag)
         for w in roll_windows:
-            df[f"{col}_rolling_sum_{w}d"] = series.rolling(w, min_periods=1).sum().shift(1)
-            df[f"{col}_rolling_mean_{w}d"] = series.rolling(w, min_periods=1).mean().shift(1)
+            derived_cols[f"{col}_rolling_sum_{w}d"] = series.rolling(w, min_periods=1).sum().shift(1)
+            derived_cols[f"{col}_rolling_mean_{w}d"] = series.rolling(w, min_periods=1).mean().shift(1)
 
-    df["sleep_short_flag"] = (df["sleep_valid_flag"].fillna(False) & (df["sleep_hours"].fillna(99) < 6)).astype(int)
-    df["social_load_flag"] = df["notes_social_load_flag"].fillna(False).astype(int)
-    df["late_work_flag"] = df["notes_has_late_work"].fillna(False).astype(int) if "notes_has_late_work" in df else 0
-    df["exercise_flag"] = df["notes_has_exercise"].fillna(False).astype(int) if "notes_has_exercise" in df else 0
+    derived_cols["sleep_short_flag"] = (df["sleep_valid_flag"].fillna(False) & (df["sleep_hours"].fillna(99) < 6)).astype(int)
+    derived_cols["social_load_flag"] = df["notes_social_load_flag"].fillna(False).astype(int)
+    derived_cols["late_work_flag"] = df["notes_has_late_work"].fillna(False).astype(int) if "notes_has_late_work" in df else 0
+    derived_cols["exercise_flag"] = df["notes_has_exercise"].fillna(False).astype(int) if "notes_has_exercise" in df else 0
+    df = pd.concat([df, pd.DataFrame(derived_cols, index=df.index)], axis=1).copy()
 
+    streak_cols: dict[str, Any] = {}
     for src, out in [
         ("social_load_flag", "social_load_streak"),
         ("sleep_short_flag", "sleep_short_streak"),
         ("late_work_flag", "late_work_streak"),
         ("exercise_flag", "exercise_streak"),
     ]:
-        df[out] = _streak_count(df[src])
-
-    df["sleep_short_x_social_load"] = df["sleep_short_flag"] * df["social_load_flag"]
-    df["fatigue_x_spending_spike"] = df["notes_fatigue_flag"].fillna(False).astype(int) * (df["spending_vs_7d_delta"].fillna(0) > 0).astype(int)
-    df["stress_x_late_work"] = df["notes_stress_flag"].fillna(False).astype(int) * df["late_work_flag"]
-    df["drinking_x_low_sleep"] = df["notes_has_drinking"].fillna(False).astype(int) * df["sleep_short_flag"]
-    df["high_carb_x_low_sleep"] = (df["carb_vs_7d_delta"].fillna(0) > 0).astype(int) * df["sleep_short_flag"]
-    df["exercise_x_recovery"] = df["exercise_flag"] * df["notes_recovery_like_flag"].fillna(False).astype(int)
+        streak_cols[out] = _streak_count(df[src])
+    interaction_cols = {
+        "sleep_short_x_social_load": df["sleep_short_flag"] * df["social_load_flag"],
+        "fatigue_x_spending_spike": df["notes_fatigue_flag"].fillna(False).astype(int) * (df["spending_vs_7d_delta"].fillna(0) > 0).astype(int),
+        "stress_x_late_work": df["notes_stress_flag"].fillna(False).astype(int) * df["late_work_flag"],
+        "drinking_x_low_sleep": df["notes_has_drinking"].fillna(False).astype(int) * df["sleep_short_flag"],
+        "high_carb_x_low_sleep": (df["carb_vs_7d_delta"].fillna(0) > 0).astype(int) * df["sleep_short_flag"],
+        "exercise_x_recovery": df["exercise_flag"] * df["notes_recovery_like_flag"].fillna(False).astype(int),
+    }
+    df = pd.concat([df, pd.DataFrame({**streak_cols, **interaction_cols}, index=df.index)], axis=1).copy()
     return df.replace({np.inf: np.nan, -np.inf: np.nan})
 
 

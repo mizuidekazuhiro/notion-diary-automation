@@ -142,7 +142,10 @@ def test_phase_c_runs_sleep_then_advice_then_diary(monkeypatch) -> None:
         order.append("notify")
         return False
 
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: summary)
+    monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: {"matched": False, "reasons": []})
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", fake_sleep)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", fake_advice)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", fake_diary)
     monkeypatch.setattr(daily_job, "_notify_phase_c", fake_notify)
@@ -171,6 +174,25 @@ def test_email_disabled_does_not_mark_notified(monkeypatch) -> None:
     assert mark_calls == []
 
 
+def test_email_disabled_still_runs_f_risk(monkeypatch) -> None:
+    order: list[str] = []
+    summary = _summary(diary="generated diary", diary_notification_sent=None)
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen", diary_mark_notified_url="mark")
+
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: order.append("weather") or summary)
+    monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: order.append("expense_f") or {"matched": False, "reasons": []})
+    monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: order.append("f_risk") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id: order.append("diary") or summary)
+    monkeypatch.setattr(daily_job, "_notify_phase_c", lambda config, *, summary, run_id: order.append("notify") or False)
+
+    daily_job.run_notify_diary(config, "2026-03-20", "run")
+
+    assert order == ["weather", "expense_f", "sleep", "f_risk", "advice", "diary", "notify"]
+
+
 def test_already_notified_skips_only_notify(monkeypatch) -> None:
     order: list[str] = []
     summary = _summary(diary="generated diary", diary_notification_sent=True)
@@ -196,7 +218,7 @@ def test_diary_existing_with_same_hash_skips(monkeypatch) -> None:
     summary = _summary(diary="existing diary")
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     save_calls: list[dict[str, object]] = []
-    diary_input_fields, _, _ = daily_job.build_diary_input_fields(summary)
+    diary_input_fields, _, _, _ = daily_job.build_diary_input_fields(summary)
     hash_payload, _ = daily_job._build_diary_hash_payload(summary, diary_input_fields)
     current_hash, _, _ = daily_job._build_input_hash(hash_payload)
     summary = _summary(diary="existing diary", diary_input_hash=current_hash)

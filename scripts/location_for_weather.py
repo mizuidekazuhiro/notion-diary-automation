@@ -69,14 +69,17 @@ def _is_valid_coordinate(*, latitude: Optional[float], longitude: Optional[float
 def _query_location_log_place(target_date: str, now: datetime) -> tuple[dict[str, Any], dict[str, Any]]:
     token = os.getenv("NOTION_TOKEN", "").strip()
     location_log_db_id = os.getenv("LOCATION_LOG_DB_ID", "").strip()
-    if not token or not location_log_db_id:
-        return {}, {"enabled": False, "reason": "missing_notion_env"}
-
     date_property_name = (os.getenv("LOCATION_LOG_TIME_PROP", "").strip() or "Time")
-    place_label_property_name = (os.getenv("LOCATION_LOG_PLACE_LABEL_PROP", "").strip() or "PlaceLabel")
     place_property_name = (os.getenv("LOCATION_LOG_PLACE_PROP", "").strip() or "Place")
-    latitude_property_name = (os.getenv("LOCATION_LOG_LATITUDE_PROP", "").strip() or "Latitude (raw)")
-    longitude_property_name = (os.getenv("LOCATION_LOG_LONGITUDE_PROP", "").strip() or "Longitude (raw)")
+    if not token or not location_log_db_id:
+        return {}, {
+            "query_status": "missing_notion_env",
+            "notion_token_present": bool(token),
+            "location_log_db_id_present": bool(location_log_db_id),
+            "effective_time_prop": date_property_name,
+            "effective_place_prop": place_property_name,
+        }
+
     day_start = datetime.fromisoformat(f"{target_date}T00:00:00+09:00")
     day_end = day_start + timedelta(days=1)
     window_end = min(now.astimezone(JST), day_end)
@@ -100,158 +103,51 @@ def _query_location_log_place(target_date: str, now: datetime) -> tuple[dict[str
             timeout=20,
         )
         if response.status_code >= 400:
-            return {}, {"enabled": True, "reason": f"notion_error_{response.status_code}"}
+            return {}, {
+                "query_status": "notion_error",
+                "status_code": response.status_code,
+                "notion_token_present": True,
+                "location_log_db_id_present": True,
+                "effective_time_prop": date_property_name,
+                "effective_place_prop": place_property_name,
+            }
         data = response.json()
         results = data.get("results", [])
-        used_property_names = {
-            "time": date_property_name,
-            "place_label": place_label_property_name,
-            "place": place_property_name,
-            "latitude": latitude_property_name,
-            "longitude": longitude_property_name,
+        debug_common = {
+            "query_status": "ok",
+            "notion_token_present": True,
+            "location_log_db_id_present": True,
+            "effective_time_prop": date_property_name,
+            "effective_place_prop": place_property_name,
+            "candidate_count": len(results),
         }
-        missing_property_names: set[str] = set()
+        if not results:
+            return {}, {**debug_common, "query_status": "empty_result"}
         for page in results:
             props = page.get("properties", {})
             page_id = page.get("id")
-            place_label_raw = props.get(place_label_property_name)
             place_raw = props.get(place_property_name)
-            latitude_raw = props.get(latitude_property_name)
-            longitude_raw = props.get(longitude_property_name)
-            if place_label_raw is None:
-                missing_property_names.add(place_label_property_name)
-            if place_raw is None:
-                missing_property_names.add(place_property_name)
-            if latitude_raw is None:
-                missing_property_names.add(latitude_property_name)
-            if longitude_raw is None:
-                missing_property_names.add(longitude_property_name)
-            place_label = _safe_text(_rich_text_plain(place_label_raw))
             place = _safe_text(_rich_text_plain(place_raw))
-            latitude = _parse_number(latitude_raw)
-            longitude = _parse_number(longitude_raw)
-            has_valid_coordinates = _is_valid_coordinate(latitude=latitude, longitude=longitude)
-            selected_label = place_label or place
-            if has_valid_coordinates and selected_label:
-                return {
-                    "name": selected_label,
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "resolution_method": "coordinates_direct",
-                }, {
-                    "enabled": True,
-                    "source": "location_log_db",
-                    "candidate_count": len(results),
-                    "selected_page_id": page_id,
-                    "selected_label": selected_label,
-                    "used_property_names": used_property_names,
-                    "resolution_method": "coordinates_direct",
-                    "coordinates_used": True,
-                    "geocoding_used": False,
-                }
-            if has_valid_coordinates and not selected_label:
-                continue
-            if latitude is not None or longitude is not None:
-                invalid_parts: list[str] = []
-                if latitude is None or not (-90 <= latitude <= 90):
-                    invalid_parts.append("latitude")
-                if longitude is None or not (-180 <= longitude <= 180):
-                    invalid_parts.append("longitude")
-                if place_label:
-                    return {
-                        "name": place_label,
-                        "latitude": None,
-                        "longitude": None,
-                        "resolution_method": "place_label_geocoding",
-                    }, {
-                        "enabled": True,
-                        "source": "location_log_db",
-                        "candidate_count": len(results),
-                        "selected_page_id": page_id,
-                        "selected_label": place_label,
-                        "used_property_names": used_property_names,
-                        "resolution_method": "place_label_geocoding",
-                        "coordinates_used": False,
-                        "geocoding_used": True,
-                        "invalid_coordinates": invalid_parts,
-                    }
-                if place:
-                    return {
-                        "name": place,
-                        "latitude": None,
-                        "longitude": None,
-                        "resolution_method": "place_geocoding",
-                    }, {
-                        "enabled": True,
-                        "source": "location_log_db",
-                        "candidate_count": len(results),
-                        "selected_page_id": page_id,
-                        "selected_label": place,
-                        "used_property_names": used_property_names,
-                        "resolution_method": "place_geocoding",
-                        "coordinates_used": False,
-                        "geocoding_used": True,
-                        "invalid_coordinates": invalid_parts,
-                    }
-                return {}, {
-                    "enabled": True,
-                    "source": "location_log_db",
-                    "reason": "invalid_coordinates",
-                    "candidate_count": len(results),
-                    "selected_page_id": page_id,
-                    "used_property_names": used_property_names,
-                    "coordinates_used": False,
-                    "geocoding_used": False,
-                    "invalid_coordinates": invalid_parts,
-                }
-            if place_label:
-                return {
-                    "name": place_label,
-                    "latitude": None,
-                    "longitude": None,
-                    "resolution_method": "place_label_geocoding",
-                }, {
-                    "enabled": True,
-                    "source": "location_log_db",
-                    "candidate_count": len(results),
-                    "selected_page_id": page_id,
-                    "selected_label": place_label,
-                    "used_property_names": used_property_names,
-                    "resolution_method": "place_label_geocoding",
-                    "coordinates_used": False,
-                    "geocoding_used": True,
-                }
             if place:
                 return {
                     "name": place,
                     "latitude": None,
                     "longitude": None,
                     "resolution_method": "place_geocoding",
-                }, {
-                    "enabled": True,
-                    "source": "location_log_db",
-                    "candidate_count": len(results),
-                    "selected_page_id": page_id,
-                    "selected_label": place,
-                    "used_property_names": used_property_names,
-                    "resolution_method": "place_geocoding",
-                    "coordinates_used": False,
-                    "geocoding_used": True,
-                }
-        reason = "no_usable_row"
-        if results and missing_property_names:
-            reason = "missing_property"
+                }, {**debug_common, "selected_page_id": page_id, "selected_label": place, "query_status": "ok"}
         return {}, {
-            "enabled": True,
-            "reason": reason,
-            "candidate_count": len(results),
-            "used_property_names": used_property_names,
-            "missing_property_names": sorted(missing_property_names),
-            "coordinates_used": False,
-            "geocoding_used": False,
+            **debug_common,
+            "query_status": "empty_place",
         }
     except Exception as exc:  # noqa: BLE001
-        return {}, {"enabled": True, "reason": "exception", "error": str(exc)}
+        return {}, {
+            "query_status": "notion_error",
+            "error": str(exc),
+            "notion_token_present": bool(token),
+            "location_log_db_id_present": bool(location_log_db_id),
+            "effective_time_prop": date_property_name,
+            "effective_place_prop": place_property_name,
+        }
 
 
 def _rich_text_plain(prop: dict[str, Any] | None) -> str:
@@ -283,6 +179,7 @@ def resolve_location_for_weather(*, summary: Any, now: Optional[datetime] = None
     resolved, location_debug = _query_location_log_place(target_date, now)
     debug["location_log_query"] = location_debug
     if resolved.get("name") or (resolved.get("latitude") is not None and resolved.get("longitude") is not None):
+        debug["fallback_used"] = "none"
         return ResolvedLocation(
             name=resolved.get("name"),
             source="location_log_db",
@@ -292,11 +189,13 @@ def resolve_location_for_weather(*, summary: Any, now: Optional[datetime] = None
             longitude=resolved.get("longitude"),
             resolution_method=resolved.get("resolution_method"),
         )
-    debug["fallback"] = "location_log_db_only"
-    logging.info("weather_location_unresolved debug=%s", debug)
-    return ResolvedLocation(
-        name=None,
-        source="location_log_db",
-        skip_reason=location_debug.get("reason", "location_log_db_unavailable"),
-        debug_summary=debug,
-    )
+    place = _safe_text(getattr(summary, "place", None))
+    if place:
+        debug["fallback_used"] = "daily_log_place"
+        return ResolvedLocation(name=place, source="daily_log_place", skip_reason=None, debug_summary=debug, resolution_method="place_geocoding")
+    location_summary = _safe_text(getattr(summary, "location_summary", None))
+    if location_summary:
+        debug["fallback_used"] = "daily_log_location_summary"
+        return ResolvedLocation(name=location_summary, source="daily_log_location_summary", skip_reason=None, debug_summary=debug, resolution_method="place_geocoding")
+    debug["fallback_used"] = "tokyo_default"
+    return ResolvedLocation(name="東京都", source="fallback_default_tokyo", skip_reason=None, debug_summary=debug, resolution_method="place_geocoding")

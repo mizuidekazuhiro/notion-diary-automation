@@ -89,11 +89,24 @@ def test_expense_f_missing_env_includes_missing_keys(monkeypatch: pytest.MonkeyP
 
 def test_expense_f_uses_default_props_and_ignores_category(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Resp:
-        status_code = 200
+        def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+            self.status_code = status_code
+            self._payload = payload
 
-        @staticmethod
-        def json() -> dict[str, object]:
-            return {
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    monkeypatch.setenv("NOTION_TOKEN", "token")
+    monkeypatch.setenv("EXPENSES_DB_ID", "db")
+    monkeypatch.delenv("EXPENSE_CATEGORY_PROP", raising=False)
+    monkeypatch.setattr(
+        "scripts.expense_f_aggregator.requests.get",
+        lambda *args, **kwargs: _Resp({"properties": {"F": {}, "Date": {}, "Received At": {}, "Merchant": {}, "Amount": {}, "Category": {}}}),
+    )
+    monkeypatch.setattr(
+        "scripts.expense_f_aggregator.requests.post",
+        lambda *args, **kwargs: _Resp(
+            {
                 "results": [
                     {
                         "properties": {
@@ -105,18 +118,57 @@ def test_expense_f_uses_default_props_and_ignores_category(monkeypatch: pytest.M
                 ],
                 "has_more": False,
             }
-
-    monkeypatch.setenv("NOTION_TOKEN", "token")
-    monkeypatch.setenv("EXPENSES_DB_ID", "db")
-    monkeypatch.delenv("EXPENSE_CATEGORY_PROP", raising=False)
-    monkeypatch.setattr("scripts.expense_f_aggregator.requests.post", lambda *args, **kwargs: _Resp())
+        ),
+    )
 
     result = aggregate_daily_expense_f("2026-03-20")
 
     assert result.available is True
     assert result.count == 1
     assert result.total == 1234
-    assert result.debug_summary["resolved_props"]["category"] == "Category"
+    assert result.debug_summary["resolved_props"]["category"]["resolved_name"] == "Category"
+
+
+def test_expense_f_schema_alias_japanese_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Resp:
+        def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    monkeypatch.setenv("NOTION_TOKEN", "token")
+    monkeypatch.setenv("EXPENSES_DB_ID", "db")
+    for key in ["EXPENSE_F_PROP", "EXPENSE_DATE_PROP", "EXPENSE_RECEIVED_AT_PROP", "EXPENSE_MERCHANT_PROP", "EXPENSE_AMOUNT_PROP", "EXPENSE_CATEGORY_PROP"]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(
+        "scripts.expense_f_aggregator.requests.get",
+        lambda *args, **kwargs: _Resp({"properties": {"F判定": {}, "日付": {}, "受領日時": {}, "店名": {}, "金額": {}, "費目": {}}}),
+    )
+    monkeypatch.setattr(
+        "scripts.expense_f_aggregator.requests.post",
+        lambda *args, **kwargs: _Resp({"results": [], "has_more": False}),
+    )
+    result = aggregate_daily_expense_f("2026-03-20")
+    assert result.data_status == "no_matching_rows"
+    assert result.debug_summary["resolved_props"]["f"]["resolved_name"] == "F判定"
+
+
+def test_expense_f_schema_unresolved_distinguishes_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Resp:
+        def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    monkeypatch.setenv("NOTION_TOKEN", "token")
+    monkeypatch.setenv("EXPENSES_DB_ID", "db")
+    monkeypatch.setattr("scripts.expense_f_aggregator.requests.get", lambda *args, **kwargs: _Resp({"properties": {"日付": {}, "店名": {}, "金額": {}}}))
+    result = aggregate_daily_expense_f("2026-03-20")
+    assert result.data_status == "schema_unresolved"
 
 
 def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.MonkeyPatch) -> None:
