@@ -675,6 +675,9 @@ def _generate_and_save_weather(
     weather_hash_payload = {
         "target_date": summary.target_date,
         "location_name": resolved_location.name,
+        "location_latitude": resolved_location.latitude,
+        "location_longitude": resolved_location.longitude,
+        "location_resolution_method": resolved_location.resolution_method,
         "location_source": resolved_location.source,
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(weather_hash_payload)
@@ -682,11 +685,14 @@ def _generate_and_save_weather(
     has_weather = bool((summary.weather_summary or "").strip())
     input_changed = current_input_hash != previous_input_hash
     logging.info(
-        "phase_c_weather_input_summary target_date(JST)=%s run_id=%s has_weather=%s location=%s location_source=%s debug_summary=%s",
+        "phase_c_weather_input_summary target_date(JST)=%s run_id=%s has_weather=%s location=%s lat=%s lon=%s resolution_method=%s location_source=%s debug_summary=%s",
         summary.target_date,
         run_id,
         has_weather,
         resolved_location.name,
+        resolved_location.latitude,
+        resolved_location.longitude,
+        resolved_location.resolution_method,
         resolved_location.source,
         json.dumps(
             {
@@ -716,7 +722,12 @@ def _generate_and_save_weather(
         refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
         return refreshed_summary or summary
 
-    weather = fetch_weather_for_date(location_label=resolved_location.name, target_date=summary.target_date)
+    weather = fetch_weather_for_date(
+        location_label=resolved_location.name or "",
+        target_date=summary.target_date,
+        latitude=resolved_location.latitude,
+        longitude=resolved_location.longitude,
+    )
     if not weather.available:
         save_result = _save_daily_log_fields(
             config,

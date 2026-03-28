@@ -48,25 +48,36 @@ def _to_iso_utc() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
-def fetch_weather_for_date(*, location_label: str, target_date: str) -> WeatherResult:
+def fetch_weather_for_date(
+    *,
+    location_label: str,
+    target_date: str,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+) -> WeatherResult:
     retrieved_at = _to_iso_utc()
     try:
-        geo_resp = requests.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": location_label, "count": 1, "language": "ja", "format": "json"},
-            timeout=20,
-        )
-        if geo_resp.status_code >= 400:
-            return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "geocode", "status": geo_resp.status_code}, "weather_api_failed")
-        geo_data = geo_resp.json()
-        results = geo_data.get("results") or []
-        if not results:
-            return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "geocode", "reason": "no_results"}, "weather_api_failed")
-
-        first = results[0]
-        lat = first.get("latitude")
-        lon = first.get("longitude")
-        resolved_name = first.get("name") or location_label
+        lat = latitude
+        lon = longitude
+        resolved_name = location_label
+        used_geocoding = False
+        if lat is None or lon is None:
+            used_geocoding = True
+            geo_resp = requests.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": location_label, "count": 1, "language": "ja", "format": "json"},
+                timeout=20,
+            )
+            if geo_resp.status_code >= 400:
+                return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "geocode", "status": geo_resp.status_code}, "weather_api_failed")
+            geo_data = geo_resp.json()
+            results = geo_data.get("results") or []
+            if not results:
+                return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "geocode", "reason": "no_results"}, "geocoding_no_results")
+            first = results[0]
+            lat = first.get("latitude")
+            lon = first.get("longitude")
+            resolved_name = first.get("name") or location_label
 
         forecast_resp = requests.get(
             "https://api.open-meteo.com/v1/forecast",
@@ -103,6 +114,7 @@ def fetch_weather_for_date(*, location_label: str, target_date: str) -> WeatherR
                 "lat": lat,
                 "lon": lon,
                 "resolved_name": resolved_name,
+                "used_geocoding": used_geocoding,
                 "weather_code": code,
             },
         )
