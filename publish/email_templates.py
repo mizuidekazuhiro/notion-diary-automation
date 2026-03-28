@@ -291,6 +291,22 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     f_risk_score = _normalize_number(payload.get("f_risk_score") if isinstance(payload, Mapping) else None)
     f_risk_reason = _optional_text(payload.get("f_risk_reason") if isinstance(payload, Mapping) else None)
     f_risk_patterns = _optional_text(payload.get("f_risk_matched_patterns") if isinstance(payload, Mapping) else None)
+    expense_f_alert_payload = payload.get("expense_f_alert") if isinstance(payload, Mapping) else None
+    expense_f_alert_matched = False
+    expense_f_alert_title = "注意すべき支出パターン"
+    expense_f_alert_summary = ""
+    expense_f_alert_reasons: list[str] = []
+    if isinstance(expense_f_alert_payload, Mapping):
+        expense_f_alert_matched = bool(expense_f_alert_payload.get("matched"))
+        title_text = _optional_text(expense_f_alert_payload.get("title"))
+        summary_text = _optional_text(expense_f_alert_payload.get("summary"))
+        reasons_raw = expense_f_alert_payload.get("reasons")
+        expense_f_alert_title = title_text or expense_f_alert_title
+        expense_f_alert_summary = summary_text or ""
+        if isinstance(reasons_raw, list):
+            expense_f_alert_reasons = [
+                str(item).strip() for item in reasons_raw if isinstance(item, str) and str(item).strip()
+            ]
     weather_location = _optional_text(payload.get("weather_location") if isinstance(payload, Mapping) else None)
     weather_summary = _optional_text(payload.get("weather_summary") if isinstance(payload, Mapping) else None)
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
@@ -350,6 +366,22 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             "<div style=\"font-size:13px;font-weight:700;color:#9a3412;margin-bottom:8px;\">F Risk Alert</div>"
             f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(f_risk_alert)}</div>"
             f"{detail_html}"
+            "</div>"
+        )
+    expense_f_alert_html = ""
+    if expense_f_alert_matched:
+        reasons_html = "".join(
+            f"<li style=\"margin:4px 0;\">{html.escape(reason)}</li>"
+            for reason in expense_f_alert_reasons
+        )
+        if not reasons_html:
+            reasons_html = "<li style=\"margin:4px 0;\">該当パターンあり</li>"
+        expense_f_alert_html = (
+            "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#fff7ed;border:1px solid #fed7aa;\">"
+            f"<div style=\"font-size:13px;font-weight:700;color:#9a3412;margin-bottom:8px;\">{html.escape(expense_f_alert_title)}</div>"
+            f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(expense_f_alert_summary)}</div>"
+            f"<ul style=\"margin:10px 0 0 18px;padding:0;color:#7c2d12;font-size:13px;\">{reasons_html}</ul>"
+            "<div style=\"font-size:12px;color:#9a3412;margin-top:8px;\">大きな支出判断は一度保留してください。</div>"
             "</div>"
         )
 
@@ -508,6 +540,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             {weather_html}
             {today_advice_html}
             {f_risk_html}
+            {expense_f_alert_html}
 
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
@@ -671,6 +704,22 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     f_risk_score = _normalize_number(payload.get("f_risk_score") if isinstance(payload, Mapping) else None)
     f_risk_reason = _optional_text(payload.get("f_risk_reason") if isinstance(payload, Mapping) else None)
     f_risk_patterns = _optional_text(payload.get("f_risk_matched_patterns") if isinstance(payload, Mapping) else None)
+    expense_f_alert_payload = payload.get("expense_f_alert") if isinstance(payload, Mapping) else None
+    expense_f_alert_matched = False
+    expense_f_alert_title = "注意すべき支出パターン"
+    expense_f_alert_summary = ""
+    expense_f_alert_reasons: list[str] = []
+    if isinstance(expense_f_alert_payload, Mapping):
+        expense_f_alert_matched = bool(expense_f_alert_payload.get("matched"))
+        title_text = _optional_text(expense_f_alert_payload.get("title"))
+        summary_text = _optional_text(expense_f_alert_payload.get("summary"))
+        reasons_raw = expense_f_alert_payload.get("reasons")
+        expense_f_alert_title = title_text or expense_f_alert_title
+        expense_f_alert_summary = summary_text or ""
+        if isinstance(reasons_raw, list):
+            expense_f_alert_reasons = [
+                str(item).strip() for item in reasons_raw if isinstance(item, str) and str(item).strip()
+            ]
     weather_location = _optional_text(payload.get("weather_location") if isinstance(payload, Mapping) else None)
     weather_summary = _optional_text(payload.get("weather_summary") if isinstance(payload, Mapping) else None)
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
@@ -731,6 +780,13 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             lines.append(f"- matched patterns: {f_risk_patterns}")
         if f_risk_reason:
             lines.append(f"- reason: {f_risk_reason}")
+    if expense_f_alert_matched:
+        lines += ["", expense_f_alert_title, expense_f_alert_summary]
+        if expense_f_alert_reasons:
+            lines += [f"- {reason}" for reason in expense_f_alert_reasons]
+        else:
+            lines.append("- 該当パターンあり")
+        lines.append("- 大きな支出判断は一度保留してください。")
 
     lines += [
         "",

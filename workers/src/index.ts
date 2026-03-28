@@ -3569,7 +3569,13 @@ async function handleDailyLogGenerateDiary(
     !diaryGeneratedAt &&
     !todayAdviceGeneratedAt
   ) {
-    return badRequest("no updatable content");
+    return jsonResponse({
+      ok: true,
+      found: true,
+      target_date: targetDate,
+      updated: false,
+      reason: "no_updatable_content",
+    });
   }
 
   const queryResponse = await notionFetch(env, `/databases/${env.DAILY_LOG_DB_ID}/query`, {
