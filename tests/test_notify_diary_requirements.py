@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 
 from publish.email_templates import render_daily_log_text
-from scripts.note_batch_labeler import parse_note_label_json
+from scripts.note_batch_labeler import parse_note_label_json, parse_note_label_json_with_meta
 from scripts.today_advice_pattern_analyzer import LEAKAGE_COLUMNS
 
 
@@ -27,6 +27,20 @@ def test_unknown_is_not_collapsed_to_neutral() -> None:
     raw = '[{"date":"2026-03-20","signals":[],"meta":{"parse_quality":"low"}}]'
     got = parse_note_label_json(raw, [{"date": "2026-03-20", "notes": "..."}])[0]
     assert got.sentiment_label == "unknown"
+
+
+def test_note_parser_detects_id_mismatch_and_missing() -> None:
+    raw = '{"rows":[{"id":"note_001","date":"2026-03-20","signals":[{"tag":"fatigue","category":"state","polarity":"negative","intensity":"low","confidence":0.4,"evidence_text":""}]},{"id":"unexpected","date":"2026-03-20","signals":[]}]}'
+    parsed, meta = parse_note_label_json_with_meta(
+        raw,
+        [
+            {"id": "note_001", "date": "2026-03-20", "notes": "疲れた"},
+            {"id": "note_002", "date": "2026-03-21", "notes": "進んだ"},
+        ],
+    )
+    assert len(parsed) == 2
+    assert "unexpected" in meta["unknown_ids"]
+    assert "note_002" in meta["missing_ids"]
 
 
 def test_leakage_columns_configured() -> None:

@@ -1162,6 +1162,22 @@ def generate_today_advice(
             "signals_detected_count": notes_signals_detected_count,
             "notes_label_quality_low": bool(notes_parse_success_rate < 0.5),
         }
+        exclusion_reasons: list[str] = []
+        if notes_payload["notes_parse_success_rate"] < 0.8:
+            exclusion_reasons.append("parse_success_rate_low")
+        if notes_payload["unknown_rate"] > 0.4:
+            exclusion_reasons.append("unknown_rate_high")
+        if note_label_audit.get("date_match_failure_count", 0) > 0:
+            exclusion_reasons.append("date_match_failure")
+        if note_label_audit.get("duplicate_ids"):
+            exclusion_reasons.append("duplicate_ids")
+        if note_label_audit.get("missing_ids"):
+            exclusion_reasons.append("missing_ids")
+        if note_label_audit.get("unknown_ids"):
+            exclusion_reasons.append("unknown_ids")
+        notes_quality_used = "low" if exclusion_reasons else "high"
+        notes_payload["notes_quality_used"] = notes_quality_used
+        notes_payload["exclusion_reason"] = exclusion_reasons
         audit.put("notes_labeling", notes_payload)
         audit.info(
             "[TodayAdvice][Notes] total=%s non_empty=%s api_calls=%s labeled=%s fallback_unknown=%s",
@@ -1195,6 +1211,16 @@ def generate_today_advice(
             notes_payload["tag_extract_failed_count"],
             notes_payload["parse_low_confidence_count"],
         )
+        audit.info(
+            "[Notes] notes_quality_used=%s exclusion_reason=%s notes_based_features_included_count=%s notes_based_features_excluded_count=%s",
+            notes_quality_used,
+            safe_json(exclusion_reasons),
+            0 if notes_quality_used == "low" else len(note_labels),
+            len(note_labels) if notes_quality_used == "low" else 0,
+        )
+        if notes_quality_used == "low":
+            note_labels = {d: type(label)(**{**label.__dict__, "sentiment_label": "unknown", "sentiment_score": 0, "fatigue_flag": False, "stress_flag": False, "social_load_flag": False, "achievement_flag": False, "self_care_flag": False, "sleep_issue_flag": False, "signals": [], "derived_flags": {}, "confidence": "low", "parse_quality": "low", "no_signal_note": True, "tag_extract_failed": True, "parse_low_confidence": True}) for d, label in note_labels.items()}
+            audit.info("[Notes] excluded_from_today_advice=true")
         audit.info(
             "[TodayAdvice][Notes] top_tags=%s matched_dates_count=%s",
             safe_json(notes_payload["top_tags"]),
@@ -1351,7 +1377,7 @@ def generate_today_advice(
         )
         today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")
         today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
-        today_sleep_score = today_summary.sleep_score
+        today_sleep_score = analysis_json.get("today_sleep_context", {}).get("sleep_score")
         today_condition_flags = {
             "prev_sleep_lt_6h": bool(today_sleep_hours is not None and today_sleep_hours < 6),
             "prev_bedtime_after_0100": bool(today_bedtime is not None and today_bedtime >= "01:00"),
@@ -1376,6 +1402,8 @@ def generate_today_advice(
         }
         audit.put("today_match", today_match_payload)
         final_sleep_context = analysis_json.get("today_sleep_context", {})
+        audit.put("today_sleep_context", final_sleep_context)
+        audit.info("[Sleep] final_today_sleep_context=%s", safe_json(final_sleep_context))
         audit.info(
             "[TodayAdvice][SleepAvailability] sleep_available=%s reason=%s duration_source=%s selected_candidate_date=%s",
             final_sleep_context.get("sleep_available"),

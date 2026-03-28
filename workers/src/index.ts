@@ -189,6 +189,7 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
     { name: "Meal summary", type: "rich_text" },
+    { name: "Weather", type: "rich_text" },
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: "Mood", type: "select" },
@@ -296,6 +297,10 @@ function healthCheck(): Response {
   return new Response(JSON.stringify({ status: "ok" }), {
     headers: jsonHeaders,
   });
+}
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), { status, headers: jsonHeaders });
 }
 
 function createHtmlPage(title: string, body: string): Response {
@@ -3559,11 +3564,13 @@ async function handleDailyLogGenerateDiary(
     typeof payload.today_advice_generated_at === "string"
       ? payload.today_advice_generated_at.trim()
       : "";
+  const weatherText = typeof payload.weather === "string" ? payload.weather.trim() : "";
   if (
     !diary &&
     !sleepAnalysisJp &&
     !todayConditionForecastJp &&
     !todayAdvice &&
+    weatherText === "" &&
     !diaryInputHash &&
     !todayAdviceInputHash &&
     !diaryGeneratedAt &&
@@ -3595,10 +3602,7 @@ async function handleDailyLogGenerateDiary(
   const queryData = await queryResponse.json();
   const page = (queryData.results ?? [])[0];
   if (!page?.id) {
-    return new Response(
-      JSON.stringify({ ok: true, found: false, target_date: targetDate, updated: false, reason: "not_found" }),
-      { headers: jsonHeaders },
-    );
+    return jsonResponse({ ok: true, found: false, target_date: targetDate, updated: false, reason: "not_found" });
   }
 
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
@@ -3608,6 +3612,9 @@ async function handleDailyLogGenerateDiary(
   }
   if (todayAdvice) {
     updateProperties["Today advice"] = createRichTextPropertyWithLimit(todayAdvice, DIARY_RICH_TEXT_LIMIT);
+  }
+  if (hasPropertyType(dailyLogProperties, "Weather", "rich_text")) {
+    updateProperties["Weather"] = createRichTextProperty(weatherText);
   }
   const diaryInputHashPropertyName = getDiaryInputHashPropertyName(env);
   if (diaryInputHash && hasPropertyType(dailyLogProperties, diaryInputHashPropertyName, "rich_text")) {
@@ -3694,17 +3701,14 @@ async function handleDailyLogGenerateDiary(
     return notionErrorResponse(updateResponse, "handleDailyLogGenerateDiary.update");
   }
 
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      found: true,
-      target_date: targetDate,
-      page_id: page.id,
-      updated: true,
-      reason: "updated",
-    }),
-    { headers: jsonHeaders },
-  );
+  return jsonResponse({
+    ok: true,
+    found: true,
+    target_date: targetDate,
+    page_id: page.id,
+    updated: true,
+    reason: "updated",
+  });
 }
 
 async function handleDailyLogMarkDiaryNotified(

@@ -62,6 +62,14 @@ def resolve_sleep_duration_minutes(
     sleep_end: object,
     raw_sleep_duration_min: object,
 ) -> SleepDurationResolution:
+    raw = _safe_float(raw_sleep_duration_min)
+    if raw is not None and raw > 0:
+        return SleepDurationResolution(
+            resolved_sleep_duration_min=raw,
+            duration_source="canonical_raw_duration",
+            invalid_reason=None,
+        )
+
     start = parse_sleep_datetime(sleep_start)
     end = parse_sleep_datetime(sleep_end)
     if start and end:
@@ -78,23 +86,17 @@ def resolve_sleep_duration_minutes(
             invalid_reason=None,
         )
 
-    raw = _safe_float(raw_sleep_duration_min)
-    if raw is None:
+    if raw is not None and raw <= 0:
         return SleepDurationResolution(
             resolved_sleep_duration_min=None,
-            duration_source="missing",
-            invalid_reason="missing_duration",
-        )
-    if raw <= 0:
-        return SleepDurationResolution(
-            resolved_sleep_duration_min=None,
-            duration_source="raw_duration",
+            duration_source="canonical_raw_duration",
             invalid_reason="duration_non_positive",
         )
+
     return SleepDurationResolution(
-        resolved_sleep_duration_min=raw,
-        duration_source="raw_duration",
-        invalid_reason=None,
+        resolved_sleep_duration_min=None,
+        duration_source="missing",
+        invalid_reason="missing_duration",
     )
 
 

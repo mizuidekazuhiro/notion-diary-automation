@@ -186,20 +186,34 @@ def _normalize_date_key(value: object) -> str:
 
 def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[str, str]]) -> tuple[list[NoteLabel], dict[str, Any]]:
     fallback = {}
-    input_by_date: dict[str, str] = {}
+    row_key_to_date: dict[str, str] = {}
+    date_to_keys: dict[str, list[str]] = {}
+    input_ids: set[str] = set()
     for row in input_rows:
+        row_id = str(row.get("id") or "").strip()
         raw_date = str(row.get("date"))
         normalized = _normalize_date_key(raw_date)
-        fallback[normalized or raw_date] = neutral_label(raw_date)
-        input_by_date[normalized or raw_date] = raw_date
+        key = row_id or normalized or raw_date
+        fallback[key] = neutral_label(raw_date)
+        row_key_to_date[key] = raw_date
+        normalized_date_key = normalized or raw_date
+        date_to_keys.setdefault(normalized_date_key, []).append(key)
+        if row_id:
+            input_ids.add(row_id)
     meta: dict[str, Any] = {
         "parse_error": False,
         "empty_response": False,
         "matched_dates": set(),
+        "matched_ids": set(),
         "schema_mismatch": False,
         "unmatched_response_dates": set(),
         "unmatched_input_dates": set(),
         "matched_dates_count": 0,
+        "duplicate_ids": set(),
+        "unknown_ids": set(),
+        "missing_ids": set(),
+        "input_count": len(input_rows),
+        "output_count": 0,
     }
     if not str(raw_text or "").strip():
         meta["empty_response"] = True
@@ -223,27 +237,69 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
     for row in rows:
         if not isinstance(row, Mapping):
             continue
+        row_id = str(row.get("id") or "").strip()
         raw_date = str(row.get("date") or "")
         date = _normalize_date_key(raw_date)
-        if date not in fallback:
-            if date:
-                meta["unmatched_response_dates"].add(date)
-            continue
-        canonical_date = input_by_date.get(date, date)
-        fallback[date] = _normalize_result(canonical_date, row)
+        key = row_id or date
+        if row_id:
+            if row_id in meta["matched_ids"]:
+                meta["duplicate_ids"].add(row_id)
+                continue
+            if row_id not in input_ids:
+                meta["unknown_ids"].add(row_id)
+                continue
+        if key not in fallback:
+            if date and date_to_keys.get(date):
+                candidate_keys = date_to_keys.get(date, [])
+                if len(candidate_keys) == 1:
+                    key = candidate_keys[0]
+            if key not in fallback:
+                if date:
+                    meta["unmatched_response_dates"].add(date)
+                continue
+        canonical_date = row_key_to_date.get(key, date)
+        fallback[key] = _normalize_result(canonical_date, row)
         meta["matched_dates"].add(canonical_date)
+        if row_id:
+            meta["matched_ids"].add(row_id)
+    if input_ids:
+        meta["missing_ids"] = set(input_ids) - set(meta["matched_ids"])
+    meta["output_count"] = len(rows)
     parsed = []
     for row in input_rows:
+        row_id = str(row.get("id") or "").strip()
         raw_date = str(row.get("date"))
-        normalized = _normalize_date_key(raw_date) or raw_date
-        parsed.append(fallback[normalized])
+        normalized = _normalize_date_key(raw_date)
+        key = row_id or normalized or raw_date
+        parsed.append(fallback[key])
     meta["matched_dates_count"] = len(set(meta.get("matched_dates") or set()))
-    meta["unmatched_input_dates"] = set(input_by_date.values()) - set(meta.get("matched_dates") or set())
+    meta["unmatched_input_dates"] = set(row_key_to_date.values()) - set(meta.get("matched_dates") or set())
     return parsed, meta
 
 
+def _rule_based_note_label(row: Mapping[str, str]) -> NoteLabel:
+    date = str(row.get("date") or "")
+    text = str(row.get("notes") or "")
+    patterns = {
+        "fatigue": ["疲れた", "眠い", "だるい"],
+        "stress": ["しんどい", "面倒", "後悔", "微妙", "イライラ"],
+        "achievement": ["進んだ", "はかどった", "できた", "頑張れた"],
+        "self_care": ["ジム", "休んだ", "早く寝た"],
+        "sleep_issue": ["遅くまで起きた", "寝不足", "早く寝たかった"],
+        "social_load": ["飲み会", "会食", "人と会って疲れた"],
+    }
+    tags: list[str] = []
+    for tag, words in patterns.items():
+        if any(word in text for word in words):
+            tags.append(tag)
+    if not tags:
+        return neutral_label(date)
+    payload = {"signals": [{"tag": tag, "category": "state", "polarity": "mixed", "intensity": "low", "confidence": 0.35, "evidence_text": ""} for tag in tags], "meta": {"parse_quality": "low"}}
+    return _normalize_result(date, payload)
+
+
 def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_completion: Callable[..., str], model: str, batch_size: int = 15, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
-    rows = [{"date": s.target_date, "notes": (s.notes or "").strip()} for s in summaries]
+    rows = [{"id": f"note_{idx:04d}_{s.target_date}", "date": s.target_date, "notes": (s.notes or "").strip()} for idx, s in enumerate(summaries)]
     if not rows:
         return {}
     assets = load_notes_prompt_assets()
@@ -259,6 +315,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     raw_response_paths: list[str] = []
     matched_dates: set[str] = set()
     unmatched_response_dates: set[str] = set()
+    duplicate_ids: set[str] = set()
+    missing_ids: set[str] = set()
+    unknown_ids: set[str] = set()
     raw_sentiment_counts: Counter[str] = Counter()
     raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
@@ -272,18 +331,20 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
         api_calls += 1
         user_payload = {
             "target_date": targets[-1]["date"],
-            "rows": targets,
+            "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in targets],
             "few_shot": assets.get("few_shots", [])[:5],
             "schema": {
+                "id": "input.id",
                 "date": "YYYY-MM-DD",
-                "summary_short_ja": "str",
-                "signals": [{"tag": "enum", "category": "behavior|state|context", "polarity": "positive|negative|neutral|mixed|unknown", "intensity": "low|medium|high|unknown", "confidence": "0-1", "evidence_text": "quoted text"}],
-                "derived_flags": "object",
-                "meta": {"parse_quality": "high|medium|low", "has_clear_signal": "bool", "unknown_reason": "str|null"},
+                "sentiment": "positive|neutral|negative|mixed|unknown",
+                "flags": ["fatigue|stress|social_load|achievement|self_care|sleep_issue"],
+                "confidence": "0.0-1.0",
+                "reasoning_short": "short ja",
             },
         }
         raw = ""
-        for _ in range(2):
+        attempt_batch_sizes = [len(targets), max(1, len(targets) // 2)]
+        for attempt_index, _size in enumerate(attempt_batch_sizes):
             raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(user_payload, ensure_ascii=False))
             parsed, meta = parse_note_label_json_with_meta(raw, targets)
             parse_error_count += int(bool(meta.get("parse_error")))
@@ -291,6 +352,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             empty_response_count += int(bool(meta.get("empty_response")))
             matched_dates.update(set(meta.get("matched_dates") or set()))
             unmatched_response_dates.update(set(meta.get("unmatched_response_dates") or set()))
+            duplicate_ids.update(set(meta.get("duplicate_ids") or set()))
+            missing_ids.update(set(meta.get("missing_ids") or set()))
+            unknown_ids.update(set(meta.get("unknown_ids") or set()))
             if not meta["parse_error"] and not meta["schema_mismatch"]:
                 date_match_failure_count += max(0, len(targets) - len(set(meta.get("matched_dates") or set())))
             for row in parsed:
@@ -307,7 +371,21 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                     raw_flag_counts["self_care"] += 1
                 if row.sleep_issue_flag:
                     raw_flag_counts["sleep_issue"] += 1
-            if not meta["parse_error"] and not meta["schema_mismatch"]:
+            quality_ok = (
+                not meta["parse_error"]
+                and not meta["schema_mismatch"]
+                and not meta.get("duplicate_ids")
+                and not meta.get("unknown_ids")
+                and not meta.get("missing_ids")
+                and int(meta.get("output_count", 0) or 0) == int(meta.get("input_count", 0) or 0)
+            )
+            if quality_ok:
+                break
+            if attempt_index == 0 and len(targets) > 1:
+                half = max(1, len(targets) // 2)
+                first, second = targets[:half], targets[half:]
+                partial = [parse_note_label_json_with_meta(chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps({**user_payload, "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in sub]}, ensure_ascii=False)), sub)[0] for sub in (first, second) if sub]
+                parsed = [item for batch in partial for item in batch]
                 break
         parsed, _ = parse_note_label_json_with_meta(raw, targets)
         if debug_dir:
@@ -316,6 +394,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             raw_response_paths.append(str(path))
         for item in parsed:
             results[item.date] = item
+        for row in targets:
+            if row["date"] not in results:
+                results[row["date"]] = _rule_based_note_label(row)
 
     ordered = {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}
     if audit is not None:
@@ -364,6 +445,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "matched_dates": sorted(matched_dates),
             "unmatched_input_dates": unmatched_input_dates,
             "unmatched_response_dates": sorted(unmatched_response_dates),
+            "duplicate_ids": sorted(duplicate_ids),
+            "missing_ids": sorted(missing_ids),
+            "unknown_ids": sorted(unknown_ids),
             "tags_detected_count": len(all_tags),
             "signals_detected_count": len(all_tags),
             "extracted_tag_count": len(all_tags),

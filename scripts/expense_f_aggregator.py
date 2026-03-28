@@ -53,7 +53,6 @@ def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
     recv_prop = os.getenv("EXPENSE_RECEIVED_AT_PROP", "Received At")
     merchant_prop = os.getenv("EXPENSE_MERCHANT_PROP", "Merchant")
     amount_prop = os.getenv("EXPENSE_AMOUNT_PROP", "Amount")
-    category_prop = os.getenv("EXPENSE_CATEGORY_PROP", "Category")
 
     day = datetime.fromisoformat(target_date).replace(tzinfo=JST)
     day_end = day + timedelta(days=1)
@@ -115,9 +114,6 @@ def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
             total += _parse_number(props.get(amount_prop)) or 0.0
             merchant = _parse_rich_text(props.get(merchant_prop)) or "Unknown"
             merchants.append(merchant)
-            category = _parse_category(props.get(category_prop))
-            if category:
-                categories.append(category)
             dt = _parse_date_start(props.get(recv_prop)) or _parse_date_start(props.get(date_prop))
             if dt:
                 times.append(dt)
@@ -133,7 +129,18 @@ def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
             first_time=times[0] if times else None,
             last_time=times[-1] if times else None,
             data_status="ok",
-            debug_summary={"count": len(pages), "merchant_count": len(uniq_merchants), "category_count": len(uniq_categories)},
+            debug_summary={
+                "count": len(pages),
+                "merchant_count": len(uniq_merchants),
+                "resolved_props": {
+                    "f": f_prop,
+                    "date": date_prop,
+                    "received_at": recv_prop,
+                    "merchant": merchant_prop,
+                    "amount": amount_prop,
+                },
+                "category_unused": True,
+            },
         )
     except Exception as exc:  # noqa: BLE001
         return ExpenseFAggregate(False, 0, 0.0, [], [], None, None, "unavailable", {"error": str(exc)}, "expenses_data_unavailable")
