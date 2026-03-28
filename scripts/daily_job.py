@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
@@ -184,7 +184,8 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         len(summary.meal_photos),
     )
 
-    mail = render_mail(summary)
+    expense_f_alert = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
+    mail = render_mail(summary, expense_f_alert=expense_f_alert)
     mail_config = MailConfig(
         mail_from=config.mail_from,
         mail_to=config.mail_to,
@@ -730,29 +731,68 @@ def _generate_and_save_expense_f(
     *,
     summary: "DailyLogSummary",
     run_id: str,
-) -> "DailyLogSummary":
-    aggregate = aggregate_daily_expense_f(summary.target_date)
-    payload = {
-        "expense_f_count": aggregate.count,
-        "expense_f_total": aggregate.total,
-        "expense_f_merchants": ", ".join(aggregate.merchants),
-        "expense_f_categories": ", ".join(aggregate.categories),
-        "expense_f_first_time": aggregate.first_time,
-        "expense_f_last_time": aggregate.last_time,
-        "expense_f_data_status": aggregate.data_status,
-    }
-    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+) -> dict[str, Any]:
+    del config
     logging.info(
-        "phase_c_expense_f_saved target_date(JST)=%s run_id=%s updated=%s reason=%s skip_reason=%s debug_summary=%s",
+        "expense_f_start target_date(JST)=%s run_id=%s",
         summary.target_date,
         run_id,
-        save_result.get("updated"),
-        save_result.get("reason"),
-        aggregate.skip_reason,
-        json.dumps(aggregate.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
     )
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-    return refreshed_summary or summary
+    aggregate = aggregate_daily_expense_f(summary.target_date)
+    matched = aggregate.available and aggregate.count > 0
+    reasons: list[str] = []
+    if matched:
+        reasons.append(f"Fフラグ付き支出が {aggregate.count} 件検出されました")
+        if aggregate.total > 0:
+            reasons.append(f"合計金額は {aggregate.total:.0f} 円です")
+        if aggregate.categories:
+            reasons.append(f"カテゴリ: {', '.join(aggregate.categories[:3])}")
+        if aggregate.merchants:
+            reasons.append(f"利用先: {', '.join(aggregate.merchants[:3])}")
+        if aggregate.first_time or aggregate.last_time:
+            time_label = f"{aggregate.first_time or '不明'} 〜 {aggregate.last_time or '不明'}"
+            reasons.append(f"支出時刻帯: {time_label}")
+
+    reason_labels = [reason.split(":")[0] if ":" in reason else reason for reason in reasons[:3]]
+    logging.info(
+        "expense_f_evaluated target_date(JST)=%s run_id=%s matched=%s skip_reason=%s reason_labels=%s",
+        summary.target_date,
+        run_id,
+        matched,
+        aggregate.skip_reason,
+        reason_labels,
+    )
+    if matched:
+        logging.info(
+            "expense_f_alert_matched target_date(JST)=%s run_id=%s matched=%s reason_labels=%s",
+            summary.target_date,
+            run_id,
+            matched,
+            reason_labels,
+        )
+    else:
+        logging.info(
+            "expense_f_alert_not_matched target_date(JST)=%s run_id=%s matched=%s",
+            summary.target_date,
+            run_id,
+            matched,
+        )
+
+    return {
+        "matched": matched,
+        "title": "注意すべき支出パターン",
+        "summary": (
+            f"{summary.target_date} に F 支出パターンを検知しました。大きな支出判断は一度保留してください。"
+            if matched
+            else ""
+        ),
+        "reasons": reasons,
+        "debug": {
+            "data_status": aggregate.data_status,
+            "skip_reason": aggregate.skip_reason,
+            "debug_summary": aggregate.debug_summary,
+        },
+    }
 
 
 def _generate_and_save_f_risk(
@@ -983,7 +1023,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         return
     summary = _generate_and_save_weather(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
+    expense_f_alert = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
@@ -1001,6 +1041,14 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             run_id,
         )
         return
+    if expense_f_alert.get("matched"):
+        logging.info(
+            "phase_c_notify_expense_f_alert target_date(JST)=%s run_id=%s matched=%s reasons=%s",
+            summary.target_date,
+            run_id,
+            expense_f_alert.get("matched"),
+            (expense_f_alert.get("reasons") or [])[:3],
+        )
     sent = _notify_phase_c(config, summary=summary, run_id=run_id)
     if sent:
         post_json(

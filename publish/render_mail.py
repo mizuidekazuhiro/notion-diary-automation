@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import time
+from typing import Any, Optional
 
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary
@@ -42,7 +43,11 @@ def _build_mood_notes_url(target_date: str) -> str:
     return f"{base_url}/confirm/mood-notes?date={target_date}&token={token}"
 
 
-def render_mail(summary: DailyLogSummary) -> MailContent:
+def render_mail(
+    summary: DailyLogSummary,
+    *,
+    expense_f_alert: Optional[dict[str, Any]] = None,
+) -> MailContent:
     subject = f"Daily Log | {summary.target_date}"
     mood_notes_url = _build_mood_notes_url(summary.target_date)
     payload = {
@@ -96,6 +101,7 @@ def render_mail(summary: DailyLogSummary) -> MailContent:
         "weather_temp_max_c": summary.weather_temp_max_c,
         "weather_temp_min_c": summary.weather_temp_min_c,
         "weather_precip_probability_max": summary.weather_precip_probability_max,
+        "expense_f_alert": expense_f_alert or {},
         "mood_notes_url": "",
     }
     plain_text = render_daily_log_text(payload)
