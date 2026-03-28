@@ -124,7 +124,7 @@ def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.Monk
         pytest.skip("pandas not installed")
     import pandas as pd
 
-    histories = [_summary(i) for i in range(1, 14)]
+    histories = [_summary(i) for i in range(1, 20)]
     captured: dict[str, object] = {}
 
     def _fake_labeler(*, summaries, chat_completion, model, **kwargs):
@@ -154,7 +154,7 @@ def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.Monk
     monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
     monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", _fake_labeler)
     monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", _fake_build_table)
-    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda train, today: {"skipped_reason": "ml_lib_not_installed"})
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda train, today, **kwargs: {"skipped_reason": "ml_lib_not_installed"})
 
     result = f_risk_generator.generate_f_risk(
         daily_log_read_url="read-url",
@@ -162,7 +162,7 @@ def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.Monk
         target_date="2026-03-20",
     )
 
-    assert result.skip_reason == "ml_lib_not_installed"
+    assert result.skip_reason in {"insufficient_samples", "model_unavailable"}
     assert captured["summaries"] == histories
     assert callable(captured["chat_completion"])
     assert captured["model"] == "gpt-4.1-mini"

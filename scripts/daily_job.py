@@ -909,12 +909,13 @@ def _generate_and_save_f_risk(
         )
         raise
     if result.skip_reason:
+        debug_payload = result.debug_summary.get("risk_json") or result.debug_summary.get("model_result_json") or {}
         logging.info(
             "[FRisk] target_date=%s stage=analysis skip_reason=%s sample_size=%s model_used=%s skipped=true fallback_used=%s save_called=false debug=%s",
             summary.target_date,
             result.skip_reason,
-            (result.debug_summary.get("model_result_json") or {}).get("sample_size"),
-            (result.debug_summary.get("model_result_json") or {}).get("model_used"),
+            debug_payload.get("sample_size") or debug_payload.get("history_count"),
+            debug_payload.get("model_used"),
             result.debug_summary.get("fallback_used", False),
             json.dumps(result.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
         )

@@ -6,10 +6,9 @@ LEAKAGE_COLUMNS = {
     "date",
     "mood",
     "sleep_invalid_reason",
-    "next_day_mood_score",
-    "next_day_low_mood_flag",
-    "next_day_fatigue_flag",
-    "next_day_low_productivity_flag",
+    "today_low_mood_flag",
+    "today_fatigue_flag",
+    "today_low_productivity_flag",
     "target",
 }
 
@@ -17,7 +16,7 @@ LEAKAGE_COLUMNS = {
 def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
     base = {
         "available": False,
-        "sample_size": max(0, len(df) - 1),
+        "sample_size": max(0, len(df)),
         "feature_importances": [],
         "top_risk_features": [],
         "top_protective_features": [],
@@ -36,8 +35,8 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
     LGBMClassifier = importlib.import_module("lightgbm").LGBMClassifier
 
     work = df.copy().sort_values("date").reset_index(drop=True)
-    work["target"] = (work["mood"].shift(-1).fillna(5) <= 2).astype(int)
-    train = work.iloc[:-1].copy()
+    work["target"] = (work["mood"].fillna(5) <= 2).astype(int)
+    train = work.copy()
     if len(train) < 12:
         return {**base, "sample_size": len(train), "skipped_reason": "insufficient_samples"}
     if train["target"].nunique() < 2:

@@ -53,8 +53,8 @@ FEATURES = [
 def run_low_mood_regression(df: Any) -> dict[str, Any]:
     base = {
         "available": False,
-        "sample_size": max(0, len(df) - 1),
-        "regression_target_name": "next_day_low_mood_flag",
+        "sample_size": max(0, len(df)),
+        "regression_target_name": "today_low_mood_flag",
         "regression_feature_names": list(FEATURES),
         "top_positive_risk_features": [],
         "top_protective_features": [],
@@ -70,8 +70,8 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
     StandardScaler = importlib.import_module("sklearn.preprocessing").StandardScaler
 
     work = df.copy().sort_values("date").reset_index(drop=True)
-    work["target"] = (work["mood"].shift(-1).fillna(5) <= 2).astype(int)
-    train = work.iloc[:-1].copy()
+    work["target"] = (work["mood"].fillna(5) <= 2).astype(int)
+    train = work.copy()
 
     if len(train) < 10:
         return {**base, "sample_size": len(train), "skipped_reason": "insufficient_samples"}
@@ -108,7 +108,7 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
     return {
         "available": True,
         "sample_size": len(train),
-        "regression_target_name": "next_day_low_mood_flag",
+        "regression_target_name": "today_low_mood_flag",
         "regression_feature_names": list(FEATURES),
         "top_positive_risk_features": top_positive,
         "top_protective_features": top_negative,

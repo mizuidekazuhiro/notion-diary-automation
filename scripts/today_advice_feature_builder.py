@@ -8,6 +8,14 @@ from publish.read_daily_log import DailyLogSummary
 from scripts.note_batch_labeler import NoteLabel
 from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_target_date
 
+FORBIDDEN_GPT_FIELDS = {
+    "diary",
+    "sleep_analysis_jp",
+    "today_condition_forecast_jp",
+    "today_advice",
+    "f_risk_alert",
+}
+
 
 def _normalize_mood_to_score(raw_mood: object) -> float | None:
     if raw_mood is None:
@@ -238,6 +246,9 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
 
     quality_cols = ["notes_present_flag", "meal_logged_flag", "location_present_flag", "sleep_valid_flag"]
     df["data_quality_score"] = df[quality_cols].astype(int).mean(axis=1).round(2)
+    df = _add_temporal_features(df=df, np=np)
+    df["forbidden_inputs_used"] = False
+    df["forbidden_inputs_used_detail"] = ""
     return df
 
 
@@ -247,3 +258,64 @@ def _is_weekend(date_text: str) -> bool:
     except Exception:
         return False
     return weekday >= 5
+
+
+def _add_temporal_features(*, df: Any, np: Any) -> Any:
+    lag_periods = (1, 2, 3, 5, 7, 14)
+    roll_windows = (3, 5, 7, 14)
+    lag_targets = [
+        "sleep_hours",
+        "spending_total",
+        "task_done_count",
+        "task_drop_count",
+        "notes_stress_flag",
+        "notes_fatigue_flag",
+        "notes_social_load_flag",
+        "notes_has_late_work",
+        "notes_has_exercise",
+        "carb",
+    ]
+    for col in lag_targets:
+        if col not in df.columns:
+            continue
+        series = df[col]
+        if series.dtype == bool:
+            series = series.astype(int)
+        for lag in lag_periods:
+            df[f"{col}_lag_{lag}"] = series.shift(lag)
+        for w in roll_windows:
+            df[f"{col}_rolling_sum_{w}d"] = series.rolling(w, min_periods=1).sum().shift(1)
+            df[f"{col}_rolling_mean_{w}d"] = series.rolling(w, min_periods=1).mean().shift(1)
+
+    df["sleep_short_flag"] = (df["sleep_valid_flag"].fillna(False) & (df["sleep_hours"].fillna(99) < 6)).astype(int)
+    df["social_load_flag"] = df["notes_social_load_flag"].fillna(False).astype(int)
+    df["late_work_flag"] = df["notes_has_late_work"].fillna(False).astype(int) if "notes_has_late_work" in df else 0
+    df["exercise_flag"] = df["notes_has_exercise"].fillna(False).astype(int) if "notes_has_exercise" in df else 0
+
+    for src, out in [
+        ("social_load_flag", "social_load_streak"),
+        ("sleep_short_flag", "sleep_short_streak"),
+        ("late_work_flag", "late_work_streak"),
+        ("exercise_flag", "exercise_streak"),
+    ]:
+        df[out] = _streak_count(df[src])
+
+    df["sleep_short_x_social_load"] = df["sleep_short_flag"] * df["social_load_flag"]
+    df["fatigue_x_spending_spike"] = df["notes_fatigue_flag"].fillna(False).astype(int) * (df["spending_vs_7d_delta"].fillna(0) > 0).astype(int)
+    df["stress_x_late_work"] = df["notes_stress_flag"].fillna(False).astype(int) * df["late_work_flag"]
+    df["drinking_x_low_sleep"] = df["notes_has_drinking"].fillna(False).astype(int) * df["sleep_short_flag"]
+    df["high_carb_x_low_sleep"] = (df["carb_vs_7d_delta"].fillna(0) > 0).astype(int) * df["sleep_short_flag"]
+    df["exercise_x_recovery"] = df["exercise_flag"] * df["notes_recovery_like_flag"].fillna(False).astype(int)
+    return df.replace({np.inf: np.nan, -np.inf: np.nan})
+
+
+def _streak_count(series: Any) -> list[int]:
+    streak = 0
+    out: list[int] = []
+    for value in series.fillna(0).astype(int).tolist():
+        if value:
+            streak += 1
+        else:
+            streak = 0
+        out.append(streak)
+    return out

@@ -27,31 +27,31 @@ def _json_dumps(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
-def _render_f_risk_alert(*, model_result_json: dict[str, Any], model: str) -> tuple[Optional[str], bool, Optional[str]]:
-    skipped_reason = model_result_json.get("skipped_reason")
+def _render_f_risk_alert(*, risk_json: dict[str, Any], model: str) -> tuple[Optional[str], bool, Optional[str]]:
+    skipped_reason = risk_json.get("skipped_reason")
     if skipped_reason:
         return None, False, f"stage_a_skipped:{skipped_reason}"
 
-    risk_matched = bool(model_result_json.get("risk_matched"))
+    risk_matched = bool(risk_json.get("risk_matched"))
+    if not risk_matched:
+        return None, False, "not_matched"
+
     prompt = (
-        "model_result_json を唯一の根拠として、日本語の F Risk Alert 本文を 2-3 文で作成してください。"
-        "model_result_json に無い危険要因を追加しない。"
-        "risk_matched=false の場合は過剰な警告をしない。"
-        "score や matched_patterns と矛盾しない。"
-        "出力は本文のみ。\n"
-        f"model_result_json={_json_dumps(model_result_json)}"
+        "risk_json を唯一の根拠として、日本語の F Risk Alert 本文を 2-4 文で作成してください。"
+        "直近数日パターンと過去F日の類似、主要一致要因1〜3個、一致強度（強/中/弱）を必ず含める。"
+        "explanation_points を最優先で使い、risk_json に無い理由を足さない。"
+        "過剰に煽らない。出力は本文のみ。\n"
+        f"risk_json={_json_dumps(risk_json)}"
     )
     try:
         text = chat_completion(
             model=model,
-            system_prompt="あなたはF Risk Alertを穏当で正確な日本語に整形するアシスタントです。",
+            system_prompt="あなたはF Risk Alertを根拠に忠実な日本語へ整形するアシスタントです。",
             user_prompt=prompt,
             temperature=0.2,
         ).strip()
         if not text:
             return None, True, "gpt_empty"
-        if (not risk_matched) and any(k in text for k in ["危険", "警告", "回避できない"]):
-            return "今日はF支出リスクの明確な一致は見られません。通常どおり、購入前に用途確認だけ行ってください。", True, "guarded_non_risk"
         return text, False, None
     except Exception as exc:  # noqa: BLE001
         logging.warning("f_risk_stage_b_failed error=%s", exc)
@@ -59,25 +59,31 @@ def _render_f_risk_alert(*, model_result_json: dict[str, Any], model: str) -> tu
 
 
 def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str) -> FRiskResult:
-    model_result_json: dict[str, Any] = {
+    risk_json: dict[str, Any] = {
         "target_date": target_date,
-        "sample_size": 0,
-        "model_used": None,
-        "score": None,
-        "threshold": 0.72,
         "risk_matched": False,
+        "risk_probability_recent": None,
+        "risk_probability_longterm": None,
+        "recent_pattern_matches": [],
+        "f_day_similarity_summary": "",
+        "matched_risk_factors": [],
+        "matched_protective_factors": [],
         "matched_patterns": [],
         "top_positive_features": [],
         "top_negative_features": [],
         "confidence": "low",
         "reliability": "low",
+        "evidence_sufficiency": "insufficient",
         "skipped_reason": None,
+        "explanation_points": [],
+        "no_alert_reason": None,
+        "forbidden_inputs_used": False,
     }
-    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=60)
-    model_result_json["sample_size"] = len(histories)
-    if len(histories) < 12:
-        model_result_json["skipped_reason"] = "insufficient_samples"
-        return FRiskResult(None, None, None, [], "insufficient_samples", {"model_result_json": model_result_json, "stage": "analysis"})
+    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=180)
+    if len(histories) < 14:
+        risk_json["skipped_reason"] = "insufficient_samples"
+        risk_json["no_alert_reason"] = "insufficient_evidence"
+        return FRiskResult(None, None, None, [], "insufficient_samples", {"risk_json": risk_json})
 
     note_audit: dict[str, Any] = {}
     labels = label_notes_in_batches(
@@ -87,84 +93,101 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         audit=note_audit,
     )
     if note_audit.get("labeling_failed"):
-        model_result_json["skipped_reason"] = "labeling_failed"
-        return FRiskResult(None, None, None, [], "labeling_failed", {"model_result_json": model_result_json, "note_label_audit": note_audit})
+        risk_json["skipped_reason"] = "labeling_failed"
+        risk_json["no_alert_reason"] = "insufficient_evidence"
+        return FRiskResult(None, None, None, [], "labeling_failed", {"risk_json": risk_json, "note_label_audit": note_audit})
 
     df = build_daily_feature_table(histories, labels)
-    if "expense_f_count" not in df.columns:
-        model_result_json["skipped_reason"] = "no_f_history"
-        return FRiskResult(None, None, None, [], "no_f_history", {"model_result_json": model_result_json})
-
     work = df.copy().sort_values("date").reset_index(drop=True)
     work["f_event_flag"] = (work["expense_f_count"].fillna(0) > 0).astype(int)
     train = work.iloc[:-1].copy()
-    if len(train) < 10:
-        model_result_json["skipped_reason"] = "insufficient_samples"
-        return FRiskResult(None, None, None, [], "insufficient_samples", {"model_result_json": model_result_json, "train_rows": len(train)})
-    if train["f_event_flag"].sum() == 0:
-        model_result_json["skipped_reason"] = "no_f_history"
-        return FRiskResult(None, None, None, [], "no_f_history", {"model_result_json": model_result_json, "train_rows": len(train)})
-    if train["f_event_flag"].nunique() < 2:
-        model_result_json["skipped_reason"] = "single_class_target"
-        return FRiskResult(None, None, None, [], "single_class_target", {"model_result_json": model_result_json})
+    today = work.iloc[[-1]].copy()
+    if len(train) < 12:
+        risk_json["skipped_reason"] = "insufficient_samples"
+        risk_json["no_alert_reason"] = "insufficient_evidence"
+        return FRiskResult(None, None, None, [], "insufficient_samples", {"risk_json": risk_json})
+    if train["f_event_flag"].sum() == 0 or train["f_event_flag"].nunique() < 2:
+        risk_json["skipped_reason"] = "no_f_history"
+        risk_json["no_alert_reason"] = "insufficient_evidence"
+        return FRiskResult(None, None, None, [], "no_f_history", {"risk_json": risk_json})
 
     pattern_summary = _explore_patterns(train)
-    model_summary = _fit_model(train, work.iloc[[-1]])
-    if model_summary.get("skipped_reason"):
-        model_result_json["skipped_reason"] = model_summary["skipped_reason"]
-        return FRiskResult(None, None, None, [], model_summary["skipped_reason"], {"model_result_json": model_result_json, "pattern": pattern_summary, "model": model_summary})
+    recent_train = train.tail(max(45, min(90, len(train))))
+    recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
+    longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
+    if recent_model.get("skipped_reason") and longterm_model.get("skipped_reason"):
+        risk_json["skipped_reason"] = "model_unavailable"
+        risk_json["no_alert_reason"] = "insufficient_evidence"
+        return FRiskResult(None, None, None, [], "model_unavailable", {"risk_json": risk_json, "pattern": pattern_summary})
 
-    score = model_summary.get("score")
-    threshold = float(model_result_json["threshold"])
-    matched = list(model_summary.get("matched_features", []))
-    model_result_json.update(
+    recent_score = _to_float(recent_model.get("score"))
+    long_score = _to_float(longterm_model.get("score"))
+    blended = _blend_scores(recent_score, long_score)
+    matched = _derive_matched_features(today.iloc[0].to_dict())
+    similarity = _f_day_similarity(train=train, today=today.iloc[0].to_dict())
+    explanation_points = _build_explanation_points(matched=matched, similarity=similarity, today=today.iloc[0].to_dict())
+    evidence_sufficiency = "sufficient" if len(explanation_points) >= 2 else "limited"
+    confidence = "high" if len(train) >= 60 else "medium" if len(train) >= 30 else "low"
+    reliability = "high" if similarity["strength"] == "strong" else "medium" if similarity["strength"] == "medium" else "low"
+
+    risk_matched = bool(blended is not None and blended >= 0.62 and len(matched) >= 1 and similarity["strength"] in {"strong", "medium"} and len(explanation_points) >= 2)
+
+    risk_json.update(
         {
-            "model_used": model_summary.get("model"),
-            "score": score,
-            "risk_matched": bool(score is not None and score >= threshold and bool(matched)),
+            "risk_matched": risk_matched,
+            "risk_probability_recent": recent_score,
+            "risk_probability_longterm": long_score,
+            "recent_pattern_matches": similarity["pattern_matches"],
+            "f_day_similarity_summary": similarity["summary"],
+            "matched_risk_factors": matched[:3],
+            "matched_protective_factors": _derive_protective_features(today.iloc[0].to_dict())[:1],
             "matched_patterns": matched,
             "top_positive_features": [d.get("feature") for d in pattern_summary.get("deltas", []) if d.get("delta", 0) > 0][:5],
             "top_negative_features": [d.get("feature") for d in pattern_summary.get("deltas", []) if d.get("delta", 0) < 0][:5],
-            "confidence": "high" if len(train) >= 30 else "medium" if len(train) >= 18 else "low",
-            "reliability": "high" if len(matched) >= 2 else "medium" if matched else "low",
+            "confidence": confidence,
+            "reliability": reliability,
+            "evidence_sufficiency": evidence_sufficiency,
             "skipped_reason": None,
+            "explanation_points": explanation_points,
+            "no_alert_reason": None if risk_matched else ("not_matched" if evidence_sufficiency == "sufficient" else "insufficient_evidence"),
+            "model_used": {"recent": recent_model.get("model"), "long_term": longterm_model.get("model")},
+            "history_count": len(train),
+            "class_balance": float(train["f_event_flag"].mean()),
+            "used_feature_groups": ["lag", "rolling", "streak", "interaction", "notes", "sleep", "weather", "weekday"],
         }
     )
 
+    if not risk_matched:
+        return FRiskResult(
+            None,
+            blended,
+            f"no_alert:{risk_json['no_alert_reason']}",
+            matched,
+            None,
+            {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "note_label_audit": note_audit},
+        )
+
     text, fallback_used, fallback_reason = _render_f_risk_alert(
-        model_result_json=model_result_json,
+        risk_json=risk_json,
         model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
     )
-    reason = f"model={model_result_json.get('model_used')} score={score:.3f}" if isinstance(score, (int, float)) else None
     if text is None:
         return FRiskResult(
             None,
-            score,
-            reason,
+            blended,
+            "stage_b_failed",
             matched,
             "stage_b_failed",
-            {
-                "model_result_json": model_result_json,
-                "pattern": pattern_summary,
-                "model": model_summary,
-                "fallback_used": fallback_used,
-                "fallback_reason": fallback_reason,
-            },
+            {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "fallback_reason": fallback_reason},
         )
 
     return FRiskResult(
         text,
-        score,
-        reason,
+        blended,
+        f"model=recent:{recent_model.get('model')} long:{longterm_model.get('model')} score={blended:.3f}",
         matched,
         None,
-        {
-            "model_result_json": model_result_json,
-            "pattern": pattern_summary,
-            "model": model_summary,
-            "fallback_used": fallback_used,
-            "fallback_reason": fallback_reason,
-        },
+        {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "fallback_reason": fallback_reason},
     )
 
 
@@ -183,14 +206,8 @@ def _explore_patterns(train: Any) -> dict[str, Any]:
     risk_days = train[train["f_event_flag"] == 1]
     safe_days = train[train["f_event_flag"] == 0]
     features = [
-        "sleep_hours",
-        "sleep_score",
-        "spending_total",
-        "weather_temp_max_c",
-        "weather_precip_probability_max",
-        "task_drop_count",
-        "notes_stress_flag",
-        "is_weekend",
+        "sleep_hours", "sleep_short_streak", "notes_stress_flag", "notes_social_load_flag", "notes_has_late_work",
+        "spending_total_rolling_mean_7d", "weather_precip_probability_max", "is_weekend", "drinking_x_low_sleep",
     ]
     deltas: list[dict[str, Any]] = []
     for feature in features:
@@ -199,18 +216,11 @@ def _explore_patterns(train: Any) -> dict[str, Any]:
         risk_mean = float(risk_days[feature].fillna(0).mean()) if len(risk_days) else 0.0
         safe_mean = float(safe_days[feature].fillna(0).mean()) if len(safe_days) else 0.0
         deltas.append({"feature": feature, "delta": round(risk_mean - safe_mean, 3), "risk_mean": round(risk_mean, 3), "safe_mean": round(safe_mean, 3)})
-    return {"deltas": sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)[:6]}
+    return {"deltas": sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)[:8]}
 
 
-def _fit_model(train: Any, today_row: Any) -> dict[str, Any]:
+def _fit_model(train: Any, today_row: Any, *, sample_weight_mode: str = "uniform") -> dict[str, Any]:
     import importlib
-
-    if importlib.util.find_spec("lightgbm") is not None:
-        try:
-            import lightgbm as lgb
-            return _fit_lightgbm(train, today_row, lgb)
-        except Exception:
-            pass
 
     if importlib.util.find_spec("sklearn") is None:
         return {"skipped_reason": "ml_lib_not_installed"}
@@ -229,38 +239,31 @@ def _fit_model(train: Any, today_row: Any) -> dict[str, Any]:
                 ("cat", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("oh", OneHotEncoder(handle_unknown="ignore"))]), cols_cat),
             ]
         )
-        model = Pipeline([("pre", pre), ("clf", LogisticRegression(max_iter=600, class_weight="balanced"))])
-        model.fit(x, y)
+        model = Pipeline([("pre", pre), ("clf", LogisticRegression(max_iter=800, class_weight="balanced"))])
+        if sample_weight_mode == "recency_decay":
+            n = len(x)
+            weights = [0.97 ** (n - i - 1) for i in range(n)]
+            model.fit(x, y, clf__sample_weight=weights)
+        else:
+            model.fit(x, y)
         score = float(model.predict_proba(today_x)[0][1])
-        matched = _derive_matched_features(today_row.iloc[0].to_dict())
-        return {"score": score, "matched_features": matched, "model": "logistic_regression", "skipped_reason": None}
+        return {"score": score, "model": "logistic_regression", "skipped_reason": None}
     except Exception:
         return {"skipped_reason": "fit_exception"}
 
 
-def _fit_lightgbm(train: Any, today_row: Any, lgb: Any) -> dict[str, Any]:
-    x, y, today_x, _, _ = _build_xy(train, today_row)
-    x_enc = _to_numeric_frame(x)
-    today_enc = _to_numeric_frame(today_x, template_columns=x_enc.columns)
-    clf = lgb.LGBMClassifier(n_estimators=160, learning_rate=0.05, num_leaves=15, random_state=42, class_weight="balanced", verbose=-1)
-    clf.fit(x_enc, y)
-    score = float(clf.predict_proba(today_enc)[0][1])
-    matched = _derive_matched_features(today_row.iloc[0].to_dict())
-    return {"score": score, "matched_features": matched, "model": "lightgbm", "skipped_reason": None}
-
-
 def _build_xy(train: Any, today_row: Any):
     features = [
-        "sleep_hours", "sleep_score", "spending_total", "task_drop_count", "task_done_count", "notes_stress_flag",
-        "notes_fatigue_flag", "weather_temp_max_c", "weather_temp_min_c", "weather_precip_probability_max", "weather_code",
-        "is_weekend", "place", "location_summary",
+        "sleep_hours_lag_1", "sleep_short_streak", "social_load_streak", "late_work_streak", "exercise_streak",
+        "sleep_short_x_social_load", "stress_x_late_work", "drinking_x_low_sleep", "high_carb_x_low_sleep",
+        "spending_total_rolling_mean_7d", "spending_total_rolling_sum_14d", "weather_precip_probability_max_lag_1",
+        "notes_stress_flag_lag_1", "notes_has_drinking_lag_3", "is_weekend", "place", "location_summary",
     ]
     for feature in features:
         if feature not in train.columns:
             train[feature] = None
         if feature not in today_row.columns:
             today_row[feature] = None
-
     x = train[features].copy()
     y = train["f_event_flag"].astype(int)
     today_x = today_row[features].copy()
@@ -269,38 +272,83 @@ def _build_xy(train: Any, today_row: Any):
     return x, y, today_x, cols_num, cols_cat
 
 
-def _to_numeric_frame(df: Any, template_columns: Any = None) -> Any:
-    import pandas as pd
-
-    work = df.copy()
-    for col in work.columns:
-        if str(work[col].dtype) in {"object", "string"}:
-            work[col] = work[col].fillna("unknown")
-    work = pd.get_dummies(work, dummy_na=True)
-    if template_columns is not None:
-        for col in template_columns:
-            if col not in work.columns:
-                work[col] = 0
-        work = work[list(template_columns)]
-    return work
-
-
 def _derive_matched_features(today: dict[str, Any]) -> list[str]:
     matched: list[str] = []
-    sleep_hours = _to_float(today.get("sleep_hours"))
-    rain_prob = _to_float(today.get("weather_precip_probability_max"))
-    drops = _to_float(today.get("task_drop_count"))
-    stress = bool(today.get("notes_stress_flag"))
-
-    if sleep_hours is not None and sleep_hours < 6:
-        matched.append("睡眠時間が短め")
-    if rain_prob is not None and rain_prob >= 50:
-        matched.append("降水確率が高い")
-    if drops is not None and drops >= 2:
-        matched.append("Drop件数が多い傾向")
-    if stress:
-        matched.append("Notesストレスシグナル")
+    if _to_float(today.get("sleep_short_streak")) and _to_float(today.get("sleep_short_streak")) >= 2:
+        matched.append("睡眠短縮が連続")
+    if bool(today.get("notes_stress_flag_lag_1")):
+        matched.append("直近でストレス信号")
+    if _to_float(today.get("stress_x_late_work")) and _to_float(today.get("stress_x_late_work")) >= 1:
+        matched.append("ストレス×遅い稼働の重なり")
+    if _to_float(today.get("drinking_x_low_sleep")) and _to_float(today.get("drinking_x_low_sleep")) >= 1:
+        matched.append("飲酒×短睡眠の重なり")
+    if bool(today.get("is_weekend")):
+        matched.append("週末バイアス")
     return matched
+
+
+def _derive_protective_features(today: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    if _to_float(today.get("exercise_streak")) and _to_float(today.get("exercise_streak")) >= 2:
+        items.append("運動継続")
+    if bool(today.get("notes_has_money_saved")):
+        items.append("節約シグナル")
+    return items
+
+
+def _f_day_similarity(*, train: Any, today: dict[str, Any]) -> dict[str, Any]:
+    f_days = train[train["f_event_flag"] == 1]
+    if len(f_days) == 0:
+        return {"strength": "weak", "pattern_matches": [], "summary": "過去F日の比較対象が不足"}
+    checks = [
+        ("sleep_short_streak", lambda v: _to_float(v) is not None and _to_float(v) >= 2),
+        ("notes_stress_flag_lag_1", lambda v: bool(v)),
+        ("stress_x_late_work", lambda v: _to_float(v) is not None and _to_float(v) >= 1),
+        ("drinking_x_low_sleep", lambda v: _to_float(v) is not None and _to_float(v) >= 1),
+    ]
+    matches: list[str] = []
+    ratio_scores: list[float] = []
+    for name, fn in checks:
+        if name not in train.columns:
+            continue
+        today_hit = fn(today.get(name))
+        if not today_hit:
+            continue
+        ratio = float(f_days[name].apply(fn).mean()) if len(f_days) else 0.0
+        if ratio >= 0.4:
+            matches.append(name)
+            ratio_scores.append(ratio)
+    mean_ratio = (sum(ratio_scores) / len(ratio_scores)) if ratio_scores else 0.0
+    strength = "strong" if len(matches) >= 3 or mean_ratio >= 0.65 else "medium" if len(matches) >= 2 else "weak"
+    return {
+        "strength": strength,
+        "pattern_matches": matches,
+        "summary": f"直近数日の並びは過去F日の{strength}一致（主要一致{len(matches)}件）",
+    }
+
+
+def _build_explanation_points(*, matched: list[str], similarity: dict[str, Any], today: dict[str, Any]) -> list[str]:
+    points: list[str] = []
+    if similarity.get("summary"):
+        points.append(str(similarity["summary"]))
+    if matched:
+        points.append(f"一致した主要因: {', '.join(matched[:3])}")
+    if _to_float(today.get("sleep_short_streak")) and _to_float(today.get("sleep_short_streak")) >= 2:
+        points.append("直近数日で短睡眠が続き、判断負荷が上がりやすい並び")
+    protective = _derive_protective_features(today)
+    if protective:
+        points.append(f"保護要因: {protective[0]}")
+    return points[:4]
+
+
+def _blend_scores(recent: Optional[float], long_term: Optional[float]) -> Optional[float]:
+    if recent is None and long_term is None:
+        return None
+    if recent is None:
+        return long_term
+    if long_term is None:
+        return recent
+    return 0.6 * recent + 0.4 * long_term
 
 
 def _to_float(value: object) -> Optional[float]:
