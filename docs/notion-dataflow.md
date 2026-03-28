@@ -8,7 +8,7 @@
 | Tasks | `TASK_DB_ID` | `workers/src/index.ts`, `workers/src/application/daily_log_task_relations.ts` | 主に読み |
 | Inbox | `INBOX_DB_ID` | `workers/src/index.ts` | 読み |
 | Health | `HEALTH_DB_ID` | `workers/src/index.ts` | 読み |
-| Expenses | `EXPENSES_DB_ID` | `workers/src/index.ts` | 読み |
+| Expenses | `EXPENSES_DB_ID` | `workers/src/index.ts`, `scripts/expense_f_aggregator.py` | 読み |
 | Location Log | `LOCATION_LOG_DB_ID` | `workers/src/index.ts` | 読み |
 
 ## 2. 全体フロー
@@ -24,7 +24,9 @@ Daily Diary 02 - Generate Location Summary
         ↓
 Phase C (Notify Diary)
   ├─ Daily Log read
+  ├─ expense_f_aggregator (Python から Notion API 直接読取)
   ├─ sleep_condition_generator
+  ├─ f_risk_generator
   └─ diary_generator
         ↓
 Phase B (Publish)
@@ -70,7 +72,7 @@ Phase B (Publish)
 
 ## 5. overwrite 仕様
 
-- `scripts/daily_job.py` は Phase C で sleep insights → Today advice → Diary → notify 判定を直列実行します。
+- `scripts/daily_job.py` は Phase C で weather → Expense F 集計 → sleep insights → F risk → Today advice → Diary → notify 判定を直列実行します。
 - sleep signal がある日は `Sleep Analysis JP` / `Today Condition Forecast JP` を毎回再生成して上書き保存します。
 - diary 保存とは独立して sleep 系のみ保存しても失敗しないようにしています。
 - Publish / Mail は `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Analysis JP` / `Today Condition Forecast JP` のうち値があるものだけを表示します。

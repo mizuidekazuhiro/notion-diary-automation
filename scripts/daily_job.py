@@ -1027,7 +1027,14 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _generate_and_save_f_risk(config, summary=summary, run_id=run_id)
+    try:
+        summary = _generate_and_save_f_risk(config, summary=summary, run_id=run_id)
+    except Exception:  # noqa: BLE001
+        logging.exception(
+            "phase_c_f_risk_error target_date(JST)=%s run_id=%s step=generate_or_save",
+            summary.target_date,
+            run_id,
+        )
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary

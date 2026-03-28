@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
 from scripts.note_batch_labeler import label_notes_in_batches
+from scripts.openai_chat_utils import chat_completion
 from scripts.today_advice_feature_builder import build_daily_feature_table
 
 
@@ -24,7 +26,11 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     if len(histories) < 12:
         return FRiskResult(None, None, None, [], "insufficient_samples", {"history_count": len(histories)})
 
-    labels = label_notes_in_batches(histories)
+    labels = label_notes_in_batches(
+        summaries=histories,
+        chat_completion=chat_completion,
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+    )
     df = build_daily_feature_table(histories, labels)
     if "expense_f_count" not in df.columns:
         return FRiskResult(None, None, None, [], "no_f_history", {"reason": "missing_expense_f_count"})
