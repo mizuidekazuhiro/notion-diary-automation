@@ -21,7 +21,7 @@ from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
 from scripts.today_advice_lightgbm import run_lightgbm_low_mood
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
-from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_target_date
+from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_for_target_date
 from scripts.today_advice_audit import (
     TodayAdviceAuditLogger,
     count_missing,
@@ -359,75 +359,12 @@ def _format_number(value: Optional[float]) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
-def _build_sleep_candidate(*, candidate_date: str, source: str, sleep_start: object, sleep_end: object, raw_sleep_duration_min: object, sleep_score: object) -> dict[str, Any]:
-    resolved = resolve_sleep_duration_minutes(sleep_start, sleep_end, raw_sleep_duration_min)
-    score = _safe_float(sleep_score)
-    is_valid = bool(
-        (resolved.resolved_sleep_duration_min is not None and resolved.resolved_sleep_duration_min > 0)
-        or (score is not None and score > 0)
-    )
-    invalid_reason = None if is_valid else (resolved.invalid_reason or "missing_sleep_signal")
-    return {
-        "candidate_date": candidate_date,
-        "source": source,
-        "sleep_start": sleep_start,
-        "sleep_end": sleep_end,
-        "raw_sleep_duration_min": _safe_float(raw_sleep_duration_min),
-        "resolved_sleep_duration_min": resolved.resolved_sleep_duration_min,
-        "sleep_score": score,
-        "duration_source": resolved.duration_source,
-        "candidate_target_date": resolve_sleep_target_date(
-            sleep_start=sleep_start,
-            sleep_end=sleep_end,
-            fallback_date=candidate_date,
-        ),
-        "candidate_valid_flag": is_valid,
-        "invalid_reason": invalid_reason,
-    }
-
-
 def _resolve_today_sleep_candidates(*, target_date: str, today_summary: DailyLogSummary, history: Sequence[DailyLogSummary]) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]], str]:
-    candidates: list[dict[str, Any]] = []
-    candidates.append(
-        _build_sleep_candidate(
-            candidate_date=today_summary.target_date,
-            source="today_saved_properties",
-            sleep_start=today_summary.sleep_start,
-            sleep_end=today_summary.sleep_end,
-            raw_sleep_duration_min=today_summary.sleep_duration_min,
-            sleep_score=today_summary.sleep_score,
-        )
+    return resolve_sleep_for_target_date(
+        target_date=target_date,
+        today_summary=today_summary,
+        history_summaries=history,
     )
-    for item in history:
-        candidates.append(
-            _build_sleep_candidate(
-                candidate_date=item.target_date,
-                source="history",
-                sleep_start=item.sleep_start,
-                sleep_end=item.sleep_end,
-                raw_sleep_duration_min=item.sleep_duration_min,
-                sleep_score=item.sleep_score,
-            )
-        )
-
-    preferred = [c for c in candidates if c.get("source") == "today_saved_properties" and c.get("candidate_valid_flag")]
-    if preferred:
-        selected = preferred[0]
-        selected["selection_reason"] = "use_saved_today_properties"
-        return candidates, selected, "saved_today_properties"
-
-    same_target_valid = [c for c in candidates if c.get("candidate_target_date") == target_date and c.get("candidate_valid_flag")]
-    if same_target_valid:
-        selected = same_target_valid[0]
-        selected["selection_reason"] = "match_target_date_with_05_boundary"
-        return candidates, selected, "history_target_date_match"
-
-    fallback_valid = [c for c in candidates if c.get("candidate_valid_flag")]
-    if fallback_valid:
-        selected = fallback_valid[0]
-        selected["selection_reason"] = "fallback_any_valid_candidate"
-        return candidates, selected, "fallback_any_valid"
-    return candidates, None, "no_valid_candidate"
 
 
 def _build_metric_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:

@@ -1,5 +1,5 @@
 {
-  "system_prompt": "あなたは日本語の短いNotesを構造化するアシスタントです。出力はJSONのみ。top-levelは配列または {\"rows\": [...]} のどちらか。各rowは必ず date, summary_short_ja, signals, derived_flags, meta を含める。signalsは allowed_tags の enum だけを使い、各signalに tag/category/polarity/intensity/confidence/evidence_text を必ず含める。signalsが空の場合は meta.unknown_reason を必須にし、meta.parse_quality と meta.has_clear_signal も必ず返す。推測は禁止。evidence_text は入力本文の抜粋のみ。",
+  "system_prompt": "あなたは日本語の短いNotesを構造化するアシスタントです。出力はJSONのみ。top-levelは配列または {\"rows\": [...]} のどちらか。各rowは必ず date, sentiment, flags, tags, confidence を含める。flags は fatigue/stress/social_load/achievement/self_care/sleep_issue の6項目を必ず含む真偽値オブジェクト。dateは入力rowsのdateをそのまま使い、重複・欠損・追加は禁止。tagsは allowed_tags のみ。推測は禁止。",
   "allowed_tags": [
     "exercise",
     "gym",
@@ -43,25 +43,17 @@
     "top_level": "[{...}] or {\"rows\":[...]} only",
     "row": {
       "date": "YYYY-MM-DD",
-      "summary_short_ja": "string",
-      "signals": [
-        {
-          "tag": "allowed_tags enum",
-          "category": "behavior|state|context",
-          "polarity": "positive|negative|neutral|mixed|unknown",
-          "intensity": "low|medium|high|unknown",
-          "confidence": "0.0-1.0",
-          "evidence_text": "quoted substring"
-        }
-      ],
-      "derived_flags": {
-        "type": "object"
+      "sentiment": "positive|neutral|negative|mixed|unknown",
+      "flags": {
+        "fatigue": "bool",
+        "stress": "bool",
+        "social_load": "bool",
+        "achievement": "bool",
+        "self_care": "bool",
+        "sleep_issue": "bool"
       },
-      "meta": {
-        "parse_quality": "high|medium|low",
-        "has_clear_signal": "bool",
-        "unknown_reason": "string|null"
-      }
+      "tags": ["allowed_tags enum"],
+      "confidence": "0.0-1.0"
     }
   },
   "few_shots": [
