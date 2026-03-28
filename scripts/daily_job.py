@@ -25,6 +25,7 @@ from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 from scripts.diary_generator import generate_diary_from_daily_log
 from scripts.expense_f_aggregator import aggregate_daily_expense_f
+from scripts.f_risk_state_store import FRiskStateStore
 from scripts.f_risk_generator import generate_f_risk
 from scripts.location_for_weather import resolve_location_for_weather
 from scripts.mood_advice_generator import (
@@ -184,8 +185,15 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         len(summary.meal_photos),
     )
 
-    expense_f_alert = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
-    mail = render_mail(summary, expense_f_alert=expense_f_alert)
+    expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
+    f_risk_alert = _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    logging.info(
+        "mail_render_context target_date=%s f_risk_section_rendered=%s expense_f_section_rendered=%s",
+        summary.target_date,
+        bool(f_risk_alert.get("matched")),
+        bool(expense_f_alert.get("matched")),
+    )
+    mail = render_mail(summary, expense_f_alert=expense_f_alert, f_risk_alert=f_risk_alert)
     mail_config = MailConfig(
         mail_from=config.mail_from,
         mail_to=config.mail_to,
@@ -764,13 +772,11 @@ def _generate_and_save_weather(
     return refreshed_summary or summary
 
 
-def _generate_and_save_expense_f(
-    config: Config,
+def _compute_expense_f_alert(
     *,
     summary: "DailyLogSummary",
     run_id: str,
 ) -> dict[str, Any]:
-    del config
     logging.info(
         "expense_f_start target_date(JST)=%s run_id=%s",
         summary.target_date,
@@ -793,12 +799,15 @@ def _generate_and_save_expense_f(
 
     reason_labels = [reason.split(":")[0] if ":" in reason else reason for reason in reasons[:3]]
     logging.info(
-        "[ExpenseF] target_date=%s matched=%s skip_reason=%s resolved_props=%s category_unused=%s reason_labels=%s",
+        "[ExpenseF] source=expenses_db_direct target_date=%s matched=%s count=%s total=%s merchants_count=%s data_status=%s skip_reason=%s resolved_props=%s reason_labels=%s",
         summary.target_date,
         matched,
+        aggregate.count,
+        aggregate.total,
+        len(aggregate.merchants),
+        aggregate.data_status,
         aggregate.skip_reason,
         aggregate.debug_summary.get("resolved_props"),
-        aggregate.debug_summary.get("category_unused", True),
         reason_labels,
     )
     if matched:
@@ -834,13 +843,26 @@ def _generate_and_save_expense_f(
     }
 
 
-def _generate_and_save_f_risk(
+def _generate_and_save_expense_f(
     config: Config,
     *,
     summary: "DailyLogSummary",
     run_id: str,
-) -> "DailyLogSummary":
-    logging.info("phase_c_f_risk_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+) -> dict[str, Any]:
+    del config
+    return _compute_expense_f_alert(summary=summary, run_id=run_id)
+
+
+def _compute_f_risk_alert_runtime(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> dict[str, Any]:
+    logging.info("f_risk_runtime_start source=f_risk_runtime target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+    expense_f_aggregate = aggregate_daily_expense_f(summary.target_date)
+    store = FRiskStateStore()
+    previous_state = store.get_for_date(summary.target_date)
     hash_payload = {
         "target_date": summary.target_date,
         "sleep": {
@@ -854,24 +876,28 @@ def _generate_and_save_f_risk(
             "weather_precip_probability_max": summary.weather_precip_probability_max,
         },
         "expense_f": {
-            "count": summary.expense_f_count,
-            "total": summary.expense_f_total,
+            "count": expense_f_aggregate.count,
+            "total": expense_f_aggregate.total,
+            "data_status": expense_f_aggregate.data_status,
         },
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(hash_payload)
-    previous_input_hash = (summary.f_risk_input_hash or "").strip() or None
-    has_risk = bool((summary.f_risk_reason or "").strip())
+    previous_input_hash = (previous_state.get("input_hash") or "").strip() or None
     input_changed = current_input_hash != previous_input_hash
     logging.info(
-        "phase_c_f_risk_input_summary target_date(JST)=%s run_id=%s has_f_risk=%s debug_summary=%s",
+        "f_risk_runtime_input_summary source=f_risk_runtime target_date(JST)=%s run_id=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s state_store_backend=%s state_read_ok=%s branch_name=%s path=%s fallback_used=%s debug_summary=%s",
         summary.target_date,
         run_id,
-        has_risk,
+        current_input_hash,
+        previous_input_hash,
+        input_changed,
+        store.meta.backend,
+        store.meta.state_read_ok,
+        store.meta.branch_name,
+        store.meta.path,
+        store.meta.fallback_used,
         json.dumps(
             {
-                "current_input_hash": current_input_hash,
-                "previous_input_hash": previous_input_hash,
-                "input_hash_changed": input_changed,
                 "hash_input_summary": normalized_hash_payload,
             },
             ensure_ascii=False,
@@ -879,20 +905,6 @@ def _generate_and_save_f_risk(
             default=str,
         ),
     )
-    if has_risk and not input_changed:
-        logging.info(
-            "phase_c_f_risk_skipped target_date(JST)=%s run_id=%s skip_reason=unchanged_input",
-            summary.target_date,
-            run_id,
-        )
-        logging.info(
-            "phase_c_f_risk_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=unchanged_input generated_properties=[]",
-            summary.target_date,
-            run_id,
-            False,
-        )
-        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-        return refreshed_summary or summary
 
     try:
         result = generate_f_risk(
@@ -909,46 +921,70 @@ def _generate_and_save_f_risk(
         )
         raise
     if result.skip_reason:
-        debug_payload = result.debug_summary.get("risk_json") or result.debug_summary.get("model_result_json") or {}
         logging.info(
-            "[FRisk] target_date=%s stage=analysis skip_reason=%s sample_size=%s model_used=%s skipped=true fallback_used=%s save_called=false debug=%s",
+            "[FRisk] source=f_risk_runtime target_date=%s skip_reason=%s state_store_backend=%s risk_matched=false score=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
             summary.target_date,
             result.skip_reason,
-            debug_payload.get("sample_size") or debug_payload.get("history_count"),
-            debug_payload.get("model_used"),
-            result.debug_summary.get("fallback_used", False),
-            json.dumps(result.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
-        )
-        return _refresh_daily_log_summary(config, summary.target_date) or summary
-    else:
-        logging.info(
-            "phase_c_f_risk_generated target_date(JST)=%s run_id=%s stage=finalize score=%s matched_patterns=%s fallback_used=%s",
-            summary.target_date,
-            run_id,
+            store.meta.backend,
             result.score,
+            (result.debug_summary.get("risk_json") or {}).get("no_alert_reason"),
             result.matched_patterns[:3],
-            result.debug_summary.get("fallback_used", False),
         )
-
-    payload = {
-        "f_risk_alert": result.alert_text or "",
-        "f_risk_score": result.score,
-        "f_risk_reason": result.reason or (result.skip_reason or ""),
-        "f_risk_matched_patterns": " / ".join(result.matched_patterns),
-        "f_risk_input_hash": current_input_hash,
-        "f_risk_generated_at": _utc_timestamp(),
+    row = {
+        "input_hash": current_input_hash,
+        "reason": result.reason or (result.skip_reason or ""),
+        "generated_at": _utc_timestamp(),
+        "score": result.score,
+        "matched_patterns": result.matched_patterns,
+        "alert_text": result.alert_text,
+        "no_alert_reason": (result.debug_summary.get("risk_json") or {}).get("no_alert_reason"),
     }
-    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    state_write_ok = store.save_for_date(summary.target_date, row)
     logging.info(
-        "phase_c_f_risk_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
+        "f_risk_runtime_result source=f_risk_runtime target_date=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s state_store_backend=%s state_read_ok=%s state_write_ok=%s branch_name=%s path=%s fallback_used=%s risk_matched=%s score=%s skip_reason=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
         summary.target_date,
-        run_id,
-        save_result.get("updated"),
-        save_result.get("reason"),
-        sorted(payload.keys()),
+        current_input_hash,
+        previous_input_hash,
+        input_changed,
+        store.meta.backend,
+        store.meta.state_read_ok,
+        state_write_ok,
+        store.meta.branch_name,
+        store.meta.path,
+        store.meta.fallback_used,
+        bool(result.alert_text),
+        result.score,
+        result.skip_reason,
+        row.get("no_alert_reason"),
+        result.matched_patterns[:3],
     )
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-    return refreshed_summary or summary
+    return {
+        "matched": bool(result.alert_text),
+        "alert_text": result.alert_text or "",
+        "score": result.score,
+        "reason": row["reason"],
+        "matched_patterns": result.matched_patterns,
+        "skip_reason": result.skip_reason,
+        "no_alert_reason": row.get("no_alert_reason"),
+        "state_meta": {
+            "backend": store.meta.backend,
+            "state_read_ok": store.meta.state_read_ok,
+            "state_write_ok": state_write_ok,
+            "branch_name": store.meta.branch_name,
+            "path": store.meta.path,
+            "fallback_used": store.meta.fallback_used,
+        },
+    }
+
+
+def _generate_and_save_f_risk(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    return _refresh_daily_log_summary(config, summary.target_date) or summary
 
 
 def _generate_and_save_diary(
@@ -1098,7 +1134,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = _run_optional_enrichment("weather", _generate_and_save_weather, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     try:
-        expense_f_alert = _generate_and_save_expense_f(config, summary=summary, run_id=run_id)
+        expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
     except Exception as exc:  # noqa: BLE001
         logging.exception(
             "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=expense_f reason=%s",
@@ -1110,8 +1146,11 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _run_optional_enrichment("sleep", _generate_and_save_sleep_insights, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("f_risk", _generate_and_save_f_risk, summary)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    logging.info(
+        "f_risk_runtime_skipped_in_notify target_date(JST)=%s run_id=%s daily_log_write_skipped_for_f_risk=true skip_reason=notify_phase_does_not_send_mail",
+        summary.target_date,
+        run_id,
+    )
     summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_diary(config, summary=summary, run_id=run_id)

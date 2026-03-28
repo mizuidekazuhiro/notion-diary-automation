@@ -116,7 +116,7 @@ def test_expense_f_uses_default_props_and_ignores_category(monkeypatch: pytest.M
     assert result.available is True
     assert result.count == 1
     assert result.total == 1234
-    assert result.debug_summary["category_unused"] is True
+    assert result.debug_summary["resolved_props"]["category"] == "Category"
 
 
 def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,7 +163,7 @@ def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.Monk
     )
 
     assert result.skip_reason in {"insufficient_samples", "model_unavailable"}
-    assert captured["summaries"] == histories
+    assert [item.target_date for item in captured["summaries"]] == [item.target_date for item in histories]
     assert callable(captured["chat_completion"])
     assert captured["model"] == "gpt-4.1-mini"
 
@@ -175,7 +175,7 @@ def test_notify_diary_continues_when_f_risk_raises(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: order.append("weather") or summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_expense_f", lambda config, *, summary, run_id: order.append("expense_f") or {"matched": False, "reasons": []})
+    monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: order.append("expense_f") or {"matched": False, "reasons": []})
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
     monkeypatch.setattr(
         daily_job,

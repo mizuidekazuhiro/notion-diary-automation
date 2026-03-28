@@ -15,6 +15,12 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 
 ## Phase ごとの最終仕様
 
+> 最新運用メモ（F 関連）:
+> - Expense F / F Risk は **Notion Daily Log へ保存しません**。
+> - Expense F 集計と F Risk 判定は **Expenses DB 直読 + 実行時メモリ**で扱います。
+> - F Risk の継続状態（input hash / reason / generated_at など）は `automation-state` ブランチの `.state/f_risk_state.json`（ローカルは `.runtime/f_risk_state.local.json`）に保存します。
+> - F Risk Alert の表示先はメールのみです（Notion へは書き戻しません）。
+
 ### Phase A: ingest
 - Daily Log ページを ensure します。
 - Tasks / Health / Expenses を Daily Log に取り込みます。
