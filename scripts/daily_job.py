@@ -706,11 +706,21 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=skipped latlon_available=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=skipped latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             "",
             resolved_location.resolution_method,
             bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
+            resolved_location.debug_summary.get("query_status"),
+            resolved_location.debug_summary.get("latest_selected_page_id"),
+            resolved_location.debug_summary.get("latest_selected_time"),
+            resolved_location.debug_summary.get("effective_time_prop"),
+            resolved_location.debug_summary.get("effective_place_prop"),
+            resolved_location.debug_summary.get("resolved_lat_prop"),
+            resolved_location.debug_summary.get("resolved_lon_prop"),
+            resolved_location.debug_summary.get("geocode_attempted"),
+            resolved_location.debug_summary.get("geocode_query"),
+            resolved_location.debug_summary.get("fallback_used"),
             save_result.get("updated"),
             skip_reason,
             json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
@@ -810,13 +820,23 @@ def _generate_and_save_weather(
     }
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=ok latlon_available=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=ok latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
         resolved_location.source,
         weather.location_label,
         resolved_location.resolution_method,
         (resolved_location.debug_summary.get("geocode_debug") or {}).get("status")
         or ("skipped_latlon_available" if resolved_location.resolution_method == "latlon_direct" else "ok"),
         bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
+        resolved_location.debug_summary.get("query_status"),
+        resolved_location.debug_summary.get("latest_selected_page_id"),
+        resolved_location.debug_summary.get("latest_selected_time"),
+        resolved_location.debug_summary.get("effective_time_prop"),
+        resolved_location.debug_summary.get("effective_place_prop"),
+        resolved_location.debug_summary.get("resolved_lat_prop"),
+        resolved_location.debug_summary.get("resolved_lon_prop"),
+        resolved_location.debug_summary.get("geocode_attempted"),
+        resolved_location.debug_summary.get("geocode_query"),
+        resolved_location.debug_summary.get("fallback_used"),
         save_result.get("updated"),
         "",
         json.dumps(weather.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
@@ -850,7 +870,7 @@ def _compute_expense_f_alert(
 
     reason_labels = [reason.split(":")[0] if ":" in reason else reason for reason in reasons[:3]]
     logging.info(
-        "[ExpenseF] source=expenses_db_direct target_date=%s matched=%s count=%s total=%s merchants_count=%s data_status=%s skip_reason=%s resolved_props=%s reason_labels=%s",
+        "[ExpenseF] source=expenses_db_direct target_date=%s matched=%s count=%s total=%s merchants_count=%s data_status=%s skip_reason=%s resolved_props=%s created_time_source=%s date_window_start=%s date_window_end=%s filter_strategy=%s query_exception_class=%s query_exception_message=%s matched_count=%s total_amount=%s reason_labels=%s",
         summary.target_date,
         matched,
         aggregate.count,
@@ -859,6 +879,14 @@ def _compute_expense_f_alert(
         aggregate.data_status,
         aggregate.skip_reason,
         aggregate.debug_summary.get("resolved_props"),
+        aggregate.debug_summary.get("created_time_source"),
+        aggregate.debug_summary.get("date_window_start"),
+        aggregate.debug_summary.get("date_window_end"),
+        aggregate.debug_summary.get("filter_strategy"),
+        aggregate.debug_summary.get("query_exception_class"),
+        aggregate.debug_summary.get("query_exception_message"),
+        aggregate.debug_summary.get("matched_count"),
+        aggregate.debug_summary.get("total_amount"),
         reason_labels,
     )
     if matched:
@@ -914,31 +942,16 @@ def _compute_f_risk_alert_runtime(
     expense_f_aggregate = aggregate_daily_expense_f(summary.target_date)
     store = FRiskStateStore()
     if store.meta.backend == "unavailable":
-        logging.info(
-            "[FRisk] source=f_risk_runtime target_date=%s skip_reason=state_backend_unavailable state_store_backend=%s risk_matched=false score=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
+        logging.warning(
+            "[FRisk] source=f_risk_runtime target_date=%s state_store_backend=%s state_read_ok=%s state_write_ok=%s branch_name=%s path=%s fallback_used=%s skip_reason=state_backend_unavailable",
             summary.target_date,
             store.meta.backend,
-            None,
-            "state_backend_unavailable",
-            [],
+            store.meta.state_read_ok,
+            store.meta.state_write_ok,
+            store.meta.branch_name,
+            store.meta.path,
+            store.meta.fallback_used,
         )
-        return {
-            "matched": False,
-            "alert_text": "",
-            "score": None,
-            "reason": "state_backend_unavailable",
-            "matched_patterns": [],
-            "skip_reason": "state_backend_unavailable",
-            "no_alert_reason": "state_backend_unavailable",
-            "state_meta": {
-                "backend": store.meta.backend,
-                "state_read_ok": store.meta.state_read_ok,
-                "state_write_ok": False,
-                "branch_name": store.meta.branch_name,
-                "path": store.meta.path,
-                "fallback_used": store.meta.fallback_used,
-            },
-        }
     previous_state = store.get_for_date(summary.target_date)
     hash_payload = {
         "target_date": summary.target_date,
@@ -1069,6 +1082,7 @@ def _generate_and_save_diary(
     *,
     summary: "DailyLogSummary",
     run_id: str,
+    reloaded_after_sleep_save: bool = False,
 ) -> "DailyLogSummary":
     logging.info("phase_c_diary_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     diary_input_fields, skipped_fields, input_overview, skipped_reason_by_field = build_diary_input_fields(summary)
@@ -1088,6 +1102,7 @@ def _generate_and_save_diary(
         json.dumps(
             {
                 **diary_hash_summary,
+                "reloaded_after_sleep_save": reloaded_after_sleep_save,
                 "current_input_hash": current_input_hash,
                 "previous_input_hash": previous_input_hash,
                 "input_hash_changed": input_changed,
@@ -1202,11 +1217,13 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             return fn(config, summary=current_summary, run_id=run_id)
         except Exception as exc:  # noqa: BLE001
             logging.exception(
-                "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s reason=%s",
+                "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
                 current_summary.target_date,
                 run_id,
                 step_name,
+                exc.__class__.__name__,
                 str(exc),
+                step_name,
             )
             return current_summary
 
@@ -1216,9 +1233,10 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
     except Exception as exc:  # noqa: BLE001
         logging.exception(
-            "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=expense_f reason=%s",
+            "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=expense_f exception_class=%s exception_message=%s failing_stage=expense_f",
             summary.target_date,
             run_id,
+            exc.__class__.__name__,
             str(exc),
         )
         expense_f_alert = {"matched": False, "title": "注意すべき支出パターン", "summary": "", "reasons": [], "debug": {"error": str(exc)}}
@@ -1229,7 +1247,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _generate_and_save_diary(config, summary=summary, run_id=run_id)
+    summary = _generate_and_save_diary(config, summary=summary, run_id=run_id, reloaded_after_sleep_save=True)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
 
     if not (summary.diary or "").strip():
@@ -1296,6 +1314,13 @@ def main() -> None:
         args.phase,
         target_date,
         run_id,
+    )
+    logging.info(
+        "runtime_identity workflow_name=%s phase=%s github_sha=%s branch_name=%s",
+        os.getenv("GITHUB_WORKFLOW", ""),
+        args.phase,
+        os.getenv("GITHUB_SHA", ""),
+        os.getenv("GITHUB_REF_NAME", ""),
     )
 
     if args.phase in ("ingest", "all"):

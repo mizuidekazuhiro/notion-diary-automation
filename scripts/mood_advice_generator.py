@@ -1113,9 +1113,16 @@ def generate_today_advice(
             "top_tags": note_label_audit.get("top_tags", []),
             "matched_dates_count": note_label_audit.get("matched_dates_count", 0),
             "matched_dates": note_label_audit.get("matched_dates", []),
+            "unmatched_input_dates": note_label_audit.get("unmatched_input_dates", []),
+            "unmatched_response_dates": note_label_audit.get("unmatched_response_dates", []),
             "signals_detected_count": notes_signals_detected_count,
             "notes_label_quality_low": bool(notes_parse_success_rate < 0.5),
         }
+        missing_ids = list(note_label_audit.get("missing_ids") or [])
+        missing_ids_detail = [
+            {"id": item, "affected_input_dates": [row.target_date for row in historical_summaries if str(item).endswith(row.target_date)]}
+            for item in missing_ids
+        ]
         exclusion_reasons: list[str] = []
         if notes_payload["notes_parse_success_rate"] < 0.8:
             exclusion_reasons.append("parse_success_rate_low")
@@ -1125,13 +1132,21 @@ def generate_today_advice(
             exclusion_reasons.append("date_match_failure")
         if note_label_audit.get("duplicate_ids"):
             exclusion_reasons.append("duplicate_ids")
-        if note_label_audit.get("missing_ids"):
+        if missing_ids:
             exclusion_reasons.append("missing_ids")
         if note_label_audit.get("unknown_ids"):
             exclusion_reasons.append("unknown_ids")
+        quality_high_enough = (
+            notes_payload["notes_parse_success_rate"] >= 0.8
+            and note_label_audit.get("date_match_failure_count", 0) == 0
+            and notes_payload["unknown_rate"] <= 0.4
+        )
+        if quality_high_enough:
+            exclusion_reasons = [reason for reason in exclusion_reasons if reason != "missing_ids"]
         notes_quality_used = "low" if exclusion_reasons else "high"
         notes_payload["notes_quality_used"] = notes_quality_used
         notes_payload["exclusion_reason"] = exclusion_reasons
+        notes_payload["missing_ids_detail"] = missing_ids_detail
         audit.put("notes_labeling", notes_payload)
         audit.info(
             "[TodayAdvice][Notes] total=%s non_empty=%s api_calls=%s labeled=%s fallback_unknown=%s",
@@ -1166,9 +1181,15 @@ def generate_today_advice(
             notes_payload["parse_low_confidence_count"],
         )
         audit.info(
-            "[Notes] notes_quality_used=%s exclusion_reason=%s notes_based_features_included_count=%s notes_based_features_excluded_count=%s",
+            "[Notes] notes_quality_used=%s exclusion_reason=%s missing_ids_detail=%s matched_dates_count=%s unmatched_input_dates=%s unmatched_response_dates=%s parse_success_rate=%s unknown_rate=%s notes_based_features_included_count=%s notes_based_features_excluded_count=%s",
             notes_quality_used,
             safe_json(exclusion_reasons),
+            safe_json(missing_ids_detail),
+            notes_payload["matched_dates_count"],
+            safe_json(notes_payload["unmatched_input_dates"]),
+            safe_json(notes_payload["unmatched_response_dates"]),
+            notes_payload["notes_parse_success_rate"],
+            notes_payload["unknown_rate"],
             0 if notes_quality_used == "low" else len(note_labels),
             len(note_labels) if notes_quality_used == "low" else 0,
         )
