@@ -910,20 +910,23 @@ def _generate_and_save_f_risk(
         raise
     if result.skip_reason:
         logging.info(
-            "[FRisk] target_date=%s skip_reason=%s train_rows=%s skipped=true save_called=false debug=%s",
+            "[FRisk] target_date=%s stage=analysis skip_reason=%s sample_size=%s model_used=%s skipped=true fallback_used=%s save_called=false debug=%s",
             summary.target_date,
             result.skip_reason,
-            result.debug_summary.get("train_rows"),
+            (result.debug_summary.get("model_result_json") or {}).get("sample_size"),
+            (result.debug_summary.get("model_result_json") or {}).get("model_used"),
+            result.debug_summary.get("fallback_used", False),
             json.dumps(result.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
         )
         return _refresh_daily_log_summary(config, summary.target_date) or summary
     else:
         logging.info(
-            "phase_c_f_risk_generated target_date(JST)=%s run_id=%s score=%s matched_patterns=%s",
+            "phase_c_f_risk_generated target_date(JST)=%s run_id=%s stage=finalize score=%s matched_patterns=%s fallback_used=%s",
             summary.target_date,
             run_id,
             result.score,
             result.matched_patterns[:3],
+            result.debug_summary.get("fallback_used", False),
         )
 
     payload = {

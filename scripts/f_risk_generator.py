@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -21,45 +23,149 @@ class FRiskResult:
     debug_summary: dict[str, Any]
 
 
-def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str) -> FRiskResult:
-    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=60)
-    if len(histories) < 12:
-        return FRiskResult(None, None, None, [], "insufficient_samples", {"history_count": len(histories)})
+def _json_dumps(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
+
+def _render_f_risk_alert(*, model_result_json: dict[str, Any], model: str) -> tuple[Optional[str], bool, Optional[str]]:
+    skipped_reason = model_result_json.get("skipped_reason")
+    if skipped_reason:
+        return None, False, f"stage_a_skipped:{skipped_reason}"
+
+    risk_matched = bool(model_result_json.get("risk_matched"))
+    prompt = (
+        "model_result_json を唯一の根拠として、日本語の F Risk Alert 本文を 2-3 文で作成してください。"
+        "model_result_json に無い危険要因を追加しない。"
+        "risk_matched=false の場合は過剰な警告をしない。"
+        "score や matched_patterns と矛盾しない。"
+        "出力は本文のみ。\n"
+        f"model_result_json={_json_dumps(model_result_json)}"
+    )
+    try:
+        text = chat_completion(
+            model=model,
+            system_prompt="あなたはF Risk Alertを穏当で正確な日本語に整形するアシスタントです。",
+            user_prompt=prompt,
+            temperature=0.2,
+        ).strip()
+        if not text:
+            return None, True, "gpt_empty"
+        if (not risk_matched) and any(k in text for k in ["危険", "警告", "回避できない"]):
+            return "今日はF支出リスクの明確な一致は見られません。通常どおり、購入前に用途確認だけ行ってください。", True, "guarded_non_risk"
+        return text, False, None
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("f_risk_stage_b_failed error=%s", exc)
+        return None, True, f"gpt_failed:{type(exc).__name__}"
+
+
+def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str) -> FRiskResult:
+    model_result_json: dict[str, Any] = {
+        "target_date": target_date,
+        "sample_size": 0,
+        "model_used": None,
+        "score": None,
+        "threshold": 0.72,
+        "risk_matched": False,
+        "matched_patterns": [],
+        "top_positive_features": [],
+        "top_negative_features": [],
+        "confidence": "low",
+        "reliability": "low",
+        "skipped_reason": None,
+    }
+    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=60)
+    model_result_json["sample_size"] = len(histories)
+    if len(histories) < 12:
+        model_result_json["skipped_reason"] = "insufficient_samples"
+        return FRiskResult(None, None, None, [], "insufficient_samples", {"model_result_json": model_result_json, "stage": "analysis"})
+
+    note_audit: dict[str, Any] = {}
     labels = label_notes_in_batches(
         summaries=histories,
         chat_completion=chat_completion,
         model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        audit=note_audit,
     )
+    if note_audit.get("labeling_failed"):
+        model_result_json["skipped_reason"] = "labeling_failed"
+        return FRiskResult(None, None, None, [], "labeling_failed", {"model_result_json": model_result_json, "note_label_audit": note_audit})
+
     df = build_daily_feature_table(histories, labels)
     if "expense_f_count" not in df.columns:
-        return FRiskResult(None, None, None, [], "no_f_history", {"reason": "missing_expense_f_count"})
+        model_result_json["skipped_reason"] = "no_f_history"
+        return FRiskResult(None, None, None, [], "no_f_history", {"model_result_json": model_result_json})
 
     work = df.copy().sort_values("date").reset_index(drop=True)
     work["f_event_flag"] = (work["expense_f_count"].fillna(0) > 0).astype(int)
     train = work.iloc[:-1].copy()
     if len(train) < 10:
-        return FRiskResult(None, None, None, [], "insufficient_samples", {"train_rows": len(train)})
+        model_result_json["skipped_reason"] = "insufficient_samples"
+        return FRiskResult(None, None, None, [], "insufficient_samples", {"model_result_json": model_result_json, "train_rows": len(train)})
     if train["f_event_flag"].sum() == 0:
-        return FRiskResult(None, None, None, [], "no_f_history", {"train_rows": len(train)})
+        model_result_json["skipped_reason"] = "no_f_history"
+        return FRiskResult(None, None, None, [], "no_f_history", {"model_result_json": model_result_json, "train_rows": len(train)})
     if train["f_event_flag"].nunique() < 2:
-        return FRiskResult(None, None, None, [], "single_class_target", {"positive_count": int(train["f_event_flag"].sum())})
+        model_result_json["skipped_reason"] = "single_class_target"
+        return FRiskResult(None, None, None, [], "single_class_target", {"model_result_json": model_result_json})
 
     pattern_summary = _explore_patterns(train)
     model_summary = _fit_model(train, work.iloc[[-1]])
-
     if model_summary.get("skipped_reason"):
-        return FRiskResult(None, None, None, [], model_summary["skipped_reason"], {"pattern": pattern_summary, "model": model_summary})
+        model_result_json["skipped_reason"] = model_summary["skipped_reason"]
+        return FRiskResult(None, None, None, [], model_summary["skipped_reason"], {"model_result_json": model_result_json, "pattern": pattern_summary, "model": model_summary})
 
     score = model_summary.get("score")
-    matched = model_summary.get("matched_features", [])
-    threshold = 0.72
-    if score is None or score < threshold or not matched:
-        return FRiskResult(None, score, "score_below_threshold_or_no_match", matched, None, {"pattern": pattern_summary, "model": model_summary, "threshold": threshold})
+    threshold = float(model_result_json["threshold"])
+    matched = list(model_summary.get("matched_features", []))
+    model_result_json.update(
+        {
+            "model_used": model_summary.get("model"),
+            "score": score,
+            "risk_matched": bool(score is not None and score >= threshold and bool(matched)),
+            "matched_patterns": matched,
+            "top_positive_features": [d.get("feature") for d in pattern_summary.get("deltas", []) if d.get("delta", 0) > 0][:5],
+            "top_negative_features": [d.get("feature") for d in pattern_summary.get("deltas", []) if d.get("delta", 0) < 0][:5],
+            "confidence": "high" if len(train) >= 30 else "medium" if len(train) >= 18 else "low",
+            "reliability": "high" if len(matched) >= 2 else "medium" if matched else "low",
+            "skipped_reason": None,
+        }
+    )
 
-    reason = f"f_event_flag=Expense F Count>0 を目的変数に機械学習判定。score={score:.3f}"
-    alert = "今日は過去にF支出が出た日と似た条件が重なっています。" + " / ".join(matched[:3]) + "。不要な購入判断は一呼吸置いてください。"
-    return FRiskResult(alert, score, reason, matched, None, {"pattern": pattern_summary, "model": model_summary, "threshold": threshold})
+    text, fallback_used, fallback_reason = _render_f_risk_alert(
+        model_result_json=model_result_json,
+        model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
+    )
+    reason = f"model={model_result_json.get('model_used')} score={score:.3f}" if isinstance(score, (int, float)) else None
+    if text is None:
+        return FRiskResult(
+            None,
+            score,
+            reason,
+            matched,
+            "stage_b_failed",
+            {
+                "model_result_json": model_result_json,
+                "pattern": pattern_summary,
+                "model": model_summary,
+                "fallback_used": fallback_used,
+                "fallback_reason": fallback_reason,
+            },
+        )
+
+    return FRiskResult(
+        text,
+        score,
+        reason,
+        matched,
+        None,
+        {
+            "model_result_json": model_result_json,
+            "pattern": pattern_summary,
+            "model": model_summary,
+            "fallback_used": fallback_used,
+            "fallback_reason": fallback_reason,
+        },
+    )
 
 
 def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:

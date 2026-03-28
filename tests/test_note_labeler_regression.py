@@ -157,7 +157,8 @@ def test_feature_builder_flags_from_note_labels() -> None:
     assert int(df["notes_has_money_saved"].sum()) >= 1
 
 
-def test_audit_metrics_include_failure_and_top_tags() -> None:
+def test_audit_metrics_include_failure_and_top_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
     summaries = [_summary("2026-03-20", "疲れた"), _summary("2026-03-21", "")]
     responses = iter(["not-json", '[{"date":"2026-03-20","tags":["fatigue"]}]'])
 
