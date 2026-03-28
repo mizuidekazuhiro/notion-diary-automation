@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import warnings
 
 import pytest
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
@@ -438,9 +439,45 @@ def test_saved_sleep_properties_are_prioritized_for_today_advice_context() -> No
         exploratory_summary={"matched_today_conditions": []},
         regression_summary={"available": False, "sample_size": 0},
         lightgbm_summary={"available": False, "sample_size": 0},
+        today_sleep_context={"sleep_available": True, "sleep_hours": 6.7, "sleep_score": 75, "duration_source": "selected_sleep_candidate"},
     )
     assert bool(payload["today_sleep_context"]["sleep_available"]) is True
     assert payload["today_sleep_context"]["sleep_hours"] == 6.7
+
+
+def test_renderer_sleep_context_is_single_source_of_truth() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    today = _summary(
+        28,
+        target_date="2026-03-28",
+        sleep_start=None,
+        sleep_end=None,
+        sleep_duration_min=0,
+        sleep_score=0,
+    )
+    df = build_daily_feature_table([today], {})
+    payload = build_analysis_json(
+        target_date="2026-03-28",
+        today_summary=today,
+        features_df=df,
+        exploratory_summary={"matched_today_conditions": []},
+        regression_summary={"available": False, "sample_size": 0},
+        lightgbm_summary={"available": False, "sample_size": 0},
+        today_sleep_context={"sleep_available": True, "sleep_hours": 13.0, "sleep_score": 82, "duration_source": "selected_sleep_candidate"},
+    )
+    assert bool(payload["today_sleep_context"]["sleep_available"]) is True
+    assert payload["today_sleep_context"]["sleep_hours"] == 13.0
+
+
+def test_feature_builder_no_fragmentation_warning() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    histories = [_summary(i) for i in range(1, 20)]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _ = build_daily_feature_table(histories, {})
+    assert not any("highly fragmented" in str(item.message) for item in caught)
 
 
 def test_render_today_advice_sleep_optional_no_forced_prefix() -> None:

@@ -814,6 +814,18 @@ def build_today_advice_generation_context(
     else:
         today_state["today_sleep"]["sleep_available"] = False
         today_state["today_sleep"]["duration_source"] = "missing"
+    today_sleep_context = {
+        "sleep_available": bool(today_state["today_sleep"].get("sleep_available")),
+        "sleep_invalid_reason": None if selected_sleep_candidate else "missing_sleep_signal",
+        "sleep_hours": (
+            round(float(selected_sleep_candidate.get("resolved_sleep_duration_min", 0)) / 60.0, 2)
+            if selected_sleep_candidate and selected_sleep_candidate.get("resolved_sleep_duration_min") is not None
+            else None
+        ),
+        "duration_source": (selected_sleep_candidate or {}).get("duration_source") or "missing",
+        "bedtime": ((selected_sleep_candidate or {}).get("sleep_start") or "")[11:16] or None,
+        "sleep_score": (selected_sleep_candidate or {}).get("sleep_score"),
+    }
     notes_used = any(_safe_text(item.notes) for item in historical_summaries)
     judgment_input = {
         "today_sleep": today_state["today_sleep"],
@@ -845,6 +857,7 @@ def build_today_advice_generation_context(
         "sleep_candidates": sleep_candidates,
         "selected_sleep_candidate": selected_sleep_candidate,
         "sleep_properties_source": sleep_properties_source,
+        "today_sleep_context": today_sleep_context,
     }
 
 
@@ -1022,6 +1035,7 @@ def generate_today_advice(
     sleep_candidates = list(context.get("sleep_candidates") or [])
     selected_sleep_candidate = context.get("selected_sleep_candidate")
     sleep_properties_source = context.get("sleep_properties_source")
+    today_sleep_context = dict(context.get("today_sleep_context") or {})
     debug_enabled = is_today_advice_debug_enabled()
     audit = TodayAdviceAuditLogger(target_date=target_date, debug=debug_enabled)
     final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
@@ -1079,6 +1093,8 @@ def generate_today_advice(
             "selected": selected_sleep_candidate,
         },
     )
+    audit.info("[Sleep] sleep_candidates=%s", safe_json(sleep_candidates))
+    audit.info("[Sleep] selected_sleep_candidate=%s", safe_json(selected_sleep_candidate) if selected_sleep_candidate else "{}")
     audit.info(
         "[TodayAdvice][SleepResolve] target_date=%s rule=05:00JST start_or_end_minus_5h used_saved_sleep_properties=%s source=%s",
         target_date,
@@ -1105,6 +1121,7 @@ def generate_today_advice(
         "[TodayAdvice][SleepSelected] selected=%s",
         safe_json(selected_sleep_candidate) if selected_sleep_candidate else "{}",
     )
+    audit.info("[TodayAdvice][SleepSelected] selected_candidate_source=%s", sleep_properties_source)
     try:
         note_label_audit: dict[str, Any] = {}
         notes_debug_dir = os.path.join(
@@ -1374,7 +1391,9 @@ def generate_today_advice(
                 "top_tags": notes_payload.get("top_tags", []),
                 "label_quality_low": notes_payload.get("notes_label_quality_low", False),
             },
+            today_sleep_context=today_sleep_context,
         )
+        audit.info("[Sleep] renderer_received_sleep_context=%s", safe_json(today_sleep_context))
         today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")
         today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
         today_sleep_score = analysis_json.get("today_sleep_context", {}).get("sleep_score")

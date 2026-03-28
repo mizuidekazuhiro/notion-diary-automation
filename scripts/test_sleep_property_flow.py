@@ -103,7 +103,7 @@ def main() -> None:
     assert context.today_values["baseline_waking_bpm"] == 51
     assert context.trend_values["sleep_duration_min_delta_vs_7d"] == 40
 
-    fields, skipped, _ = build_diary_input_fields(today)
+    fields, skipped, _, _ = build_diary_input_fields(today)
     assert fields["Sleep Analysis JP"] == "old analysis"
     assert fields["Today Condition Forecast JP"] == "old forecast"
     assert fields["Sleep Start"].startswith("2026-03-20")

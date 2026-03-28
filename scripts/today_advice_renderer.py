@@ -4,7 +4,6 @@ import json
 from typing import Any, Callable, Mapping
 
 from publish.read_daily_log import DailyLogSummary
-from scripts.sleep_utils import resolve_sleep_duration_minutes
 
 INTERNAL_NOTES_TERMS = ("Notesの記録品質", "品質が低い", "parse", "unknown_rate", "unknown")
 
@@ -18,6 +17,7 @@ def build_analysis_json(
     regression_summary: Mapping[str, Any],
     lightgbm_summary: Mapping[str, Any],
     notes_label_quality: Mapping[str, Any] | None = None,
+    today_sleep_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     recent7 = features_df.sort_values("date").tail(7)
     late_count = int(recent7["late_outing_flag"].fillna(False).sum()) if len(recent7) and "late_outing_flag" in recent7 else 0
@@ -30,24 +30,11 @@ def build_analysis_json(
     recording = [f"Notes記録あり{note_days}/{len(recent7)}日", f"睡眠有効日{int(recent7['sleep_valid_flag'].fillna(False).sum())}/{len(recent7)}日"] if len(recent7) else []
 
     today_row = features_df.sort_values("date").tail(1).iloc[0] if len(features_df) else None
-    resolved = resolve_sleep_duration_minutes(today_summary.sleep_start, today_summary.sleep_end, today_summary.sleep_duration_min)
-    resolved_minutes = resolved.resolved_sleep_duration_min
-    if (
-        today_summary.resolved_sleep_duration_min is not None
-        and today_summary.resolved_sleep_duration_min > 0
-        and today_summary.sleep_duration_source == "derived_from_start_end"
-    ):
-        resolved_minutes = today_summary.resolved_sleep_duration_min
-    summary_sleep_score = float(today_summary.sleep_score) if isinstance(today_summary.sleep_score, (int, float)) else None
-    today_sleep_valid = bool(
-        (resolved_minutes is not None and resolved_minutes > 0)
-        or (summary_sleep_score is not None and summary_sleep_score > 0)
-    )
-    today_reason = None if today_sleep_valid else (resolved.invalid_reason or (today_row.get("sleep_invalid_reason") if today_row is not None else "missing_sleep_signal"))
-    sleep_hours = round(resolved_minutes / 60.0, 2) if today_sleep_valid and resolved_minutes is not None else None
-    sleep_score = summary_sleep_score if today_sleep_valid and summary_sleep_score is not None else (
-        float(today_row.get("sleep_score")) if today_row is not None and today_sleep_valid and today_row.get("sleep_score") == today_row.get("sleep_score") else None
-    )
+    sleep_context = dict(today_sleep_context or {})
+    today_sleep_valid = bool(sleep_context.get("sleep_available"))
+    sleep_hours = sleep_context.get("sleep_hours")
+    sleep_score = sleep_context.get("sleep_score")
+    today_reason = sleep_context.get("sleep_invalid_reason")
 
     matched_patterns = list(exploratory_summary.get("matched_today_conditions") or [])
     prob = lightgbm_summary.get("prediction_probability_for_today")
@@ -104,11 +91,10 @@ def build_analysis_json(
     return {
         "target_date": target_date,
         "today_sleep_context": {
+            **sleep_context,
             "sleep_available": today_sleep_valid,
             "sleep_invalid_reason": today_reason if not today_sleep_valid else None,
             "sleep_hours": sleep_hours if today_sleep_valid else None,
-            "duration_source": resolved.duration_source,
-            "bedtime": (today_summary.sleep_start or "")[11:16] if today_sleep_valid and today_summary.sleep_start else None,
             "sleep_score": sleep_score if today_sleep_valid else None,
             "sleep_vs_7d_delta_hours": sleep_delta,
             "sleep_score_vs_7d_delta": sleep_score_delta,

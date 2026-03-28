@@ -40,6 +40,9 @@ jobs:
           WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          LOCATION_LOG_DB_ID: ${{ secrets.LOCATION_LOG_DB_ID }}
+          LOCATION_LOG_TIME_PROP: ${{ secrets.LOCATION_LOG_TIME_PROP }}
+          LOCATION_LOG_PLACE_PROP: ${{ secrets.LOCATION_LOG_PLACE_PROP }}
           EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
           EXPENSE_F_PROP: ${{ secrets.EXPENSE_F_PROP }}
           EXPENSE_DATE_PROP: ${{ secrets.EXPENSE_DATE_PROP }}

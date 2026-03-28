@@ -102,7 +102,7 @@ def _payload(summary: DailyLogSummary) -> dict[str, object]:
 
 def test_sleep_duration_is_canonical_across_diary_and_rendering(monkeypatch: pytest.MonkeyPatch) -> None:
     summary = _summary()
-    used, _, _ = build_diary_input_fields(summary)
+    used, _, _, _ = build_diary_input_fields(summary)
     assert used["Sleep Duration"] == "402.0"
 
     text = render_daily_log_text(_payload(summary))
@@ -176,11 +176,18 @@ def test_diary_input_ignores_stale_sleep_analysis_duration() -> None:
         sleep_analysis_jp="深夜1時35分から朝8時17分までの約4時間28分でした。",
         today_condition_forecast_jp="今日は4時間28分睡眠の影響で集中に波が出る見込みです。",
     )
-    used, _, _ = build_diary_input_fields(summary)
+    used, _, _, _ = build_diary_input_fields(summary)
     assert used["Sleep Duration"] == "402.0"
     assert used["Sleep Duration Text"] == "6時間42分"
     assert "Sleep Analysis JP" not in used
     assert "Today Condition Forecast JP" not in used
+
+
+def test_diary_input_includes_today_advice_and_notes() -> None:
+    summary = _summary(today_advice="朝は重い判断を後ろ倒しにする", notes="夜更かしした")
+    used, _, _, _ = build_diary_input_fields(summary)
+    assert used["Today advice"] == "朝は重い判断を後ろ倒しにする"
+    assert used["Notes"] == "夜更かしした"
 
 
 def test_lightgbm_preprocess_drops_unsupported_object_columns(monkeypatch: pytest.MonkeyPatch) -> None:
