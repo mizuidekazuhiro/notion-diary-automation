@@ -62,17 +62,20 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `LOCATION_LOG_PLACE_PROP`（未設定時 `Place`）
 
 #### Weather の地点解決（確定仕様）
-- workflow から env が渡っていない場合、secret が存在しても未設定として扱います。
-- 優先順は **Location Log DB の place → Daily Log の Place → Daily Log の Location summary → 東京都** です。
-- debug は secret 値を出さず、`notion_token_present` / `location_log_db_id_present` / `effective_time_prop` / `effective_place_prop` / `query_status` / `fallback_used` を出します。
-- `query_status` は `missing_notion_env` / `notion_error` / `empty_result` / `empty_place` / `ok` を区別します。
+- Location Log DB を `Time` 降順で取得し、**最新1件**を採用します（`LOCATION_LOG_TIME_PROP` 既定値: `Time`）。
+- 緯度経度は最新1件の固定プロパティ **`Latitude (raw)` / `Longitude (raw)` を最優先**で参照します。
+- 固定名が空のときのみ alias (`latitude/lat/...`, `longitude/lon/lng/...`) を補助利用します。
+- lat/lon が未解決のときのみ、同じ最新1件の `Place`（`LOCATION_LOG_PLACE_PROP` 既定値: `Place`）を geocode します。
+- geocode 前に住所文字列を正規化します（郵便番号除去・末尾国名整理）。
+- fallback 順序は `Location Log latest lat/lon` → `Location Log latest Place geocode` → `Daily Log Place` → `Daily Log Location summary` → `東京都` です。
+- ログは `query_status`, `latest_selected_page_id`, `latest_selected_time`, `effective_time_prop`, `effective_place_prop`, `resolved_lat_prop`, `resolved_lon_prop`, `latlon_available`, `geocode_attempted`, `geocode_query`, `fallback_used`, `weather_status` を出します。
 
 #### Expense F の schema 解決方針
-- env 指定があれば env 名を優先します。
-- env 未指定時は DB schema を取得して自動解決します。
-- 候補名: `F/f/F判定`, `Date/日付`, `Received At/受領日時/Timestamp/Created time`, `Merchant/店名/支出先`, `Amount/金額`, `Category/カテゴリ/費目`。
-- `resolved_props` は常に構造化ログ出力し、未解決項目は `resolved=false` で残します。
-- `data_status` は `schema_unresolved` / `query_failed` / `no_matching_rows` / `matched_zero` / `ok` を区別します。
+- Expense F の日次帰属は **Notion page `created_time` を唯一の基準**にします（`Date` / `Received At` は補助 debug）。
+- 主経路の必須解決は `F`, `Merchant`, `Amount` のみです。`Category` は任意です。
+- クエリは `timestamp=created_time` の期間 filter + sort で統一します。
+- `resolved_props`, `created_time_source`, `date_window_start`, `date_window_end`, `filter_strategy`, `query_exception_class`, `query_exception_message`, `matched_count`, `total_amount` をログへ出します。
+- `data_status` は `ok` / `no_results` / `query_failed` / `schema_unresolved` を厳密に使い分けます。
 
 #### Today advice の睡眠 source of truth
 - 睡眠は `mood_advice_generator.py` の `selected_sleep_candidate` を唯一の source of truth とします。
