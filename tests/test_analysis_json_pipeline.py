@@ -38,10 +38,11 @@ def test_f_risk_alert_generation_uses_model_result_json(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(f_risk_generator, "chat_completion", _fake_chat_completion)
     text, fallback_used, reason = f_risk_generator._render_f_risk_alert(
-        model_result_json={
+        risk_json={
             "risk_matched": True,
             "score": 0.82,
             "matched_patterns": ["睡眠時間が短め"],
+            "explanation_points": ["直近数日で短睡眠が続き、過去F日と中程度一致"],
             "skipped_reason": None,
         },
         model="x",
@@ -49,7 +50,7 @@ def test_f_risk_alert_generation_uses_model_result_json(monkeypatch: pytest.Monk
     assert text
     assert fallback_used is False
     assert reason is None
-    assert "model_result_json=" in captured["prompt"]
+    assert "risk_json=" in captured["prompt"]
 
 
 def test_openai_chat_retry_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

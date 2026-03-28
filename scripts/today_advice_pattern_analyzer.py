@@ -5,10 +5,9 @@ from typing import Any
 
 LEAKAGE_COLUMNS = {
     "target",
-    "next_day_mood_score",
-    "next_day_low_mood_flag",
-    "next_day_fatigue_flag",
-    "next_day_low_productivity_flag",
+    "today_low_mood_flag",
+    "today_fatigue_flag",
+    "today_low_productivity_flag",
 }
 
 
@@ -19,16 +18,15 @@ def _feature_columns(df: Any) -> list[str]:
 
 def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
     work = df.copy().sort_values("date").reset_index(drop=True)
-    work["next_day_mood_score"] = work["mood"].shift(-1)
-    work["next_day_low_mood_flag"] = (work["next_day_mood_score"] <= 2).fillna(False)
-    work["next_day_fatigue_flag"] = work["notes_fatigue_flag"].shift(-1).fillna(False)
-    work["next_day_low_productivity_flag"] = (
-        (work["task_drop_count"].shift(-1).fillna(0) >= 2) | (work["task_done_count"].shift(-1).fillna(0) <= 1)
-    )
-    train = work.iloc[:-1].copy()
+    work["today_low_mood_flag"] = (work["mood"].fillna(5) <= 2).astype(int)
+    work["today_fatigue_flag"] = work["notes_fatigue_flag"].fillna(False).astype(int)
+    work["today_low_productivity_flag"] = (
+        (work["task_drop_count"].fillna(0) >= 2) | (work["task_done_count"].fillna(0) <= 1)
+    ).astype(int)
+    train = work.copy()
     if len(train) == 0:
         return {
-            "exploratory_target_name": "next_day_low_mood_flag",
+            "exploratory_target_name": "today_low_mood_flag",
             "univariate_summary": [],
             "top_single_features_for_low_mood": [],
             "top_protective_features": [],
@@ -44,7 +42,7 @@ def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
     for col in feature_cols:
         if train[col].dtype == bool:
             train[col] = train[col].astype(int)
-    target = train["next_day_low_mood_flag"].astype(int)
+    target = train["today_low_mood_flag"].astype(int)
     baseline = float(target.mean()) if len(target) else 0.0
 
     univariate_summary: list[dict[str, Any]] = []
@@ -129,7 +127,7 @@ def analyze_exploratory_patterns(df: Any) -> dict[str, Any]:
         evidence.append({"source_type": "combination", "features": matched[0]["features"], "delta": matched[0]["delta"]})
 
     return {
-        "exploratory_target_name": "next_day_low_mood_flag",
+        "exploratory_target_name": "today_low_mood_flag",
         "univariate_summary": univariate_summary,
         "top_single_features_for_low_mood": risk,
         "top_protective_features": protective,

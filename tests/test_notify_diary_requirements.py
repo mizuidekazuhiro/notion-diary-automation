@@ -44,7 +44,7 @@ def test_note_parser_detects_id_mismatch_and_missing() -> None:
 
 
 def test_leakage_columns_configured() -> None:
-    assert "next_day_low_mood_flag" in LEAKAGE_COLUMNS
+    assert "today_low_mood_flag" in LEAKAGE_COLUMNS
 
 
 def test_lightgbm_listed_in_requirements() -> None:
