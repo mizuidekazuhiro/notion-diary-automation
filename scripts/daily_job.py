@@ -489,6 +489,10 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
             "mismatch_fields": [],
             "normalized_save_timestamps": {},
             "normalized_read_timestamps": {},
+            "compare_target_fields": [],
+            "saved_fields": [],
+            "fetched_fields": [],
+            "ignored_fields": [],
         }
     missing_fields: list[str] = []
     mismatch_fields: list[str] = []
@@ -521,8 +525,14 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
         for key in ("weather_retrieved_at", "weather_generated_at")
     }
     compare_normalized = normalized_save_timestamps != raw_save_timestamps or normalized_read_timestamps != raw_read_timestamps
-    ignored_fields: list[str] = []
-    for field, expected in expected_payload.items():
+    compare_target_fields = [
+        field
+        for field, expected in expected_payload.items()
+        if _is_non_empty_weather_value(field=field, value=expected)
+    ]
+    ignored_fields: list[str] = [field for field in expected_payload.keys() if field not in compare_target_fields]
+    for field in compare_target_fields:
+        expected = expected_payload.get(field)
         actual = actual_by_field.get(field)
         if _is_non_empty_weather_value(field=field, value=expected) and not _is_non_empty_weather_value(field=field, value=actual):
             missing_fields.append(field)
@@ -542,6 +552,9 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
         "normalized_read_timestamps": normalized_read_timestamps,
         "compare_normalized": compare_normalized,
         "ignored_fields": ignored_fields,
+        "compare_target_fields": compare_target_fields,
+        "saved_fields": compare_target_fields,
+        "fetched_fields": compare_target_fields,
     }
 
 
@@ -1070,6 +1083,13 @@ def _generate_and_save_weather(
     compare_ok = bool(roundtrip_status["compare_ok"])
     readback_failures = list(roundtrip_status["missing_fields"])
     compare_mismatch_fields = list(roundtrip_status["mismatch_fields"])
+    logging.info(
+        "[Weather][Roundtrip] compare_target_fields=%s fetched_fields=%s saved_fields=%s ignored_fields=%s",
+        roundtrip_status.get("compare_target_fields", []),
+        roundtrip_status.get("fetched_fields", []),
+        roundtrip_status.get("saved_fields", []),
+        roundtrip_status.get("ignored_fields", []),
+    )
     stage_status = "ok" if readback_ok and compare_ok else "weather_readback_or_compare_failed"
     logging.info(
         "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s weather_compare_normalized=%s weather_compare_ignored_fields=%s weather_summary_source=%s weather_summary_text=%s empty_update_reason=%s save_result=%s debug=%s",

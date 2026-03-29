@@ -1335,7 +1335,16 @@ def generate_today_advice(
                 "[TodayAdvice][Regression] available=false reason=%s",
                 regression_payload.get("skipped_reason") or "unknown",
             )
-        lightgbm_summary = run_lightgbm_low_mood(feature_df)
+        lightgbm_today_overrides: dict[str, Any] = {}
+        if today_sleep_context.get("sleep_hours") is not None:
+            lightgbm_today_overrides["sleep_hours"] = today_sleep_context.get("sleep_hours")
+        if today_sleep_context.get("sleep_score") is not None:
+            lightgbm_today_overrides["sleep_score"] = today_sleep_context.get("sleep_score")
+        lightgbm_summary = run_lightgbm_low_mood(
+            feature_df,
+            today_feature_overrides=lightgbm_today_overrides or None,
+            today_feature_date=target_date,
+        )
         audit.put("lightgbm", lightgbm_summary)
         audit.info(
             "[TodayAdvice][LightGBM] available=%s sample=%s reason=%s skipped_columns=%s feature_columns=%s",
@@ -1344,6 +1353,13 @@ def generate_today_advice(
             lightgbm_summary.get("skipped_reason"),
             safe_json(lightgbm_summary.get("skipped_columns", [])),
             safe_json(lightgbm_summary.get("feature_columns", [])),
+        )
+        audit.info(
+            "[TodayAdvice][LightGBM] selected_candidate_date=%s feature_row_date_used_as_today=%s explanation_source_row_date=%s contribution_scope=%s",
+            (selected_sleep_candidate or {}).get("candidate_date"),
+            lightgbm_summary.get("feature_row_date_used_as_today"),
+            lightgbm_summary.get("lightgbm_explanation_source_row_date"),
+            lightgbm_summary.get("contribution_feature_scope"),
         )
 
         analysis_json = build_analysis_json(

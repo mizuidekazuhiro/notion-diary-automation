@@ -251,6 +251,36 @@ def test_diary_existing_with_changed_hash_regenerates(monkeypatch) -> None:
     assert payload["diary_generated_at"].endswith("Z")
 
 
+def test_weather_roundtrip_compare_ignores_unfetched_fields() -> None:
+    summary = _summary(
+        weather_summary="晴れ。最高25.0℃、最低15.0℃、降水量0.0mmです。",
+        weather_location="東京",
+        weather_retrieved_at="2026-03-20T00:00:00Z",
+        weather_generated_at="2026-03-20T00:01:00Z",
+        weather_input_hash="abc",
+        weather_temp_max_c=25.0,
+        weather_temp_min_c=15.0,
+        weather_precip_probability_max=50.0,  # stale value in Notion
+        weather_code=0,
+    )
+    expected_payload = {
+        "weather": "晴れ。最高25.0℃、最低15.0℃、降水量0.0mmです。",
+        "weather_summary": "晴れ。最高25.0℃、最低15.0℃、降水量0.0mmです。",
+        "weather_location": "東京",
+        "weather_temp_max_c": 25.0,
+        "weather_temp_min_c": 15.0,
+        "weather_precip_probability_max": None,
+        "weather_code": 0,
+        "weather_retrieved_at": "2026-03-20T00:00:00Z",
+        "weather_input_hash": "abc",
+        "weather_generated_at": "2026-03-20T00:01:00Z",
+    }
+    status = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
+    assert status["compare_ok"] is True
+    assert "weather_precip_probability_max" not in status["mismatch_fields"]
+    assert "weather_precip_probability_max" in status["ignored_fields"]
+
+
 def test_today_advice_existing_with_same_hash_skips(monkeypatch) -> None:
     summary = _summary(today_advice="existing advice")
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")

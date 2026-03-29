@@ -13,7 +13,12 @@ LEAKAGE_COLUMNS = {
 }
 
 
-def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
+def run_lightgbm_low_mood(
+    df: Any,
+    *,
+    today_feature_overrides: dict[str, Any] | None = None,
+    today_feature_date: str | None = None,
+) -> dict[str, Any]:
     base = {
         "available": False,
         "sample_size": max(0, len(df)),
@@ -22,9 +27,13 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
         "top_protective_features": [],
         "prediction_probability_for_today": None,
         "today_contribution_features": [],
+        "latest_historical_contribution_features": [],
         "skipped_reason": None,
         "skipped_columns": [],
         "feature_columns": [],
+        "feature_row_date_used_as_today": None,
+        "lightgbm_explanation_source_row_date": None,
+        "contribution_feature_scope": "latest_historical",
     }
 
     import importlib
@@ -97,8 +106,19 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
 
     today_prob = None
     today_contrib: list[dict[str, Any]] = []
+    latest_historical_contrib: list[dict[str, Any]] = []
+    feature_row_date_used_as_today = str(work.iloc[-1].get("date")) if len(work) else None
+    explanation_source_row_date = feature_row_date_used_as_today
+    scope = "latest_historical"
     try:
         today_x = work.iloc[[-1]][feature_cols].copy()
+        if isinstance(today_feature_overrides, dict):
+            for field, value in today_feature_overrides.items():
+                if field in today_x.columns:
+                    today_x.at[today_x.index[0], field] = value
+            scope = "target_date_proxy"
+            if today_feature_date:
+                feature_row_date_used_as_today = today_feature_date
         for col in today_x.columns:
             if today_x[col].dtype == bool:
                 today_x[col] = today_x[col].astype(int)
@@ -111,6 +131,7 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
                 val = today_x.iloc[0][f]
                 contrib_proxy.append({"feature": f, "today_value": None if val != val else float(val), "importance": float(imp)})
             today_contrib = contrib_proxy
+            latest_historical_contrib = list(contrib_proxy)
     except Exception:
         today_prob = None
 
@@ -122,7 +143,11 @@ def run_lightgbm_low_mood(df: Any) -> dict[str, Any]:
         "top_protective_features": protective[:8],
         "prediction_probability_for_today": today_prob,
         "today_contribution_features": today_contrib,
+        "latest_historical_contribution_features": latest_historical_contrib,
         "skipped_reason": None,
         "skipped_columns": unsupported_columns,
         "feature_columns": feature_cols,
+        "feature_row_date_used_as_today": feature_row_date_used_as_today,
+        "lightgbm_explanation_source_row_date": explanation_source_row_date,
+        "contribution_feature_scope": scope,
     }
