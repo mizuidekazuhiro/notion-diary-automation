@@ -151,7 +151,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
   - `diary` が既に存在していても、入力 hash が前回と異なれば再生成して上書きします。
   - `diary` が存在し、かつ入力 hash が同一なら `skip_reason=unchanged_input` でスキップします。
 - notify の重複防止は別判定です。`already_notified` でも generate 部分は先に動き、notify だけをスキップします。
-- Phase C の順序は固定です。Today advice 更新結果を再読込した後に Diary を生成するため、Diary hash には最新の Today advice が反映されます。
+- Phase C の順序は固定です。Today advice 更新結果を再読込した後に Diary を生成しますが、Diary 入力は raw inputs only であり generated field（Today advice / Sleep Analysis JP / Today Condition Forecast JP）は使いません。
 
 #### sleep insights の入力ルール
 - `trend_values` を常に構築し、値がなければ `null` のまま扱います。
@@ -205,6 +205,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Diary Generated At`
 - `Today Advice Generated At`
 - `Weather Location`
+- `Weather`
 - `Weather Summary`
 - `Weather Temp Max C`
 - `Weather Temp Min C`
@@ -244,14 +245,14 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `publish/read_daily_log.py` は sleep 系・Today advice 系プロパティを `DailyLogSummary` に揃えて返します。
 - weather / Expense F 集計 / F risk 系プロパティも `DailyLogSummary` へ追加し、mail / feature builder / Phase C で再利用します。
 - `scripts/daily_job.py` は Phase C の各保存後に Daily Log を再読込します。
-- weather の地点解決は、`apps/location_summary_writer` と同じ生 location 系（Stay Sessions DB）を優先し、届かない場合のみ `place` / `location_summary` / `東京都` へフォールバックします。
+- weather の地点解決は、Location Log の最新1件を基準にし、lat/lon がある場合は最優先で使います。lat/lon が無い場合のみ place geocode を使い、届かない場合は `place` / `location_summary` / `東京都` へフォールバックします。
 - weather API は key 不要の Open-Meteo（geocoding + forecast）を利用し、失敗時は Phase C 全体を落とさず `phase_c_weather_skip` を出します。
 - F risk は `f_event_flag = Expense F Count > 0` を主ラベルとして機械学習（LightGBM 優先、失敗時 LogisticRegression）を実行し、`insufficient_samples` / `single_class_target` / `no_f_history` などを skip_reason で記録します。
 - Today advice と F risk は責務・入力・保存先・ログを分離しています。
 - `scripts/diary_generator.py` の `event_date / done_date` ルールは維持しています。future event を当日実施と誤認しません。
 - 現在の設計では **Today advice は diary 本文を現在・過去とも参照しません**。`notes` は過去履歴のみ使い、当日 `notes` は使いません。
 - hash は JSON 正規化 + SHA-256 で作ります。キー順固定・余計な空白なし・`None`/空文字/空配列の揺れを吸収して、不要な再生成を抑えます。
-- Diary hash には、実際に `scripts/diary_generator.py` に渡す入力一式が入ります。これには `notes` / `done` / `drop` / `expenses` / `meal summary` / `location summary` / sleep 系 / `today_advice` など、Diary 出力に影響する項目が含まれます。
+- Diary hash には、実際に `scripts/diary_generator.py` に渡す raw input 一式のみが入ります。`Today advice` / `Sleep Analysis JP` / `Today Condition Forecast JP` は hash と prompt から除外されます。
 - Today advice hash には、`today_sleep` と historical-only の `historical_behavior_patterns` / `historical_recording_patterns` / `historical_context`、および過去比較サマリが含まれます。当日 non-sleep 値は hash と prompt の責務から除外します。
 
 ## Today advice 30〜60日分析パイプライン（Python分析 + GPT説明）

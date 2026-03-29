@@ -37,11 +37,29 @@ from scripts.sleep_condition_generator import (
     load_recent_daily_logs,
     maybe_generate_sleep_insights,
 )
-from scripts.sleep_utils import validate_generated_sleep_text
 from scripts.sleep_utils import resolve_sleep_for_target_date
 from scripts.weather_client import fetch_weather_for_date
 
 JST = ZoneInfo("Asia/Tokyo")
+DIARY_GENERATED_FIELDS = {
+    "Today advice",
+    "Sleep Analysis JP",
+    "Today Condition Forecast JP",
+}
+WEATHER_REQUIRED_FIELDS = (
+    "weather",
+    "weather_retrieved_at",
+    "weather_generated_at",
+    "weather_input_hash",
+)
+WEATHER_DETAIL_FIELDS = (
+    "weather_location",
+    "weather_summary",
+    "weather_temp_max_c",
+    "weather_temp_min_c",
+    "weather_precip_probability_max",
+    "weather_code",
+)
 
 
 @dataclass(frozen=True)
@@ -251,7 +269,6 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Location summary", summary.location_summary),
         ("Activity Summary", summary.activity_summary),
         ("Meal summary", summary.meal_summary),
-        ("Today advice", _validated_sleep_prose(summary.today_advice, canonical_sleep_duration_min=canonical_sleep_duration_min, canonical_sleep_duration_text=canonical_sleep_duration_text, field_name="Today advice")),
         ("Kcal", str(summary.kcal) if summary.kcal is not None else None),
         ("Fat", str(summary.fat) if summary.fat is not None else None),
         ("Carb", str(summary.carb) if summary.carb is not None else None),
@@ -293,31 +310,6 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         overview_parts.append(f"{name}({len(value)} chars): {preview}")
 
     return used, skipped, " | ".join(overview_parts), skipped_reason_by_field
-
-
-def _validated_sleep_prose(
-    text: Optional[str],
-    *,
-    canonical_sleep_duration_min: object,
-    canonical_sleep_duration_text: object,
-    field_name: str,
-) -> Optional[str]:
-    if not text:
-        return text
-    validation = validate_generated_sleep_text(
-        text,
-        canonical_sleep_duration_min=canonical_sleep_duration_min,
-        canonical_sleep_duration_text=canonical_sleep_duration_text,
-    )
-    if validation.is_consistent:
-        return text
-    logging.warning(
-        "sleep_text_consistency_error field=%s expected_sleep_duration_text=%s found_duration_text=%s action=drop_from_diary_input",
-        field_name,
-        canonical_sleep_duration_text,
-        validation.found_duration_text,
-    )
-    return None
 
 
 def _normalize_hash_value(value: object) -> object:
@@ -371,6 +363,16 @@ def _build_diary_hash_payload(
     summary: "DailyLogSummary",
     diary_input_fields: dict[str, str],
 ) -> tuple[dict[str, object], dict[str, object]]:
+    generated_field_values = {
+        "Today advice": summary.today_advice,
+        "Sleep Analysis JP": summary.sleep_analysis_jp,
+        "Today Condition Forecast JP": summary.today_condition_forecast_jp,
+    }
+    generated_inputs_excluded = sorted(
+        field_name
+        for field_name, field_value in generated_field_values.items()
+        if (field_value or "").strip()
+    )
     hash_payload = {
         "target_date": summary.target_date,
         "diary_input_fields": diary_input_fields,
@@ -385,9 +387,17 @@ def _build_diary_hash_payload(
         "used_field_count": len(diary_input_fields),
         "used_fields": sorted(diary_input_fields.keys()),
         "raw_inputs_only": True,
-        "generated_inputs_excluded": ["Sleep Analysis JP", "Today Condition Forecast JP", "Today advice"],
+        "generated_inputs_excluded": generated_inputs_excluded,
     }
     return hash_payload, debug_summary
+
+
+def _assert_diary_input_consistency(diary_input_fields: dict[str, str]) -> None:
+    inconsistent_fields = sorted(set(diary_input_fields.keys()) & DIARY_GENERATED_FIELDS)
+    if inconsistent_fields:
+        raise RuntimeError(
+            f"raw_inputs_only violation: generated fields are included in diary inputs: {inconsistent_fields}"
+        )
 
 
 def _refresh_daily_log_summary(config: Config, target_date: str) -> Optional["DailyLogSummary"]:
@@ -413,25 +423,28 @@ def _save_daily_log_fields(
 
 def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_payload: dict[str, object]) -> tuple[bool, list[str]]:
     if summary is None:
-        return False, ["weather_readback_missing:summary_unavailable"]
+        return False, ["summary_unavailable"]
     failures: list[str] = []
+    actual_by_field: dict[str, object] = {
+        "weather": (summary.weather_summary or "").strip(),
+        "weather_summary": (summary.weather_summary or "").strip(),
+        "weather_location": (summary.weather_location or "").strip(),
+        "weather_retrieved_at": (summary.weather_retrieved_at or "").strip(),
+        "weather_input_hash": (summary.weather_input_hash or "").strip(),
+        "weather_generated_at": (summary.weather_generated_at or "").strip(),
+        "weather_temp_max_c": summary.weather_temp_max_c,
+        "weather_temp_min_c": summary.weather_temp_min_c,
+        "weather_precip_probability_max": summary.weather_precip_probability_max,
+        "weather_code": summary.weather_code,
+    }
     for field, expected in expected_payload.items():
-        if field == "weather":
-            actual = (summary.weather_summary or "").strip()
-            if actual != (str(expected or "").strip()):
-                failures.append("weather_readback_missing:weather")
-        elif field == "weather_retrieved_at":
-            actual = (summary.weather_retrieved_at or "").strip()
-            if actual != (str(expected or "").strip()):
-                failures.append("weather_readback_missing:weather_retrieved_at")
-        elif field == "weather_input_hash":
-            actual = (summary.weather_input_hash or "").strip()
-            if actual != (str(expected or "").strip()):
-                failures.append("weather_readback_missing:weather_input_hash")
-        elif field == "weather_generated_at":
-            actual = (summary.weather_generated_at or "").strip()
-            if actual != (str(expected or "").strip()):
-                failures.append("weather_readback_missing:weather_generated_at")
+        actual = actual_by_field.get(field)
+        if isinstance(expected, (int, float)) and expected is not None:
+            if actual is None or float(actual) != float(expected):
+                failures.append(field)
+            continue
+        if (str(actual or "").strip()) != (str(expected or "").strip()):
+            failures.append(field)
     return len(failures) == 0, failures
 
 
@@ -730,7 +743,7 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_readback_missing_fields=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             "",
             resolved_location.resolution_method,
@@ -746,6 +759,11 @@ def _generate_and_save_weather(
             resolved_location.debug_summary.get("geocode_query"),
             resolved_location.debug_summary.get("fallback_used"),
             save_result.get("updated"),
+            False,
+            True,
+            bool(save_result.get("updated")),
+            False,
+            ["weather", "weather_retrieved_at", "weather_generated_at", "weather_input_hash"],
             skip_reason,
             json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
         )
@@ -824,13 +842,18 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_readback_missing_fields=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             resolved_location.name,
             resolved_location.resolution_method,
             (resolved_location.debug_summary.get("geocode_debug") or {}).get("status") or weather.debug_summary.get("stage"),
             bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
             save_result.get("updated"),
+            False,
+            True,
+            bool(save_result.get("updated")),
+            False,
+            ["weather", "weather_retrieved_at", "weather_generated_at", "weather_input_hash"],
             reason,
             json.dumps(debug_payload, ensure_ascii=False, sort_keys=True, default=str),
         )
@@ -838,16 +861,24 @@ def _generate_and_save_weather(
 
     payload = {
         "weather": weather.summary or "",
+        "weather_summary": weather.summary or "",
+        "weather_location": weather.location_label or resolved_location.name or "",
+        "weather_temp_max_c": weather.temp_max_c,
+        "weather_temp_min_c": weather.temp_min_c,
+        "weather_precip_probability_max": weather.precip_probability_max,
+        "weather_code": weather.weather_code,
         "weather_retrieved_at": weather.retrieved_at,
         "weather_input_hash": current_input_hash,
         "weather_generated_at": _utc_timestamp(),
     }
+    weather_save_attempted = True
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    weather_save_ok = bool(save_result.get("updated")) and str(save_result.get("reason") or "") in {"updated", ""}
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     readback_ok, readback_failures = _weather_roundtrip_status(summary=refreshed_summary, expected_payload=payload)
     stage_status = "ok" if readback_ok else "weather_readback_missing"
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_saved=%s readback_ok=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_readback_missing_fields=%s empty_update_reason=%s debug=%s",
         resolved_location.source,
         weather.location_label,
         resolved_location.resolution_method,
@@ -866,8 +897,11 @@ def _generate_and_save_weather(
         resolved_location.debug_summary.get("geocode_query"),
         resolved_location.debug_summary.get("fallback_used"),
         save_result.get("updated"),
-        bool(save_result.get("updated")),
+        weather.available,
+        weather_save_attempted,
+        weather_save_ok,
         readback_ok,
+        readback_failures,
         "",
         json.dumps({**weather.debug_summary, "readback_failures": readback_failures}, ensure_ascii=False, sort_keys=True, default=str),
     )
@@ -1125,6 +1159,7 @@ def _generate_and_save_diary(
 ) -> "DailyLogSummary":
     logging.info("phase_c_diary_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
     diary_input_fields, skipped_fields, input_overview, skipped_reason_by_field = build_diary_input_fields(summary)
+    _assert_diary_input_consistency(diary_input_fields)
     diary_hash_payload, diary_hash_summary = _build_diary_hash_payload(summary, diary_input_fields)
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(diary_hash_payload)
     previous_input_hash = (summary.diary_input_hash or "").strip() or None
