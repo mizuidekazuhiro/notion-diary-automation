@@ -100,18 +100,39 @@ def test_f_risk_labeling_failed_sets_skip_reason(monkeypatch: pytest.MonkeyPatch
         lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 21)],
     )
     monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: __import__("pandas").DataFrame(
+            {
+                "date": [h.target_date for h in histories],
+                "expense_f_count": [0] * len(histories),
+                "sleep_short_streak": [0] * len(histories),
+                "notes_stress_flag": [0] * len(histories),
+                "spending_total": [1000] * len(histories),
+                "sleep_score": [70] * len(histories),
+                "is_weekend": [0] * len(histories),
+            }
+        ),
+    )
     def _fake_labeler(**kwargs):
         kwargs["audit"]["labeling_failed"] = True
         kwargs["audit"]["labels_usable"] = False
         return {}
     monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", _fake_labeler)
     result = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
-    assert result.skip_reason == "labeling_failed"
+    assert result.skip_reason != "labeling_failed"
+    assert result.debug_summary["risk_json"]["notes_labeling_ok"] is False
     assert result.alert_text is None
 
 
 def test_f_risk_insufficient_samples_does_not_emit_alert(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [object()] * 5)
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_load_histories",
+        lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 6)],
+    )
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
     result = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
     assert result.skip_reason == "insufficient_samples"
     assert result.alert_text is None

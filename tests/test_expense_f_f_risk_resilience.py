@@ -387,8 +387,8 @@ def test_f_risk_labeling_failed_returns_clear_skip_reason(monkeypatch: pytest.Mo
     )
 
     result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
-    assert result.skip_reason == "labeling_failed"
-    assert result.debug_summary["risk_json"]["skipped_reason"] == "labeling_failed"
+    assert result.skip_reason != "labeling_failed"
+    assert result.debug_summary["risk_json"]["notes_labeling_ok"] is False
 
 
 def test_f_risk_continues_when_labels_usable_even_if_merge_quality_low(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -428,3 +428,111 @@ def test_f_risk_continues_when_labels_usable_even_if_merge_quality_low(monkeypat
     result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result.skip_reason != "labeling_failed"
     assert result.debug_summary["risk_json"]["notes_labeling_quality"] == "low"
+
+
+def test_f_risk_case_similarity_alert_and_debug(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import pandas as pd
+
+    histories = [_summary(i) for i in range(1, 22)]
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {h.target_date: object() for h in histories})
+
+    def _table(_h, _l):
+        dates = [h.target_date for h in _h]
+        n = len(dates)
+        f_days = {6, 14}
+        return pd.DataFrame({
+            "date": dates,
+            "expense_f_count": [1 if i in f_days else 0 for i in range(n)],
+            "sleep_short_streak": [2 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "notes_stress_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "notes_social_load_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "notes_has_drinking": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "late_outing_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "spending_vs_7d_delta": [3500 if i in {5, 13, n - 1} else 100 for i in range(n)],
+            "sleep_score": [65] * n,
+            "spending_total": [3000] * n,
+            "is_weekend": [0] * n,
+        })
+
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", _table)
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"score": 0.4, "model": "stub", "skipped_reason": None})
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-21")
+    risk_json = result.debug_summary["risk_json"]
+    assert risk_json["risk_matched"] is True
+    assert risk_json["matched_case_dates"]
+    assert risk_json["matched_pre_patterns"]
+    assert risk_json["final_alert_basis"] in {"case_similarity_high", "case_similarity_medium_plus_rules", "model_assisted_case_similarity"}
+
+
+def test_f_risk_case_similarity_weak_no_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import pandas as pd
+
+    histories = [_summary(i) for i in range(1, 20)]
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {h.target_date: object() for h in histories})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda _h, _l: pd.DataFrame({
+            "date": [h.target_date for h in _h],
+            "expense_f_count": [1 if i in {5, 10} else 0 for i in range(len(_h))],
+            "sleep_short_streak": [0] * len(_h),
+            "notes_stress_flag": [0] * len(_h),
+            "notes_social_load_flag": [0] * len(_h),
+            "notes_has_drinking": [0] * len(_h),
+            "late_outing_flag": [0] * len(_h),
+            "spending_vs_7d_delta": [0] * len(_h),
+            "sleep_score": [75] * len(_h),
+            "spending_total": [1000] * len(_h),
+            "is_weekend": [0] * len(_h),
+        }),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"score": 0.2, "model": "stub", "skipped_reason": None})
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-19")
+    assert result.alert_text is None
+    assert result.debug_summary["risk_json"]["no_alert_reason"] in {"case_similarity_weak", "case_similarity_medium_but_rule_insufficient"}
+
+
+def test_f_risk_history_days_env_and_case_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import pandas as pd
+
+    captured: dict[str, object] = {}
+    histories = [_summary(i) for i in range(1, 25)]
+
+    def _load_histories(**kwargs):
+        captured["days"] = kwargs["days"]
+        return histories
+
+    monkeypatch.setenv("F_RISK_HISTORY_DAYS", "365")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", _load_histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {h.target_date: object() for h in histories})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda _h, _l: pd.DataFrame({
+            "date": [h.target_date for h in _h],
+            "expense_f_count": [1 if i in {10, 18} else 0 for i in range(len(_h))],
+            "notes_has_drinking": [1 if i in {9, 17, len(_h) - 1} else 0 for i in range(len(_h))],
+            "notes_social_load_flag": [1 if i in {9, 17, len(_h) - 1} else 0 for i in range(len(_h))],
+            "late_outing_flag": [1 if i in {9, 17, len(_h) - 1} else 0 for i in range(len(_h))],
+            "sleep_short_streak": [2 if i in {9, 17, len(_h) - 1} else 0 for i in range(len(_h))],
+            "notes_stress_flag": [1 if i in {9, 17, len(_h) - 1} else 0 for i in range(len(_h))],
+            "spending_vs_7d_delta": [2800] * len(_h),
+            "sleep_score": [65] * len(_h),
+            "spending_total": [2000] * len(_h),
+            "is_weekend": [0] * len(_h),
+        }),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"score": 0.35, "model": "stub", "skipped_reason": None})
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-24")
+    risk_json = result.debug_summary["risk_json"]
+    assert captured["days"] == 365
+    assert risk_json["history_days_loaded"] == len(histories)
+    assert risk_json["matched_case_types"]

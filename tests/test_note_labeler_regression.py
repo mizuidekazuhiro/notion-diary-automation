@@ -11,6 +11,7 @@ from scripts.note_batch_labeler import (
     parse_note_label_json,
     parse_note_label_json_with_meta,
 )
+from scripts.notes_prompt_assets import load_notes_prompt_assets
 from scripts.today_advice_feature_builder import build_daily_feature_table
 
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
@@ -243,3 +244,43 @@ def test_order_merge_works_when_count_matches(monkeypatch: pytest.MonkeyPatch) -
     assert audit["labels_usable"] is True
     assert audit["order_merge_used"] is True
     assert int(audit["matched_by_order_count"]) > 0
+
+
+def test_labeling_empty_response_sets_fatal_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた")]
+    audit: dict[str, object] = {}
+    _ = label_notes_in_batches(summaries=summaries, chat_completion=lambda **kwargs: "", model="x", audit=audit)
+    assert audit["labeling_failed"] is True
+    assert audit["labeling_failed_fatal_reason"] == "empty_response"
+
+
+def test_id_integrity_failures_are_audited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた"), _summary("2026-03-21", "メモ")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        _ = kwargs
+        return json.dumps(
+            [
+                {"id": "unknown-a", "date": "2026-03-20", "tags": ["fatigue"]},
+                {"id": "unknown-a", "date": "2026-03-21", "tags": []},
+            ],
+            ensure_ascii=False,
+        )
+
+    audit: dict[str, object] = {}
+    _ = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert int(audit["unknown_ids_count"]) >= 1
+    assert audit["merge_failed_reason"] is not None
+
+
+def test_prompt_few_shots_match_final_schema() -> None:
+    assets = load_notes_prompt_assets()
+    required_flags = {"fatigue", "stress", "social_load", "achievement", "self_care", "sleep_issue"}
+    allowed_tags = set(assets["allowed_tags"])
+    for sample in assets["few_shots"]:
+        row = sample["row"]
+        assert {"id", "date", "sentiment", "flags", "tags", "confidence"}.issubset(set(row.keys()))
+        assert set(row["flags"].keys()) == required_flags
+        assert set(row["tags"]).issubset(allowed_tags)

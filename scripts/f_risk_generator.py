@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
-from scripts.note_batch_labeler import label_notes_in_batches
+from scripts.note_batch_labeler import label_notes_in_batches, neutral_label
 from scripts.openai_chat_utils import chat_completion
 from scripts.expense_f_aggregator import aggregate_expense_f_for_dates
 from scripts.today_advice_feature_builder import build_daily_feature_table
@@ -40,9 +40,9 @@ def _render_f_risk_alert(*, risk_json: dict[str, Any], model: str) -> tuple[Opti
 
     prompt = (
         "risk_json を唯一の根拠として、日本語の F Risk Alert 本文を 2-4 文で作成してください。"
-        "直近数日パターンと過去F日の類似、主要一致要因1〜3個、一致強度（強/中/弱）を必ず含める。"
-        "explanation_points を最優先で使い、risk_json に無い理由を足さない。"
-        "過剰に煽らない。出力は本文のみ。\n"
+        "必ず『どの過去F支出前ケースに似ているか（日付）』『一致要素1〜3件』『ケースタイプ』を含める。"
+        "similarity_score_total と final_alert_basis を踏まえ、過剰に煽らず具体的に。"
+        "explanation_points を最優先で使い、risk_json に無い理由を足さない。出力は本文のみ。\n"
         f"risk_json={_json_dumps(risk_json)}"
     )
     try:
@@ -81,7 +81,8 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         "no_alert_reason": None,
         "forbidden_inputs_used": False,
     }
-    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=180)
+    history_days = max(60, int(os.getenv("F_RISK_HISTORY_DAYS", "365") or "365"))
+    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=history_days)
     histories = _hydrate_expense_f_from_expenses_db(histories)
     logging.info(
         "f_risk_history_source source=expenses_db_direct target_date=%s history_days=%s",
@@ -111,14 +112,11 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         note_audit.get("exclusion_reason"),
     )
     if not labels_usable:
-        risk_json["skipped_reason"] = "labeling_failed"
-        risk_json["no_alert_reason"] = "insufficient_evidence"
-        risk_json["notes_labeling_ok"] = False
         logging.warning(
-            "[FRisk][NotesAudit] skip labeling_failed fatal_reason=%s",
+            "[FRisk][NotesAudit] degrade labeling_failed fatal_reason=%s; continue with neutral labels",
             note_audit.get("labeling_failed_fatal_reason"),
         )
-        return FRiskResult(None, None, None, [], "labeling_failed", {"risk_json": risk_json, "note_label_audit": note_audit})
+        labels = {h.target_date: neutral_label(h.target_date) for h in histories}
 
     df = build_daily_feature_table(histories, labels)
     work = df.copy().sort_values("date").reset_index(drop=True)
@@ -129,10 +127,12 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         risk_json["skipped_reason"] = "insufficient_samples"
         risk_json["no_alert_reason"] = "insufficient_evidence"
         return FRiskResult(None, None, None, [], "insufficient_samples", {"risk_json": risk_json})
-    if train["f_event_flag"].sum() == 0 or train["f_event_flag"].nunique() < 2:
-        risk_json["skipped_reason"] = "no_f_history"
-        risk_json["no_alert_reason"] = "insufficient_evidence"
-        return FRiskResult(None, None, None, [], "no_f_history", {"risk_json": risk_json})
+    pre_days = max(1, int(os.getenv("F_RISK_PRE_DAYS", "3") or "3"))
+    post_days = max(1, int(os.getenv("F_RISK_POST_DAYS", "2") or "2"))
+    top_matches = max(1, int(os.getenv("F_RISK_TOP_MATCHES", "3") or "3"))
+    event_cases = _extract_f_event_cases(train, pre_days=pre_days, post_days=post_days)
+    recent_case = _build_recent_case(work, days=pre_days)
+    similarity = _compute_case_similarity(recent_case=recent_case, event_cases=event_cases, top_n=top_matches)
 
     pattern_summary = _explore_patterns(train)
     recent_train = train.tail(max(45, min(90, len(train))))
@@ -149,28 +149,32 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     long_score = _to_float(longterm_model.get("score"))
     blended = _blend_scores(recent_score, long_score)
     matched = _derive_matched_features(today.iloc[0].to_dict())
-    similarity = _f_day_similarity(train=train, today=today.iloc[0].to_dict())
-    explanation_points = _build_explanation_points(matched=matched, similarity=similarity, today=today.iloc[0].to_dict())
+    explanation_points = _build_explanation_points(
+        matched=matched,
+        similarity={"summary": similarity.get("summary", ""), "strength": similarity.get("strength", "weak")},
+        today=today.iloc[0].to_dict(),
+    )
     evidence_sufficiency = "sufficient" if len(explanation_points) >= 2 else "limited"
     confidence = "high" if len(train) >= 60 else "medium" if len(train) >= 30 else "low"
     reliability = "high" if similarity["strength"] == "strong" else "medium" if similarity["strength"] == "medium" else "low"
 
-    model_risk_matched = bool(blended is not None and blended >= 0.62 and len(matched) >= 1 and similarity["strength"] in {"strong", "medium"} and len(explanation_points) >= 2)
-    risk_matched = model_risk_matched
+    rule_meta = _rule_based_fallback(today.iloc[0].to_dict(), availability=availability)
+    rule_count = len(rule_meta.get("matched_factors", []))
+    sim_level = str(similarity.get("strength") or "weak")
+    case_high = sim_level == "strong"
+    case_medium_plus_rule = sim_level == "medium" and rule_count >= 2
+    model_support = bool(blended is not None and blended >= 0.62)
+    risk_matched = bool(case_high or case_medium_plus_rule or (sim_level in {"strong", "medium"} and model_support and rule_count >= 1))
     if fallback_used:
-        risk_matched = bool(fallback_meta.get("risk_matched"))
         blended = _to_float(fallback_meta.get("blended_score"))
-        if risk_matched and fallback_meta.get("matched_factors"):
-            matched = [str(x) for x in fallback_meta.get("matched_factors", [])]
-            explanation_points = [f"fallback判定: {f}" for f in matched[:3]] + explanation_points[:2]
 
     risk_json.update(
         {
             "risk_matched": risk_matched,
             "risk_probability_recent": recent_score,
             "risk_probability_longterm": long_score,
-            "recent_pattern_matches": similarity["pattern_matches"],
-            "f_day_similarity_summary": similarity["summary"],
+            "recent_pattern_matches": [str(x) for x in similarity.get("matched_pre_patterns", [])[:5]],
+            "f_day_similarity_summary": similarity.get("summary"),
             "matched_risk_factors": matched[:3],
             "matched_protective_factors": _derive_protective_features(today.iloc[0].to_dict())[:1],
             "matched_patterns": matched,
@@ -182,9 +186,9 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "skipped_reason": None,
             "explanation_points": explanation_points,
             "no_alert_reason": None if risk_matched else (
-                fallback_meta.get("no_alert_reason")
-                if fallback_used
-                else ("not_matched" if evidence_sufficiency == "sufficient" else "insufficient_evidence")
+                "case_similarity_weak"
+                if sim_level == "weak"
+                else "case_similarity_medium_but_rule_insufficient"
             ),
             "model_used": {"recent": recent_model.get("model"), "long_term": longterm_model.get("model")},
             "history_count": len(train),
@@ -195,14 +199,62 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "excluded_reasons": availability["excluded_reasons"],
             "feature_count": int(len(work.columns)),
             "feature_group_counts": availability["group_counts"],
-            "notes_labeling_ok": True,
+            "notes_labeling_ok": labels_usable,
             "notes_labeling_quality": "low" if merge_quality_low else "high",
             "schedule_features_used": availability["schedule_used"],
             "weather_features_used": availability["weather_used"],
             "fallback_used": fallback_used,
             "fallback_details": fallback_meta,
             "forbidden_inputs_used": False,
+            "history_days_loaded": len(histories),
+            "f_event_count": int(train["f_event_flag"].sum()),
+            "usable_f_event_count": int(similarity.get("usable_f_event_count", 0)),
+            "event_case_count": len(event_cases),
+            "top_case_matches": similarity.get("top_case_matches", []),
+            "top_case_match_scores": similarity.get("top_case_match_scores", []),
+            "matched_case_dates": similarity.get("matched_case_dates", []),
+            "matched_case_types": similarity.get("matched_case_types", []),
+            "matched_pre_patterns": similarity.get("matched_pre_patterns", []),
+            "similarity_score_total": similarity.get("score_total"),
+            "similarity_score_overlap": similarity.get("score_overlap"),
+            "similarity_score_sequence": similarity.get("score_sequence"),
+            "similarity_score_type": similarity.get("score_type"),
+            "model_score_recent": recent_score,
+            "model_score_longterm": long_score,
+            "final_alert_basis": (
+                "case_similarity_high"
+                if case_high
+                else "case_similarity_medium_plus_rules"
+                if case_medium_plus_rule
+                else "model_assisted_case_similarity"
+                if risk_matched
+                else "no_case_match"
+            ),
         }
+    )
+    logging.info(
+        "[FRisk][Cases] history_days_loaded=%s f_event_count=%s usable_f_event_count=%s event_case_count=%s top_case_matches=%s",
+        risk_json["history_days_loaded"],
+        risk_json["f_event_count"],
+        risk_json["usable_f_event_count"],
+        risk_json["event_case_count"],
+        risk_json["matched_case_dates"][:3],
+    )
+    logging.info(
+        "[FRisk][Similarity] total=%s overlap=%s sequence=%s type=%s strength=%s",
+        risk_json["similarity_score_total"],
+        risk_json["similarity_score_overlap"],
+        risk_json["similarity_score_sequence"],
+        risk_json["similarity_score_type"],
+        sim_level,
+    )
+    logging.info(
+        "[FRisk][Decision] risk_matched=%s basis=%s no_alert_reason=%s rule_match_count=%s model_support=%s",
+        risk_matched,
+        risk_json["final_alert_basis"],
+        risk_json["no_alert_reason"],
+        rule_count,
+        model_support,
     )
     logging.info(
         "f_risk_stage_a_summary target_date=%s feature_count=%s feature_group_counts=%s available=%s unavailable=%s excluded=%s fallback_used=%s model_recent=%s model_long=%s history_count=%s class_balance=%.3f risk_recent=%s risk_long=%s risk_blended=%s matched=%s protective=%s no_alert_reason=%s forbidden_inputs_used=%s",
@@ -236,10 +288,14 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "note_label_audit": note_audit},
         )
 
-    text, fallback_used, fallback_reason = _render_f_risk_alert(
+    text = _compose_case_alert_text(risk_json)
+    fallback_used = False
+    fallback_reason = None
+    if not text:
+        text, fallback_used, fallback_reason = _render_f_risk_alert(
         risk_json=risk_json,
         model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
-    )
+        )
     if text is None:
         return FRiskResult(
             None,
@@ -431,6 +487,221 @@ def _f_day_similarity(*, train: Any, today: dict[str, Any]) -> dict[str, Any]:
         "pattern_matches": matches,
         "summary": f"直近数日の並びは過去F日の{strength}一致（主要一致{len(matches)}件）",
     }
+
+
+def _extract_f_event_cases(train: Any, *, pre_days: int, post_days: int) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    event_idx = [i for i, v in enumerate(train["f_event_flag"].tolist()) if int(v) == 1]
+    used_dates: set[str] = set()
+    for idx in event_idx:
+        event_date = str(train.iloc[idx]["date"])
+        if event_date in used_dates:
+            continue
+        used_dates.add(event_date)
+        pre_start = max(0, idx - pre_days)
+        post_end = min(len(train), idx + post_days + 1)
+        pre_rows = train.iloc[pre_start:idx]
+        event_row = train.iloc[idx].to_dict()
+        post_rows = train.iloc[idx + 1:post_end]
+        case = {
+            "event_date": event_date,
+            "pre_rows": [r for r in pre_rows.to_dict("records")],
+            "event_day": event_row,
+            "post_rows": [r for r in post_rows.to_dict("records")],
+        }
+        case["event_type"] = _classify_f_event_type(case)
+        cases.append(case)
+    return cases
+
+
+def _classify_f_event_type(case: dict[str, Any]) -> str:
+    event_day = case.get("event_day") or {}
+    pre_rows = case.get("pre_rows") or []
+    merchants = str(event_day.get("expense_f_merchants") or "").lower()
+    late_outing = bool(event_day.get("late_outing_flag")) or any(bool(r.get("late_outing_flag")) for r in pre_rows)
+    drinking = bool(event_day.get("notes_has_drinking")) or any(bool(r.get("notes_has_drinking")) for r in pre_rows)
+    social_load = bool(event_day.get("notes_social_load_flag")) or any(bool(r.get("notes_social_load_flag")) for r in pre_rows)
+    stress = bool(event_day.get("notes_stress_flag")) or any(bool(r.get("notes_stress_flag")) for r in pre_rows)
+    detour = bool(event_day.get("multi_stop_flag")) or ("station" in merchants or "駅" in merchants)
+    spend_delta = (_to_float(event_day.get("spending_vs_7d_delta")) or 0)
+    if late_outing and social_load:
+        return "night_outing"
+    if drinking and social_load:
+        return "drinking_social"
+    if spend_delta > 3000:
+        return "impulse_spend"
+    if stress:
+        return "stress_release"
+    if detour:
+        return "commute_detour"
+    return "unknown"
+
+
+def _build_recent_case(work: Any, *, days: int) -> dict[str, Any]:
+    recent_rows = work.tail(days).to_dict("records")
+    return {"recent_rows": recent_rows}
+
+
+def _compute_case_similarity(*, recent_case: dict[str, Any], event_cases: list[dict[str, Any]], top_n: int) -> dict[str, Any]:
+    recent_rows = recent_case.get("recent_rows") or []
+    if not event_cases or not recent_rows:
+        return {
+            "strength": "weak",
+            "summary": "過去Fケースとの比較対象が不足",
+            "top_case_matches": [],
+            "top_case_match_scores": [],
+            "matched_case_dates": [],
+            "matched_case_types": [],
+            "matched_pre_patterns": [],
+            "score_total": 0.0,
+            "score_overlap": 0.0,
+            "score_sequence": 0.0,
+            "score_type": 0.0,
+            "usable_f_event_count": 0,
+        }
+    scored: list[dict[str, Any]] = []
+    for case in event_cases:
+        pre_rows = case.get("pre_rows") or []
+        if not pre_rows:
+            continue
+        overlap = _feature_overlap_score(recent_rows, pre_rows)
+        sequence = _temporal_sequence_score(recent_rows, pre_rows)
+        type_score = _event_type_consistency_score(recent_rows, str(case.get("event_type") or "unknown"))
+        total = round((0.5 * overlap) + (0.35 * sequence) + (0.15 * type_score), 3)
+        scored.append({
+            "event_date": case.get("event_date"),
+            "event_type": case.get("event_type"),
+            "score_total": total,
+            "score_overlap": overlap,
+            "score_sequence": sequence,
+            "score_type": type_score,
+        })
+    if not scored:
+        return {
+            "strength": "weak",
+            "summary": "比較可能な過去F pre-windowが不足",
+            "top_case_matches": [],
+            "top_case_match_scores": [],
+            "matched_case_dates": [],
+            "matched_case_types": [],
+            "matched_pre_patterns": [],
+            "score_total": 0.0,
+            "score_overlap": 0.0,
+            "score_sequence": 0.0,
+            "score_type": 0.0,
+            "usable_f_event_count": 0,
+        }
+    scored = sorted(scored, key=lambda x: x["score_total"], reverse=True)
+    top = scored[:top_n]
+    best = top[0]
+    strength = "strong" if best["score_total"] >= 0.72 else "medium" if best["score_total"] >= 0.55 else "weak"
+    matched_patterns = _describe_matched_patterns(recent_rows)
+    return {
+        "strength": strength,
+        "summary": f"直近{len(recent_rows)}日の並びは過去F前兆と{strength}一致（最良一致 {best['event_date']}）",
+        "top_case_matches": top,
+        "top_case_match_scores": [x["score_total"] for x in top],
+        "matched_case_dates": [str(x["event_date"]) for x in top],
+        "matched_case_types": [str(x["event_type"]) for x in top],
+        "matched_pre_patterns": matched_patterns,
+        "score_total": best["score_total"],
+        "score_overlap": best["score_overlap"],
+        "score_sequence": best["score_sequence"],
+        "score_type": best["score_type"],
+        "usable_f_event_count": len(scored),
+    }
+
+
+def _feature_overlap_score(recent_rows: list[dict[str, Any]], pre_rows: list[dict[str, Any]]) -> float:
+    keys = [
+        "sleep_short_streak", "bedtime_min", "sleep_score", "notes_stress_flag", "notes_fatigue_flag", "notes_social_load_flag",
+        "notes_sleep_issue_flag", "notes_has_drinking", "notes_has_late_work", "notes_has_social", "notes_has_regret", "notes_has_conflict",
+        "late_outing_flag", "multi_stop_flag", "outing_heavy_flag", "home_heavy_flag", "spending_vs_7d_delta", "social_spend_like_flag",
+        "convenience_store_like_flag", "kcal_vs_7d_delta", "fat_vs_7d_delta", "carb_vs_7d_delta", "high_fat_flag", "high_carb_flag",
+        "task_completion_ratio", "done_vs_7d_delta", "drop_vs_7d_delta", "schedule_same_day_event_count", "late_event_like_flag",
+        "weather_bad_flag", "weather_precip_probability_max", "weather_temp_range_c",
+    ]
+    total = 0.0
+    matched = 0.0
+    for key in keys:
+        recent_v = _to_float(recent_rows[-1].get(key)) if recent_rows else None
+        pre_v = _to_float(pre_rows[-1].get(key)) if pre_rows else None
+        if recent_v is None and pre_v is None:
+            continue
+        if (recent_v is None or abs(recent_v) < 0.05) and (pre_v is None or abs(pre_v) < 0.05):
+            continue
+        total += 1.0
+        if recent_v is None or pre_v is None:
+            continue
+        if abs(recent_v - pre_v) <= max(0.2, abs(pre_v) * 0.35):
+            matched += 1.0
+    if total <= 0:
+        return 0.0
+    return round(matched / total, 3)
+
+
+def _temporal_sequence_score(recent_rows: list[dict[str, Any]], pre_rows: list[dict[str, Any]]) -> float:
+    size = min(len(recent_rows), len(pre_rows))
+    if size <= 0:
+        return 0.0
+    score = 0.0
+    for i in range(1, size + 1):
+        recent = recent_rows[-i]
+        pre = pre_rows[-i]
+        recent_weight = 1.0 + (0.25 if i == 1 else 0.0)
+        short_sleep_match = bool((_to_float(recent.get("sleep_short_streak")) or 0) >= 2) and bool((_to_float(pre.get("sleep_short_streak")) or 0) >= 2)
+        stress_match = bool(recent.get("notes_stress_flag")) and bool(pre.get("notes_stress_flag"))
+        late_outing_match = bool(recent.get("late_outing_flag")) and bool(pre.get("late_outing_flag"))
+        score += recent_weight * (float(short_sleep_match) + float(stress_match) + float(late_outing_match)) / 3.0
+    denom = sum(1.0 + (0.25 if i == 1 else 0.0) for i in range(1, size + 1))
+    return round(score / max(denom, 1.0), 3)
+
+
+def _event_type_consistency_score(recent_rows: list[dict[str, Any]], event_type: str) -> float:
+    latest = recent_rows[-1] if recent_rows else {}
+    if event_type == "night_outing":
+        return 1.0 if bool(latest.get("late_outing_flag")) else 0.35
+    if event_type == "drinking_social":
+        return 1.0 if bool(latest.get("notes_has_drinking")) and bool(latest.get("notes_social_load_flag")) else 0.25
+    if event_type == "impulse_spend":
+        return 1.0 if (_to_float(latest.get("spending_vs_7d_delta")) or 0) > 2000 else 0.3
+    if event_type == "stress_release":
+        return 1.0 if bool(latest.get("notes_stress_flag")) else 0.3
+    if event_type == "commute_detour":
+        return 1.0 if bool(latest.get("multi_stop_flag")) else 0.3
+    return 0.2
+
+
+def _describe_matched_patterns(recent_rows: list[dict[str, Any]]) -> list[str]:
+    if not recent_rows:
+        return []
+    latest = recent_rows[-1]
+    out: list[str] = []
+    if (_to_float(latest.get("sleep_short_streak")) or 0) >= 2:
+        out.append("短睡眠連続")
+    if bool(latest.get("notes_social_load_flag")):
+        out.append("social load")
+    if bool(latest.get("late_outing_flag")):
+        out.append("夜外出傾向")
+    if bool(latest.get("notes_has_drinking")):
+        out.append("drinking")
+    if bool(latest.get("notes_stress_flag")):
+        out.append("stress")
+    return out[:5]
+
+
+def _compose_case_alert_text(risk_json: dict[str, Any]) -> Optional[str]:
+    if not risk_json.get("risk_matched"):
+        return None
+    dates = risk_json.get("matched_case_dates") or []
+    types = risk_json.get("matched_case_types") or []
+    patterns = risk_json.get("matched_pre_patterns") or []
+    if not dates:
+        return None
+    date_text = " と ".join(str(x) for x in dates[:2])
+    pattern_text = "、".join(str(x) for x in patterns[:3]) if patterns else "複数要素"
+    type_text = str(types[0]) if types else "unknown"
+    return f"今日の状態は過去のF支出 {date_text} の前日パターンに近いです。一致要素は {pattern_text} で、類似ケースタイプは {type_text} です。衝動判断を避けるため、支出前に一度間を置くのがおすすめです。"
 
 
 def _build_explanation_points(*, matched: list[str], similarity: dict[str, Any], today: dict[str, Any]) -> list[str]:
