@@ -213,6 +213,7 @@ def _normalize_date_key(value: object) -> str:
 def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[str, str]]) -> tuple[list[NoteLabel], dict[str, Any]]:
     fallback = {}
     row_key_to_date: dict[str, str] = {}
+    row_key_to_normalized_date: dict[str, str] = {}
     row_id_to_key: dict[str, str] = {}
     date_to_keys: dict[str, list[str]] = {}
     input_ids: set[str] = set()
@@ -223,6 +224,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         key = row_id or normalized or raw_date
         fallback[key] = neutral_label(raw_date)
         row_key_to_date[key] = raw_date
+        row_key_to_normalized_date[key] = normalized
         if row_id:
             row_id_to_key[row_id] = key
         normalized_date_key = normalized or raw_date
@@ -369,6 +371,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         remaining_rows = [rows[idx] for idx in range(len(rows)) if idx not in used_response_indexes and isinstance(rows[idx], Mapping)]
         if len(remaining_keys) == len(remaining_rows):
             meta["order_merge_used"] = True
+            meta["merge_key_mode_used"] = "order_fallback"
             for key, row in zip(remaining_keys, remaining_rows):
                 row_meta = dict(row.get("meta") or {})
                 row_meta["parse_quality"] = "low"
@@ -384,6 +387,10 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
                     meta["matched_ids"].add(order_row_id)
     if input_ids:
         meta["missing_ids"] = set(input_ids) - set(meta["matched_ids"])
+    if meta.get("matched_by_id_count"):
+        meta["merge_key_mode_used"] = "id_then_date"
+    elif meta.get("matched_by_date_count"):
+        meta["merge_key_mode_used"] = "date_only"
     meta["output_count"] = len(rows)
     meta["output_dates_count"] = len({str(_normalize_date_key(row.get("date"))) for row in rows if isinstance(row, Mapping)})
     parsed = []
@@ -393,9 +400,15 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         normalized = _normalize_date_key(raw_date)
         key = row_id or normalized or raw_date
         parsed.append(fallback[key])
-    meta["matched_dates_count"] = len(set(meta.get("matched_dates") or set()))
+    normalized_matched_dates = {
+        _normalize_date_key(x)
+        for x in set(meta.get("matched_dates") or set())
+        if _normalize_date_key(x)
+    }
+    meta["matched_dates_count"] = len(normalized_matched_dates)
     meta["unmatched_input_keys"] = set(row_key_to_date.keys()) - set(meta.get("matched_input_keys") or set())
-    meta["unmatched_input_dates"] = set(row_key_to_date.values()) - set(meta.get("matched_dates") or set())
+    normalized_input_date_set = {x for x in row_key_to_normalized_date.values() if x}
+    meta["unmatched_input_dates"] = normalized_input_date_set - normalized_matched_dates
     input_date_set = set(row_key_to_date.values())
     output_date_set = {str(_normalize_date_key(row.get("date"))) for row in rows if isinstance(row, Mapping) and _normalize_date_key(row.get("date"))}
     meta["response_date_normalized_examples"] = [
@@ -403,7 +416,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         for row in rows[:5]
         if isinstance(row, Mapping)
     ]
-    missing_dates = sorted(input_date_set - output_date_set)
+    missing_dates = sorted(normalized_input_date_set - output_date_set)
     meta["missing_dates"] = set(missing_dates)
     if len(rows) != len(input_rows):
         meta["merge_failed"] = True
@@ -411,7 +424,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
     if missing_dates:
         meta["merge_failed"] = True
         meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "missing_dates"
-    if output_date_set and output_date_set != set(_normalize_date_key(x) for x in input_date_set):
+    if output_date_set and output_date_set != normalized_input_date_set:
         meta["merge_failed"] = True
         meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "normalization_mismatch"
     return parsed, meta
@@ -897,7 +910,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "duplicate_ids_count": len(duplicate_ids),
             "missing_ids_count": len(missing_ids),
             "unknown_ids_count": len(unknown_ids),
-            "merge_key_mode_used": "id_then_date",
+            "merge_key_mode_used": "order_fallback" if order_merge_used else ("id_then_date" if matched_by_id_count > 0 else ("date_only" if matched_by_date_count > 0 else "unmatched")),
             "matched_by_id_count": matched_by_id_count,
             "matched_by_date_count": matched_by_date_count,
             "matched_by_order_count": matched_by_order_count,

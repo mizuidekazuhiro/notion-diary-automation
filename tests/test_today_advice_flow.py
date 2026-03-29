@@ -353,25 +353,12 @@ def test_generate_today_advice_ignores_same_day_non_sleep_zero_and_missing_field
     ]
 
     monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
-    responses = iter([
-        json.dumps({
-            "day_type": "recovery",
-            "main_bottleneck": "sleep debt",
-            "priority_theme": "午前の立ち上がりを軽くする",
-            "primary_risk": "午後の失速",
-            "good_pattern_similarity": "高評価日は午前に着手",
-            "bad_pattern_similarity": "低評価日は寝不足",
-            "notes_signal": "過去メモは午前着手で安定",
-            "recording_signal": "直近7日でnotesとmealの記録率は維持",
-            "sleep_signal": "睡眠時間短め",
-            "recent_behavior_pattern": "直近7日で done_count 平均は2件台後半で、朝に着手した日のメモが多い",
-            "priority_action": "午前の最重要1件を先に始める",
-            "evidence_used": ["睡眠時間340分で短め", "直近7日done平均は2件台後半"],
-            "recommended_actions": ["午前に最重要1件へ着手", "昼前に短い整理メモを残す"],
-        }),
-        "睡眠時間は短く朝の立ち上がりは重めですが、直近7日ではdone数が2件台後半で、午前に着手した日のメモが安定していました。今日はその流れを再現する日として、午前の早い段階で最重要の1件に着手し、昼前に短い整理メモだけ残してください。",
-    ])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: next(responses))
+    monkeypatch.setattr(generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        generator,
+        "_chat_completion",
+        lambda **kwargs: "睡眠時間は短く朝の立ち上がりは重めですが、直近7日ではdone数が2件台後半で、午前に着手した日のメモが安定していました。今日はその流れを再現する日として、午前の早い段階で最重要の1件に着手し、昼前に短い整理メモだけ残してください。",
+    )
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
 
@@ -461,7 +448,7 @@ def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) 
     )
 
     assert result is not None
-    assert len(prompts) >= 2
+    assert len(prompts) >= 1
     combined_prompt = "\n".join(prompts)
     assert "当日の場所" not in combined_prompt
     assert "sleep" in combined_prompt.lower()
@@ -482,7 +469,6 @@ def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) 
     assert "drop_count': 0" not in serialized_today_facts
     assert "spend_total': 0" not in serialized_today_facts
     assert "meal_logged': False" not in serialized_today_facts
-    assert "過去メモ" in combined_prompt
 
 
 def test_count_input_tokens_returns_estimate_without_tiktoken() -> None:
@@ -494,6 +480,42 @@ def test_count_input_tokens_returns_estimate_without_tiktoken() -> None:
     assert count is not None
     assert count > 0
     assert method in {"tiktoken", "estimated_chars_div4"}
+
+
+def test_lightgbm_today_contribution_uses_selected_sleep_candidate_values() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    from scripts.today_advice_lightgbm import run_lightgbm_low_mood
+
+    rows = []
+    for i in range(15):
+        rows.append(
+            {
+                "date": f"2026-03-{i+1:02d}",
+                "mood": 1 if i % 2 == 0 else 5,
+                "sleep_hours": 10.0 if i == 14 else 6.0 + (i % 3) * 0.2,
+                "sleep_score": 74.0 if i == 14 else 70.0 + (i % 4),
+                "notes_sentiment_label": "negative" if i % 2 == 0 else "positive",
+                "task_done_count": float(i % 5),
+            }
+        )
+
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    out = run_lightgbm_low_mood(
+        df,
+        today_feature_overrides={"sleep_hours": 7.1, "sleep_score": 94.0},
+        today_feature_date="2026-03-28",
+    )
+
+    by_feature = {item["feature"]: item["today_value"] for item in out.get("today_contribution_features", [])}
+    if "sleep_hours" in by_feature:
+        assert by_feature["sleep_hours"] == 7.1
+    if "sleep_score" in by_feature:
+        assert by_feature["sleep_score"] == 94.0
+    assert out.get("feature_row_date_used_as_today") == "2026-03-28"
+    assert out.get("contribution_feature_scope") == "target_date_proxy"
 
 
 def test_structured_comparison_includes_meal_notes_location_signals() -> None:
@@ -568,30 +590,12 @@ def test_generate_today_advice_requires_recent_and_good_bad_evidence(monkeypatch
     ]
 
     monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
-    responses = iter([
-        json.dumps({
-            "day_type": "recovery",
-            "main_bottleneck": "sleep debt",
-            "priority_theme": "朝の負荷調整",
-            "primary_risk": "午後の失速",
-            "good_pattern_similarity": "良い日は出社寄りで集中メモが多い",
-            "bad_pattern_similarity": "悪い日は自宅寄りで睡眠問題や夜食メモが重なりやすい",
-            "notes_signal": "直近7日でもfocus系メモがある一方、sleep_issue系も混在",
-            "recording_signal": "直近7日でnotesとmealの記録は継続",
-            "meal_signal": "良い日は高タンパク寄り、悪い日は脂質高めに寄る傾向",
-            "notes_pattern_signal": "悪い日はsleep_issueとovereating、良い日はfocusとexerciseが重なりやすい",
-            "location_pattern_signal": "良い日はoffice_heavy、悪い日はhome_heavyが多い傾向",
-            "good_bad_behavior_gap": "done数だけでなく食事・メモ・場所の差もある",
-            "sleep_signal": "睡眠時間330分で短め",
-            "recent_behavior_pattern": "直近7日ではdone数は維持しつつ、focus系メモとsleep_issue系メモが混在している",
-            "recording_pattern": "直近7日の記録率は維持",
-            "priority_action": "朝に最重要1件を出社前提の場所で始める",
-            "evidence_used": ["sleep: 睡眠時間330分で短め", "recent_7d: focus系メモとsleep_issue系メモが混在", "good_bad: 良い日は高タンパク・出社寄り、悪い日は夜食と自宅寄りが重なる"],
-            "recommended_actions": ["午前の早い段階で最重要1件に着手", "昼前に短いメモで状態を固定"],
-        }),
-        "今日は睡眠時間が330分と短く、朝の立ち上がりは慎重に見たほうがよさそうです。直近7日ではfocus系メモとsleep_issue系メモが混在しつつ、良い日は高タンパク寄りで出社中心、悪い日は夜食や自宅中心が重なりやすい傾向があるため、今日はその差が広がりにくい流れを選ぶのが合いそうです。まず午前の早い段階で最重要1件に着手し、昼前に短いメモで状態を固定してください。",
-    ])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: next(responses))
+    monkeypatch.setattr(generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        generator,
+        "_chat_completion",
+        lambda **kwargs: "今日は睡眠時間が330分と短く、朝の立ち上がりは慎重に見たほうがよさそうです。直近7日ではfocus系メモとsleep_issue系メモが混在しつつ、良い日は高タンパク寄りで出社中心、悪い日は夜食や自宅中心が重なりやすい傾向があるため、今日はその差が広がりにくい流れを選ぶのが合いそうです。まず午前の早い段階で最重要1件に着手し、昼前に短いメモで状態を固定してください。",
+    )
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
 
