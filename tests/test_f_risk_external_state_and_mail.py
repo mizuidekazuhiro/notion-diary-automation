@@ -168,7 +168,7 @@ def test_mail_shows_f_risk_section_when_matched(monkeypatch) -> None:
     assert "visible" in mail.plain_text
 
 
-def test_mail_weather_is_unavailable_when_summary_missing(monkeypatch) -> None:
+def test_mail_weather_uses_human_summary_fallback_when_raw_weather_exists(monkeypatch) -> None:
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
     monkeypatch.setenv("MAIL_LINK_SECRET", "secret")
     mail = render_mail(
@@ -182,6 +182,6 @@ def test_mail_weather_is_unavailable_when_summary_missing(monkeypatch) -> None:
         expense_f_alert={"matched": False},
         f_risk_alert={"matched": False},
     )
-    assert "- 未取得" in mail.plain_text
+    assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in mail.plain_text
     assert "weather_code" not in mail.plain_text
-    assert "未取得" in mail.html_body
+    assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in mail.html_body

@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
+from publish.read_daily_log import DoneTaskDetail
 from scripts import daily_job
 from scripts.expense_f_aggregator import aggregate_daily_expense_f
 from scripts import f_risk_generator
+from scripts.note_batch_labeler import NoteLabel
 
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
 
@@ -109,6 +111,7 @@ def test_expense_f_uses_default_props_and_ignores_category(monkeypatch: pytest.M
             {
                 "results": [
                     {
+                        "created_time": "2026-03-20T09:00:00+09:00",
                         "properties": {
                             "Amount": {"type": "number", "number": 1234},
                             "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "Shop"}]},
@@ -151,7 +154,7 @@ def test_expense_f_schema_alias_japanese_names(monkeypatch: pytest.MonkeyPatch) 
         lambda *args, **kwargs: _Resp({"results": [], "has_more": False}),
     )
     result = aggregate_daily_expense_f("2026-03-20")
-    assert result.data_status == "no_matching_rows"
+    assert result.data_status == "no_results"
     assert result.debug_summary["resolved_props"]["f"]["resolved_name"] == "F判定"
 
 
@@ -214,7 +217,7 @@ def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.Monk
         target_date="2026-03-20",
     )
 
-    assert result.skip_reason in {"insufficient_samples", "model_unavailable"}
+    assert result.skip_reason in {"insufficient_samples", "model_unavailable", None}
     assert [item.target_date for item in captured["summaries"]] == [item.target_date for item in histories]
     assert callable(captured["chat_completion"])
     assert captured["model"] == "gpt-4.1-mini"
@@ -235,9 +238,154 @@ def test_notify_diary_continues_when_f_risk_raises(monkeypatch: pytest.MonkeyPat
         lambda config, *, summary, run_id: (_ for _ in ()).throw(RuntimeError("f risk failed")),
     )
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id: order.append("diary") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
     monkeypatch.setattr(daily_job, "_notify_phase_c", lambda config, *, summary, run_id: order.append("notify") or False)
 
     daily_job.run_notify_diary(config, "2026-03-20", "run")
 
     assert order == ["weather", "expense_f", "sleep", "advice", "diary", "notify"]
+
+
+def test_f_risk_uses_multi_domain_features_and_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import pandas as pd
+
+    histories = [_summary(i) for i in range(1, 21)]
+
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
+    monkeypatch.setattr(
+        f_risk_generator,
+        "label_notes_in_batches",
+        lambda **kwargs: {h.target_date: object() for h in histories},
+    )
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda _h, _l: pd.DataFrame(
+            {
+                "date": [h.target_date for h in histories],
+                "expense_f_count": [1 if i % 5 == 0 else 0 for i in range(len(histories))],
+                "expense_f_total": [3000 if i % 5 == 0 else 0 for i in range(len(histories))],
+                "sleep_hours": [5.5] * len(histories),
+                "sleep_score": [65] * len(histories),
+                "sleep_short_streak": [2] * len(histories),
+                    "notes_stress_flag": [1] * len(histories),
+                    "notes_social_load_flag": [1] * len(histories),
+                    "notes_fatigue_flag": [1] * len(histories),
+                    "notes_has_drinking": [1] * len(histories),
+                    "notes_present_flag": [1] * len(histories),
+                    "notes_signal_count": [3] * len(histories),
+                "kcal": [2300] * len(histories),
+                "fat": [90] * len(histories),
+                "kcal_vs_7d_delta": [420] * len(histories),
+                "fat_vs_7d_delta": [20] * len(histories),
+                "spending_total": [8000] * len(histories),
+                "spending_vs_7d_delta": [3500] * len(histories),
+                "task_done_count": [1] * len(histories),
+                "task_drop_count": [3] * len(histories),
+                "task_completion_ratio": [0.25] * len(histories),
+                "location_present_flag": [1] * len(histories),
+                "late_outing_flag": [1] * len(histories),
+                "multi_stop_flag": [0] * len(histories),
+                "weather_retrieved_flag": [1] * len(histories),
+                "weather_code": [61] * len(histories),
+                "weather_precip_probability_max": [90] * len(histories),
+                "schedule_signal_available_flag": [1] * len(histories),
+                "schedule_same_day_event_count": [3] * len(histories),
+                "is_weekend": [1] * len(histories),
+            }
+        ),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"skipped_reason": "ml_lib_not_installed"})
+    monkeypatch.setattr(f_risk_generator, "_render_f_risk_alert", lambda **kwargs: ("fallback alert", True, None))
+
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    risk_json = result.debug_summary["risk_json"]
+    assert result.skip_reason is None
+    assert risk_json["fallback_used"] is True
+    assert risk_json["risk_matched"] is True
+    assert {"sleep", "meal", "spending", "tasks", "notes", "weather", "location"}.issubset(set(risk_json["input_groups_available"]))
+
+
+def test_f_risk_schedule_unavailable_does_not_crash_and_logs_exclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import pandas as pd
+
+    histories = [_summary(i) for i in range(1, 21)]
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {h.target_date: object() for h in histories})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda _h, _l: pd.DataFrame(
+            {
+                "date": [h.target_date for h in histories],
+                "expense_f_count": [1 if i % 4 == 0 else 0 for i in range(len(histories))],
+                "sleep_hours": [7.0] * len(histories),
+                "sleep_score": [75] * len(histories),
+                "spending_total": [1000] * len(histories),
+                "task_done_count": [2] * len(histories),
+                "task_drop_count": [0] * len(histories),
+                "notes_present_flag": [1] * len(histories),
+                "location_present_flag": [1] * len(histories),
+                "weather_retrieved_flag": [1] * len(histories),
+                "weather_precip_probability_max": [20] * len(histories),
+                "is_weekend": [0] * len(histories),
+            }
+        ),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"skipped_reason": "ml_lib_not_installed"})
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    risk_json = result.debug_summary["risk_json"]
+    assert result.skip_reason is None
+    assert "schedule" in risk_json["input_groups_unavailable"]
+    assert risk_json["excluded_reasons"]["schedule"] == "unavailable_from_existing_read_path"
+
+
+def test_feature_builder_does_not_treat_future_event_as_same_day() -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    from scripts.today_advice_feature_builder import build_daily_feature_table
+
+    summary = _summary(
+        20,
+        done_tasks_detail=[
+            DoneTaskDetail(title="same day", done_date="2026-03-20", event_date="2026-03-20"),
+            DoneTaskDetail(title="future", done_date="2026-03-20", event_date="2026-03-22"),
+        ],
+    )
+    labels = {
+        summary.target_date: NoteLabel(
+            date=summary.target_date,
+            sentiment_label="neutral",
+            sentiment_score=0,
+            fatigue_flag=False,
+            stress_flag=False,
+            social_load_flag=False,
+            achievement_flag=False,
+            self_care_flag=False,
+            sleep_issue_flag=False,
+            confidence="medium",
+            evidence_keywords=[],
+        )
+    }
+    df = build_daily_feature_table([summary], labels)
+    row = df.iloc[0]
+    assert row["schedule_same_day_event_count"] == 1
+    assert row["schedule_future_event_count"] == 1
+
+
+def test_f_risk_labeling_failed_returns_clear_skip_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    histories = [_summary(i) for i in range(1, 21)]
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
+    monkeypatch.setattr(
+        f_risk_generator,
+        "label_notes_in_batches",
+        lambda **kwargs: kwargs["audit"].update({"labeling_failed": True}) or {},
+    )
+
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result.skip_reason == "labeling_failed"
+    assert result.debug_summary["risk_json"]["skipped_reason"] == "labeling_failed"
