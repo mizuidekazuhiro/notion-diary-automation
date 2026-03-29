@@ -399,6 +399,7 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
     summary = _summary()
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     save_calls: list[dict[str, object]] = []
+    weather_fetch_calls: list[dict[str, object]] = []
     refreshed = _summary(
         weather_summary="晴れ",
         weather_location="東京",
@@ -426,7 +427,8 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
     monkeypatch.setattr(
         daily_job,
         "fetch_weather_for_date",
-        lambda **kwargs: SimpleNamespace(
+        lambda **kwargs: weather_fetch_calls.append(kwargs)
+        or SimpleNamespace(
             available=True,
             location_label="東京",
             summary="晴れ",
@@ -438,11 +440,21 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
             debug_summary={},
         ),
     )
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            del tz
+            return cls(2026, 3, 29, 15, 35, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    monkeypatch.setattr(daily_job, "datetime", _FrozenDatetime)
     monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: refreshed)
 
     daily_job._generate_and_save_weather(config, summary=summary, run_id="run")
 
+    assert weather_fetch_calls[0]["target_date"] == "2026-03-29"
+    assert save_calls[0]["target_date"] == "2026-03-20"
     payload = save_calls[0]["payload"]
     assert payload["weather"] == "晴れ"
     assert payload["weather_summary"] == "晴れ"
@@ -451,6 +463,24 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
     assert payload["weather_temp_min_c"] == 15.0
     assert payload["weather_precip_probability_max"] == 10.0
     assert payload["weather_code"] == 0
+
+
+def test_weather_input_hash_changes_when_forecast_date_changes() -> None:
+    base_payload = {
+        "daily_log_target_date": "2026-03-28",
+        "weather_forecast_date_jst": "2026-03-29",
+        "location_name": "東京",
+        "location_latitude": 35.0,
+        "location_longitude": 139.0,
+        "location_resolution_method": "location_log_latest_latlon",
+        "location_source": "location_log_db",
+    }
+    next_payload = {**base_payload, "weather_forecast_date_jst": "2026-03-30"}
+
+    first_hash, _, _ = daily_job._build_input_hash(base_payload)
+    second_hash, _, _ = daily_job._build_input_hash(next_payload)
+
+    assert first_hash != second_hash
 
 
 def test_weather_roundtrip_datetime_normalization_accepts_z_and_utc_offset() -> None:
