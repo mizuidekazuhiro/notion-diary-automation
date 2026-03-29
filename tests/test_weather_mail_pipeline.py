@@ -22,10 +22,10 @@ def test_read_daily_log_weather_summary_and_raw_fields_are_available(monkeypatch
             "summary_text": "",
             "summary_html": "",
             "mail_id": "run",
-            "weather": "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。",
+            "weather": "弱い雨。最高17.4℃、最低8.9℃、降水量14.5mmです。",
             "weather_temp_max_c": 17.4,
             "weather_temp_min_c": 8.9,
-            "weather_precip_probability_max": 100,
+            "weather_precip_probability_max": None,
             "weather_code": 61,
             "expenses": {"total": 0, "count": 0, "top": [], "remaining": 0},
         }
@@ -34,11 +34,11 @@ def test_read_daily_log_weather_summary_and_raw_fields_are_available(monkeypatch
     summary = read_daily_log(daily_log_read_url="https://example.com/api/daily_log", target_date="2026-03-29", bearer_token=None)
 
     assert summary is not None
-    assert summary.weather_summary == "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+    assert summary.weather_summary == "弱い雨。最高17.4℃、最低8.9℃、降水量14.5mmです。"
     assert summary.weather_code == 61
     assert summary.weather_temp_max_c == 17.4
     assert summary.weather_temp_min_c == 8.9
-    assert summary.weather_precip_probability_max == 100
+    assert summary.weather_precip_probability_max is None
 
 
 def test_read_daily_log_weather_summary_prefers_weather_summary_and_reads_weather_select(monkeypatch) -> None:
@@ -52,7 +52,7 @@ def test_read_daily_log_weather_summary_prefers_weather_summary_and_reads_weathe
             "summary_text": "",
             "summary_html": "",
             "mail_id": "run",
-            "Weather Summary": "雨。最高17.4℃、最低8.9℃、降水確率は100%です。",
+            "Weather Summary": "雨。最高17.4℃、最低8.9℃、降水量14.5mmです。",
             "Weather": "雨",
             "weather_temp_max_c": 17.4,
             "weather_temp_min_c": 8.9,
@@ -65,7 +65,7 @@ def test_read_daily_log_weather_summary_prefers_weather_summary_and_reads_weathe
     summary = read_daily_log(daily_log_read_url="https://example.com/api/daily_log", target_date="2026-03-29", bearer_token=None)
 
     assert summary is not None
-    assert summary.weather_summary == "雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+    assert summary.weather_summary == "雨。最高17.4℃、最低8.9℃、降水量14.5mmです。"
     assert summary.weather_label == "雨"
 
 
@@ -82,7 +82,7 @@ def test_read_daily_log_weather_summary_falls_back_to_raw(monkeypatch) -> None:
             "mail_id": "run",
             "weather_temp_max_c": 17.4,
             "weather_temp_min_c": 8.9,
-            "weather_precip_probability_max": 100,
+            "weather_precip_probability_max": None,
             "weather_code": 61,
             "expenses": {"total": 0, "count": 0, "top": [], "remaining": 0},
         }
@@ -91,7 +91,7 @@ def test_read_daily_log_weather_summary_falls_back_to_raw(monkeypatch) -> None:
     summary = read_daily_log(daily_log_read_url="https://example.com/api/daily_log", target_date="2026-03-29", bearer_token=None)
 
     assert summary is not None
-    assert summary.weather_summary == "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+    assert summary.weather_summary == "弱い雨。最高17.4℃、最低8.9℃です。"
 
 
 def test_email_templates_render_weather_section_for_html_and_text_with_fallback() -> None:
@@ -104,22 +104,22 @@ def test_email_templates_render_weather_section_for_html_and_text_with_fallback(
         "weather_code": 61,
         "weather_temp_max_c": 17.4,
         "weather_temp_min_c": 8.9,
-        "weather_precip_probability_max": 100,
+        "weather_precip_probability_max": None,
     }
     html = render_daily_log_html(payload)
     text = render_daily_log_text(payload)
 
     assert "Weather" in html
     assert "Weather" in text
-    assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in html
-    assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in text
+    assert "弱い雨。最高17.4℃、最低8.9℃です。" in html
+    assert "弱い雨。最高17.4℃、最低8.9℃です。" in text
     assert "未取得" not in html
     assert "未取得" not in text
 
 
 def test_resolve_weather_summary_source_prefers_saved_weather_summary() -> None:
-    saved, source = _resolve_weather_summary({"weather_summary": "雨。最高17.4℃、最低8.9℃、降水確率は100%です。", "weather": "雨"})
-    assert saved == "雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+    saved, source = _resolve_weather_summary({"weather_summary": "雨。最高17.4℃、最低8.9℃、降水量14.5mmです。", "weather": "雨"})
+    assert saved == "雨。最高17.4℃、最低8.9℃、降水量14.5mmです。"
     assert source == "saved_weather_summary"
 
 

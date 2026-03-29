@@ -15,6 +15,7 @@ class WeatherResult:
     temp_max_c: Optional[float]
     temp_min_c: Optional[float]
     precip_probability_max: Optional[float]
+    precipitation_sum_mm: Optional[float]
     weather_code: Optional[int]
     retrieved_at: str
     debug_summary: dict[str, Any]
@@ -74,6 +75,7 @@ def build_weather_summary(
     temp_max_c: Optional[float],
     temp_min_c: Optional[float],
     precip_probability_max: Optional[float],
+    precipitation_sum_mm: Optional[float] = None,
 ) -> Optional[str]:
     weather_label = WEATHER_CODE_MAP.get(weather_code) if weather_code is not None else None
     metric_parts: list[str] = []
@@ -81,16 +83,15 @@ def build_weather_summary(
         metric_parts.append(f"最高{temp_max_c:.1f}℃")
     if temp_min_c is not None:
         metric_parts.append(f"最低{temp_min_c:.1f}℃")
-    if not weather_label and not metric_parts and precip_probability_max is None:
+    if not weather_label and not metric_parts and precipitation_sum_mm is None:
         return None
 
     first_sentence = f"{weather_label}。" if weather_label else ""
-    if metric_parts and precip_probability_max is not None:
-        second_sentence = f"{'、'.join(metric_parts)}、降水確率は{precip_probability_max:g}%です。"
+    if precipitation_sum_mm is not None:
+        joined = "、".join(metric_parts)
+        second_sentence = f"{joined}、降水量{precipitation_sum_mm:.1f}mmです。" if joined else f"降水量{precipitation_sum_mm:.1f}mmです。"
     elif metric_parts:
         second_sentence = f"{'、'.join(metric_parts)}です。"
-    elif precip_probability_max is not None:
-        second_sentence = f"降水確率は{precip_probability_max:g}%です。"
     else:
         second_sentence = ""
     return f"{first_sentence}{second_sentence}" or None
@@ -139,22 +140,22 @@ def fetch_weather_for_date(
                 timeout=20,
             )
             if geo_resp.status_code >= 400:
-                return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "geocode", "status": geo_resp.status_code}, "weather_api_failed")
+                return WeatherResult(False, location_label, None, None, None, None, None, None, retrieved_at, {"stage": "geocode_http", "status": geo_resp.status_code}, "weather_api_failed")
             geo_data = geo_resp.json()
             results = geo_data.get("results") or []
             if not results:
-                return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "geocode", "reason": "no_results"}, "geocoding_no_results")
+                return WeatherResult(False, location_label, None, None, None, None, None, None, retrieved_at, {"stage": "geocode_parse", "reason": "no_results"}, "geocoding_no_results")
             first = results[0]
             lat = first.get("latitude")
             lon = first.get("longitude")
             resolved_name = first.get("name") or location_label
 
         forecast_resp = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
+            "https://api.open-meteo.com/v1/jma",
             params={
                 "latitude": lat,
                 "longitude": lon,
-                "daily": "weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
                 "timezone": "Asia/Tokyo",
                 "start_date": target_date,
                 "end_date": target_date,
@@ -162,18 +163,26 @@ def fetch_weather_for_date(
             timeout=20,
         )
         if forecast_resp.status_code >= 400:
-            return WeatherResult(False, resolved_name, None, None, None, None, None, retrieved_at, {"stage": "forecast", "status": forecast_resp.status_code}, "weather_api_failed")
+            body_preview = ""
+            try:
+                body_preview = str(forecast_resp.json())[:400]
+            except Exception:  # noqa: BLE001
+                body_preview = (getattr(forecast_resp, "text", "") or "")[:400]
+            return WeatherResult(False, resolved_name, None, None, None, None, None, None, retrieved_at, {"stage": "forecast_http", "status": forecast_resp.status_code, "response_preview": body_preview}, "weather_api_failed")
         forecast_data = forecast_resp.json()
         daily = forecast_data.get("daily") or {}
-        code = _first_num(daily.get("weathercode"), cast_int=True)
+        if not isinstance(daily, dict):
+            return WeatherResult(False, resolved_name, None, None, None, None, None, None, retrieved_at, {"stage": "forecast_parse", "reason": "daily_missing_or_invalid"}, "weather_api_failed")
+        code = _first_num(daily.get("weather_code"), cast_int=True)
         temp_max = _first_num(daily.get("temperature_2m_max"))
         temp_min = _first_num(daily.get("temperature_2m_min"))
-        precip_max = _first_num(daily.get("precipitation_probability_max"))
+        precipitation_sum = _first_num(daily.get("precipitation_sum"))
         summary = build_weather_summary(
             weather_code=code,
             temp_max_c=temp_max,
             temp_min_c=temp_min,
-            precip_probability_max=precip_max,
+            precip_probability_max=None,
+            precipitation_sum_mm=precipitation_sum,
         )
         return WeatherResult(
             available=True,
@@ -181,7 +190,8 @@ def fetch_weather_for_date(
             summary=summary,
             temp_max_c=temp_max,
             temp_min_c=temp_min,
-            precip_probability_max=precip_max,
+            precip_probability_max=None,
+            precipitation_sum_mm=precipitation_sum,
             weather_code=code,
             retrieved_at=retrieved_at,
             debug_summary={
@@ -190,11 +200,17 @@ def fetch_weather_for_date(
                 "lon": lon,
                 "resolved_name": resolved_name,
                 "used_geocoding": used_geocoding,
+                "api_endpoint": "https://api.open-meteo.com/v1/jma",
+                "requested_daily_fields": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "returned_daily_keys": sorted(list(daily.keys())) if isinstance(daily, dict) else [],
                 "weather_code": code,
+                "temp_max": temp_max,
+                "temp_min": temp_min,
+                "precipitation_sum": precipitation_sum,
             },
         )
     except Exception as exc:  # noqa: BLE001
-        return WeatherResult(False, location_label, None, None, None, None, None, retrieved_at, {"stage": "exception", "error": str(exc)}, "weather_api_failed")
+        return WeatherResult(False, location_label, None, None, None, None, None, None, retrieved_at, {"stage": "exception", "error": str(exc)}, "weather_api_failed")
 
 
 def _first_num(value: Any, *, cast_int: bool = False) -> Optional[float | int]:
