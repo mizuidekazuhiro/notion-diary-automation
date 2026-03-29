@@ -166,3 +166,22 @@ def test_mail_shows_f_risk_section_when_matched(monkeypatch) -> None:
     )
     assert "F Risk Alert" in mail.plain_text
     assert "visible" in mail.plain_text
+
+
+def test_mail_weather_is_unavailable_when_summary_missing(monkeypatch) -> None:
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
+    monkeypatch.setenv("MAIL_LINK_SECRET", "secret")
+    mail = render_mail(
+        _summary(
+            weather_summary=None,
+            weather_code=61,
+            weather_temp_max_c=17.4,
+            weather_temp_min_c=8.9,
+            weather_precip_probability_max=100,
+        ),
+        expense_f_alert={"matched": False},
+        f_risk_alert={"matched": False},
+    )
+    assert "- 未取得" in mail.plain_text
+    assert "weather_code" not in mail.plain_text
+    assert "未取得" in mail.html_body

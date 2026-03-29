@@ -44,6 +44,31 @@ WEATHER_CODE_MAP = {
 }
 
 
+def build_weather_summary(
+    *,
+    weather_code: Optional[int],
+    temp_max_c: Optional[float],
+    temp_min_c: Optional[float],
+    precip_probability_max: Optional[float],
+) -> Optional[str]:
+    parts: list[str] = []
+    weather_label = WEATHER_CODE_MAP.get(weather_code) if weather_code is not None else None
+    if weather_label:
+        parts.append(weather_label)
+    metric_parts: list[str] = []
+    if temp_max_c is not None:
+        metric_parts.append(f"最高{temp_max_c:.1f}℃")
+    if temp_min_c is not None:
+        metric_parts.append(f"最低{temp_min_c:.1f}℃")
+    if precip_probability_max is not None:
+        metric_parts.append(f"降水確率{precip_probability_max:g}%")
+    if metric_parts:
+        parts.append("、".join(metric_parts))
+    if not parts:
+        return None
+    return "。".join(parts) + "。"
+
+
 def _to_iso_utc() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -99,7 +124,12 @@ def fetch_weather_for_date(
         temp_max = _first_num(daily.get("temperature_2m_max"))
         temp_min = _first_num(daily.get("temperature_2m_min"))
         precip_max = _first_num(daily.get("precipitation_probability_max"))
-        summary = WEATHER_CODE_MAP.get(code, "不明") if code is not None else None
+        summary = build_weather_summary(
+            weather_code=code,
+            temp_max_c=temp_max,
+            temp_min_c=temp_min,
+            precip_probability_max=precip_max,
+        )
         return WeatherResult(
             available=True,
             location_label=str(resolved_name),

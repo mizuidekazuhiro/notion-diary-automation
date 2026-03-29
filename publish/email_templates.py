@@ -324,6 +324,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
     weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
     weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
+    weather_retrieved_at = _optional_text(payload.get("weather_retrieved_at") if isinstance(payload, Mapping) else None)
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
     )
@@ -351,11 +352,18 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             "</div>"
         )
     weather_html = ""
-    if weather_location or weather_summary or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip:
+    if weather_summary:
         weather_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
             "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
-            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary or '—')} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 降水確率: {html.escape(weather_precip or '—')}</div>"
+            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary)} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 降水確率: {html.escape(weather_precip or '—')} / 取得時刻: {html.escape(weather_retrieved_at or '—')}</div>"
+            "</div>"
+        )
+    elif weather_location or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip or weather_retrieved_at:
+        weather_html = (
+            "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
+            "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
+            "<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">未取得</div>"
             "</div>"
         )
     f_risk_html = ""
@@ -749,6 +757,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
     weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
     weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
+    weather_retrieved_at = _optional_text(payload.get("weather_retrieved_at") if isinstance(payload, Mapping) else None)
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
     )
@@ -785,15 +794,18 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"Daily Log | {target_date}",
         f"Run ID: {run_id}",
     ]
-    if weather_location or weather_summary or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip:
+    if weather_summary:
         lines += [
             "",
             "Weather",
             f"- 地点: {weather_location or '—'}",
-            f"- 概要: {weather_summary or '—'}",
+            f"- 概要: {weather_summary}",
             f"- 最高/最低: {weather_temp_max}℃ / {weather_temp_min}℃",
             f"- 降水確率: {weather_precip or '—'}",
+            f"- 取得時刻: {weather_retrieved_at or '—'}",
         ]
+    elif weather_location or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip or weather_retrieved_at:
+        lines += ["", "Weather", "- 未取得"]
     if today_advice:
         lines += ["", "Today advice", today_advice]
     if f_risk_matched and f_risk_alert:

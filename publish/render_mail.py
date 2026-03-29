@@ -99,6 +99,7 @@ def render_mail(
         "weather_temp_max_c": summary.weather_temp_max_c,
         "weather_temp_min_c": summary.weather_temp_min_c,
         "weather_precip_probability_max": summary.weather_precip_probability_max,
+        "weather_retrieved_at": summary.weather_retrieved_at,
         "expense_f_alert": expense_f_alert or {},
         "mood_notes_url": "",
     }
