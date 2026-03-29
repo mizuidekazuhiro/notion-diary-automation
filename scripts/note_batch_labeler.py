@@ -546,14 +546,17 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "target_date": targets[-1]["date"],
             "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in targets],
             "constraints": [
-                "各rowのidは入力rowsのidをそのまま返すこと（必須）",
-                "各rowのdateは入力rowsのdateをそのまま返すこと",
+                "top-level は配列または {\"rows\": [...]} のみ",
+                "各rowは id/date/sentiment/flags/tags/confidence を必須で返す",
+                "id は入力rowsのidをそのまま返す（欠損/改変禁止）",
+                "date は入力rowsのdateをそのまま返す（欠損/改変禁止）",
                 "返却順は入力順を維持し、欠損/重複/追加をしないこと",
+                "曖昧なメモは tags=[] + flags全false + sentiment=unknown（またはneutral）",
             ],
             "few_shot": assets.get("few_shots", [])[:5],
             "schema": {
                 "id": "input.id",
-                "date": "YYYY-MM-DD",
+                "date": "input.date",
                 "sentiment": "positive|neutral|negative|mixed|unknown",
                 "flags": {
                     "fatigue": "boolean",
@@ -783,6 +786,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "duplicate_ids": sorted(duplicate_ids),
             "missing_ids": sorted(missing_ids),
             "unknown_ids": sorted(unknown_ids),
+            "duplicate_ids_count": len(duplicate_ids),
+            "missing_ids_count": len(missing_ids),
+            "unknown_ids_count": len(unknown_ids),
             "merge_key_mode_used": "id_then_date",
             "matched_by_id_count": matched_by_id_count,
             "matched_by_date_count": matched_by_date_count,
@@ -817,6 +823,23 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "labeling_failed_fatal_reason": fatal_reason,
             "labeling_failed": labeling_failed,
         })
+        logging.info(
+            "notes_labeling_audit_summary labeling_failed_fatal_reason=%s parse_error_count=%s schema_mismatch_count=%s empty_response_count=%s final_coverage_rate=%s matched_by_id_count=%s matched_by_date_count=%s matched_by_order_count=%s missing_ids_count=%s unknown_ids_count=%s duplicate_ids_count=%s unmatched_input_dates_count=%s unmatched_response_dates_count=%s merge_failed_reason=%s",
+            fatal_reason,
+            parse_error_count,
+            schema_mismatch_count,
+            empty_response_count,
+            final_coverage_rate,
+            matched_by_id_count,
+            matched_by_date_count,
+            matched_by_order_count,
+            len(missing_ids),
+            len(unknown_ids),
+            len(duplicate_ids),
+            len(unmatched_input_dates),
+            len(unmatched_response_dates),
+            audit.get("merge_failed_reason"),
+        )
         if audit.get("notes_date_merge_success_rate", 0.0) <= 0.0 and all_input_dates:
             if unknown_ids or missing_ids:
                 audit["exclusion_reason"] = "id_merge_failed_all"
