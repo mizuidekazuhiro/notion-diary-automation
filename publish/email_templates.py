@@ -9,7 +9,6 @@ from scripts.weather_client import build_weather_summary, WEATHER_CODE_MAP
 
 MAX_TASK_ITEMS = 30
 SECTION_ORDER = [
-    "weather",
     "today_advice",
     "f_risk",
     "diary",
@@ -19,6 +18,7 @@ SECTION_ORDER = [
     "done",
     "drop",
     "meal",
+    "weather",
 ]
 TASK_PLACEHOLDER_VALUES = {"", "-", "—", "none", "なし", "無し", "null"}
 
@@ -601,7 +601,6 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <p style=\"margin: 0; font-size: 13px; color: #6b7280;\">Run ID: {html.escape(run_id)}</p>
               </td>
             </tr>
-            {weather_html}
             {today_advice_html}
             {f_risk_html}
             {expense_f_alert_html}
@@ -706,6 +705,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
               </td>
             </tr>
             {mood_notes_html}
+            {weather_html}
           </table>
         </td>
       </tr>
@@ -839,19 +839,6 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"Daily Log | {target_date}",
         f"Run ID: {run_id}",
     ]
-    if weather_summary:
-        lines += [
-            "",
-            "Weather",
-            f"- 地点: {weather_location or '—'}",
-            f"- 概要: {weather_summary}",
-            f"- 天気: {weather_label}",
-            f"- 最高/最低: {weather_temp_max}℃ / {weather_temp_min}℃",
-            f"- 降水確率: {weather_precip or '—'}",
-            f"- 取得時刻: {weather_retrieved_at or '—'}",
-        ]
-    elif weather_summary_source == "empty":
-        lines += ["", "Weather", "- 未取得"]
     if today_advice:
         lines += ["", "Today advice", today_advice]
     if f_risk_matched and f_risk_alert:
@@ -919,4 +906,17 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     ]
     if mood_notes_url:
         lines += ["", "Mood / Notes", mood_notes_url]
+    if weather_summary:
+        lines += [
+            "",
+            "Weather",
+            f"- 地点: {weather_location or '—'}",
+            f"- 概要: {weather_summary}",
+            f"- 天気: {weather_label}",
+            f"- 最高/最低: {weather_temp_max}℃ / {weather_temp_min}℃",
+            f"- 降水確率: {weather_precip or '—'}",
+            f"- 取得時刻: {weather_retrieved_at or '—'}",
+        ]
+    elif weather_summary_source == "empty":
+        lines += ["", "Weather", "- 未取得"]
     return "\n".join(lines).strip() + "\n"

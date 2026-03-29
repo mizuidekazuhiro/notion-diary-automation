@@ -60,6 +60,25 @@ def test_email_templates_render_weather_section_for_html_and_text_with_fallback(
     assert "未取得" not in text
 
 
+def test_email_templates_render_weather_section_last_for_html_and_text() -> None:
+    payload = {
+        "target_date": "2026-03-29",
+        "summary_text": "🎉\n- A (Priority: High)",
+        "diary": "日記",
+        "meal_summary": "ごはん",
+        "weather_summary": "晴れ。最高22.0℃、最低11.0℃です。",
+        "mood_notes_url": "https://example.com/mood",
+    }
+
+    html = render_daily_log_html(payload)
+    text = render_daily_log_text(payload)
+
+    assert html.rfind("Weather</div>") > html.rfind("Mood / Notes")
+    assert text.rfind("\nWeather\n") > text.rfind("\nMood / Notes\n")
+    weather_block = text[text.rfind("\nWeather\n") :].strip()
+    assert weather_block.startswith("Weather\n- 地点:")
+
+
 def test_weather_compare_ignores_timestamp_second_precision_only() -> None:
     summary = SimpleNamespace(
         weather_summary="くもり。最高15.2℃、最低7.1℃です。",
