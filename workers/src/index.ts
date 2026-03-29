@@ -186,6 +186,24 @@ function resolvePropertyName(
   return matches[0];
 }
 
+function resolveExactPropertyName(
+  properties: Record<string, any>,
+  desiredName: string,
+  context: string,
+): string | null {
+  const matches = findExactOrNormalizedPropertyMatches(properties, desiredName);
+  if (!matches.length) {
+    return null;
+  }
+  if (matches.length > 1) {
+    console.warn(
+      `[property_resolver] ambiguous match context=${context} desired=${desiredName} matches=${matches.join(", ")}`,
+    );
+    return null;
+  }
+  return matches[0];
+}
+
 function buildDailyLogProperties(env: Env): ExpectedProperty[] {
   const dailyLogExpenses = getDailyLogExpensesPropertyNames(env);
   return [
@@ -4389,78 +4407,64 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
-  const weatherPropertyName = resolvePropertyName(
+  const weatherPropertyName = resolveExactPropertyName(
     properties,
     getWeatherPropertyName(env),
     "daily_log_read:weather",
-    ["Weather Summary", "weather", "weather_summary"],
   );
-  const weatherSummaryPropertyName = resolvePropertyName(
+  const weatherSummaryPropertyName = resolveExactPropertyName(
     properties,
     getWeatherSummaryPropertyName(env),
     "daily_log_read:weather_summary",
-    ["Weather", "weather", "weather_summary"],
   );
-  const weatherLocationPropertyName = resolvePropertyName(
+  const weatherLocationPropertyName = resolveExactPropertyName(
     properties,
     getWeatherLocationPropertyName(env),
     "daily_log_read:weather_location",
-    ["weather_location"],
   );
-  const weatherTempMaxCPropertyName = resolvePropertyName(
+  const weatherTempMaxCPropertyName = resolveExactPropertyName(
     properties,
     getWeatherTempMaxCPropertyName(env),
     "daily_log_read:weather_temp_max_c",
-    ["weather_temp_max_c"],
   );
-  const weatherTempMinCPropertyName = resolvePropertyName(
+  const weatherTempMinCPropertyName = resolveExactPropertyName(
     properties,
     getWeatherTempMinCPropertyName(env),
     "daily_log_read:weather_temp_min_c",
-    ["weather_temp_min_c"],
   );
-  const weatherPrecipProbabilityMaxPropertyName = resolvePropertyName(
+  const weatherPrecipProbabilityMaxPropertyName = resolveExactPropertyName(
     properties,
     getWeatherPrecipProbabilityMaxPropertyName(env),
     "daily_log_read:weather_precip_probability_max",
-    ["weather_precip_probability_max"],
   );
-  const weatherCodePropertyName = resolvePropertyName(
+  const weatherCodePropertyName = resolveExactPropertyName(
     properties,
     getWeatherCodePropertyName(env),
     "daily_log_read:weather_code",
-    ["weather_code"],
   );
-  const weatherRetrievedAtPropertyName = resolvePropertyName(
+  const weatherRetrievedAtPropertyName = resolveExactPropertyName(
     properties,
     getWeatherRetrievedAtPropertyName(env),
     "daily_log_read:weather_retrieved_at",
-    ["weather_retrieved_at"],
   );
-  const weatherInputHashPropertyName = resolvePropertyName(
+  const weatherInputHashPropertyName = resolveExactPropertyName(
     properties,
     getWeatherInputHashPropertyName(env),
     "daily_log_read:weather_input_hash",
-    ["weather_input_hash"],
   );
-  const weatherGeneratedAtPropertyName = resolvePropertyName(
+  const weatherGeneratedAtPropertyName = resolveExactPropertyName(
     properties,
     getWeatherGeneratedAtPropertyName(env),
     "daily_log_read:weather_generated_at",
-    ["weather_generated_at"],
   );
-  const weatherSummary =
-    (weatherSummaryPropertyName
-      ? getPlainTextFromRichText(properties[weatherSummaryPropertyName])
-      : weatherPropertyName
-        ? getPlainTextFromRichText(properties[weatherPropertyName])
-        : null) || null;
-  const weatherLegacyText =
-    (weatherPropertyName
-      ? getPlainTextFromRichText(properties[weatherPropertyName])
-      : weatherSummaryPropertyName
-        ? getPlainTextFromRichText(properties[weatherSummaryPropertyName])
-        : null) || null;
+  const weatherResolvedText = weatherPropertyName
+    ? getPlainTextFromRichText(properties[weatherPropertyName])
+    : null;
+  const weatherSummaryResolvedText = weatherSummaryPropertyName
+    ? getPlainTextFromRichText(properties[weatherSummaryPropertyName])
+    : null;
+  const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);
+  const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);
   const weatherLocation =
     (weatherLocationPropertyName
       ? getPlainTextFromRichText(properties[weatherLocationPropertyName])
