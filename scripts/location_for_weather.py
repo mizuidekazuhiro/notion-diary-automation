@@ -333,10 +333,5 @@ def resolve_location_for_weather(*, summary: Any, now: Optional[datetime] = None
         debug["fallback_used"] = "daily_log_place"
         return ResolvedLocation(name=place, source="daily_log_place", skip_reason=None, debug_summary=debug, resolution_method="daily_log_place")
 
-    location_summary = _safe_text(getattr(summary, "location_summary", None))
-    if location_summary:
-        debug["fallback_used"] = "daily_log_location_summary"
-        return ResolvedLocation(name=location_summary, source="daily_log_location_summary", skip_reason=None, debug_summary=debug, resolution_method="daily_log_location_summary")
-
     debug["fallback_used"] = "tokyo_default"
     return ResolvedLocation(name="東京都", source="fallback_default_tokyo", skip_reason=None, debug_summary=debug, resolution_method="tokyo_default")

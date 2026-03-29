@@ -1077,6 +1077,7 @@ def generate_today_advice(
         notes_non_empty_count = sum(1 for item in historical_summaries if _safe_text(item.notes))
         notes_labeled = list(note_labels.values())
         notes_parse_success_rate = float(note_label_audit.get("notes_parse_success_rate", 0.0) or 0.0)
+        notes_date_merge_success_rate = float(note_label_audit.get("notes_date_merge_success_rate", 0.0) or 0.0)
         notes_unknown_rate = float(note_label_audit.get("unknown_rate", note_label_audit.get("notes_unknown_rate", 0.0)) or 0.0)
         notes_signals_detected_count = int(note_label_audit.get("signals_detected_count", 0) or 0)
         notes_payload = {
@@ -1107,6 +1108,8 @@ def generate_today_advice(
             "raw_response_paths": note_label_audit.get("raw_response_paths", []),
             "notes_classifier_success_rate": note_label_audit.get("notes_classifier_success_rate", 0.0),
             "notes_parse_success_rate": notes_parse_success_rate,
+            "notes_date_merge_success_rate": notes_date_merge_success_rate,
+            "notes_merge_failed_count": int(note_label_audit.get("notes_merge_failed_count", 0) or 0),
             "unknown_rate": notes_unknown_rate,
             "tag_extract_failed_count": note_label_audit.get("tag_extract_failed_count", 0),
             "parse_low_confidence_count": note_label_audit.get("parse_low_confidence_count", 0),
@@ -1117,6 +1120,9 @@ def generate_today_advice(
             "unmatched_response_dates": note_label_audit.get("unmatched_response_dates", []),
             "signals_detected_count": notes_signals_detected_count,
             "notes_label_quality_low": bool(notes_parse_success_rate < 0.5),
+            "notes_unmatched_input_dates_count": int(note_label_audit.get("notes_unmatched_input_dates_count", 0) or 0),
+            "notes_unmatched_response_dates_count": int(note_label_audit.get("notes_unmatched_response_dates_count", 0) or 0),
+            "merge_failed_reason": note_label_audit.get("merge_failed_reason"),
         }
         missing_ids = list(note_label_audit.get("missing_ids") or [])
         missing_ids_detail = [
@@ -1130,6 +1136,10 @@ def generate_today_advice(
             exclusion_reasons.append("unknown_rate_high")
         if note_label_audit.get("date_match_failure_count", 0) > 0:
             exclusion_reasons.append("date_match_failure")
+        if notes_date_merge_success_rate <= 0.0 and notes_non_empty_count > 0:
+            exclusion_reasons.append("date_merge_failed_all")
+        elif 0.0 < notes_date_merge_success_rate < 1.0:
+            exclusion_reasons.append("date_merge_partial")
         if note_label_audit.get("duplicate_ids"):
             exclusion_reasons.append("duplicate_ids")
         if missing_ids:
@@ -1138,12 +1148,13 @@ def generate_today_advice(
             exclusion_reasons.append("unknown_ids")
         quality_high_enough = (
             notes_payload["notes_parse_success_rate"] >= 0.8
-            and note_label_audit.get("date_match_failure_count", 0) == 0
+            and notes_date_merge_success_rate >= 0.8
             and notes_payload["unknown_rate"] <= 0.4
         )
         if quality_high_enough:
             exclusion_reasons = [reason for reason in exclusion_reasons if reason != "missing_ids"]
-        notes_quality_used = "low" if exclusion_reasons else "high"
+        hard_exclusion_reasons = {"date_merge_failed_all", "parse_success_rate_low", "date_match_failure", "duplicate_ids", "unknown_ids"}
+        notes_quality_used = "low" if any(reason in hard_exclusion_reasons for reason in exclusion_reasons) else "high"
         notes_payload["notes_quality_used"] = notes_quality_used
         notes_payload["exclusion_reason"] = exclusion_reasons
         notes_payload["missing_ids_detail"] = missing_ids_detail
@@ -1173,15 +1184,17 @@ def generate_today_advice(
             reason_counts.get("empty_response_count", 0),
         )
         audit.info(
-            "[TodayAdvice][Notes] classifier_success_rate=%s parse_success_rate=%s unknown_rate=%s tag_extract_failed=%s parse_low_confidence=%s",
+            "[TodayAdvice][Notes] classifier_success_rate=%s parse_success_rate=%s date_merge_success_rate=%s merge_failed_count=%s unknown_rate=%s tag_extract_failed=%s parse_low_confidence=%s",
             notes_payload["notes_classifier_success_rate"],
             notes_payload["notes_parse_success_rate"],
+            notes_payload["notes_date_merge_success_rate"],
+            notes_payload["notes_merge_failed_count"],
             notes_payload["unknown_rate"],
             notes_payload["tag_extract_failed_count"],
             notes_payload["parse_low_confidence_count"],
         )
         audit.info(
-            "[Notes] notes_quality_used=%s exclusion_reason=%s missing_ids_detail=%s matched_dates_count=%s unmatched_input_dates=%s unmatched_response_dates=%s parse_success_rate=%s unknown_rate=%s notes_based_features_included_count=%s notes_based_features_excluded_count=%s",
+            "[Notes] notes_quality_used=%s exclusion_reason=%s missing_ids_detail=%s matched_dates_count=%s unmatched_input_dates=%s unmatched_response_dates=%s parse_success_rate=%s date_merge_success_rate=%s merge_failed_reason=%s unknown_rate=%s notes_based_features_included_count=%s notes_based_features_excluded_count=%s",
             notes_quality_used,
             safe_json(exclusion_reasons),
             safe_json(missing_ids_detail),
@@ -1189,6 +1202,8 @@ def generate_today_advice(
             safe_json(notes_payload["unmatched_input_dates"]),
             safe_json(notes_payload["unmatched_response_dates"]),
             notes_payload["notes_parse_success_rate"],
+            notes_payload["notes_date_merge_success_rate"],
+            notes_payload["merge_failed_reason"],
             notes_payload["unknown_rate"],
             0 if notes_quality_used == "low" else len(note_labels),
             len(note_labels) if notes_quality_used == "low" else 0,
@@ -1196,6 +1211,8 @@ def generate_today_advice(
         if notes_quality_used == "low":
             note_labels = {d: type(label)(**{**label.__dict__, "sentiment_label": "unknown", "sentiment_score": 0, "fatigue_flag": False, "stress_flag": False, "social_load_flag": False, "achievement_flag": False, "self_care_flag": False, "sleep_issue_flag": False, "signals": [], "derived_flags": {}, "confidence": "low", "parse_quality": "low", "no_signal_note": True, "tag_extract_failed": True, "parse_low_confidence": True}) for d, label in note_labels.items()}
             audit.info("[Notes] excluded_from_today_advice=true")
+        elif "date_merge_partial" in exclusion_reasons:
+            audit.info("[Notes] partial_merge_detected=true action=use_successful_labels_and_neutral_fallback")
         audit.info(
             "[TodayAdvice][Notes] top_tags=%s matched_dates_count=%s",
             safe_json(notes_payload["top_tags"]),
