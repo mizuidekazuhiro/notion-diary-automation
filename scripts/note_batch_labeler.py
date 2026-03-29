@@ -447,6 +447,106 @@ def _cache_key(*, date: str, note_text: str, model: str) -> str:
     return f"{date}_{digest}.json"
 
 
+def build_notes_label_input_hash(note_text: str) -> str:
+    return sha256((note_text or "").strip().encode("utf-8")).hexdigest()
+
+
+def _parse_json_dict(raw_text: object) -> dict[str, Any]:
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return {}
+    try:
+        loaded = json.loads(raw_text)
+    except Exception:
+        return {}
+    return dict(loaded) if isinstance(loaded, Mapping) else {}
+
+
+def _parse_json_list(raw_text: object) -> list[str]:
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return []
+    try:
+        loaded = json.loads(raw_text)
+    except Exception:
+        return []
+    if not isinstance(loaded, list):
+        return []
+    out: list[str] = []
+    for item in loaded:
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _persisted_label_required_fields_present(summary: DailyLogSummary) -> bool:
+    required = [
+        summary.notes_label_input_hash,
+        summary.notes_label_generated_at,
+        summary.notes_label_model,
+        summary.notes_sentiment_label,
+        summary.notes_flags_json,
+        summary.notes_tags_json,
+    ]
+    return all(bool(str(v or "").strip()) for v in required)
+
+
+def has_persisted_note_label(summary: DailyLogSummary) -> bool:
+    return _persisted_label_required_fields_present(summary)
+
+
+def load_persisted_note_label(summary: DailyLogSummary) -> Optional[NoteLabel]:
+    if not _persisted_label_required_fields_present(summary):
+        return None
+    notes_text = (summary.notes or "").strip()
+    if not notes_text:
+        return neutral_label(summary.target_date)
+    expected_hash = build_notes_label_input_hash(notes_text)
+    actual_hash = str(summary.notes_label_input_hash or "").strip()
+    if expected_hash != actual_hash:
+        return None
+    flags = _parse_json_dict(summary.notes_flags_json)
+    tags = _parse_json_list(summary.notes_tags_json)
+    sentiment_score = int(summary.notes_sentiment_score or 0)
+    payload = {
+        "tags": tags,
+        "flags": {
+            "fatigue": bool(summary.notes_fatigue_flag if summary.notes_fatigue_flag is not None else flags.get("fatigue")),
+            "stress": bool(summary.notes_stress_flag if summary.notes_stress_flag is not None else flags.get("stress")),
+            "social_load": bool(summary.notes_social_load_flag if summary.notes_social_load_flag is not None else flags.get("social_load")),
+            "sleep_issue": bool(summary.notes_sleep_issue_flag if summary.notes_sleep_issue_flag is not None else flags.get("sleep_issue")),
+        },
+        "meta": {"parse_quality": "medium"},
+        "sentiment": str(summary.notes_sentiment_label or "unknown"),
+        "sentiment_score": sentiment_score,
+    }
+    return _normalize_result(summary.target_date, payload)
+
+
+def build_notes_label_persistence_payload(*, summary: DailyLogSummary, label: NoteLabel, model: str) -> dict[str, Any]:
+    tags = sorted({str(signal.get("tag") or "").strip() for signal in label.signals if str(signal.get("tag") or "").strip()})
+    flags = {
+        "fatigue": bool(label.fatigue_flag),
+        "stress": bool(label.stress_flag),
+        "social_load": bool(label.social_load_flag),
+        "achievement": bool(label.achievement_flag),
+        "self_care": bool(label.self_care_flag),
+        "sleep_issue": bool(label.sleep_issue_flag),
+    }
+    return {
+        "notes_label_input_hash": build_notes_label_input_hash(summary.notes or ""),
+        "notes_label_generated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "notes_label_model": model,
+        "notes_sentiment_label": label.sentiment_label,
+        "notes_sentiment_score": int(label.sentiment_score),
+        "notes_stress_flag": bool(label.stress_flag),
+        "notes_fatigue_flag": bool(label.fatigue_flag),
+        "notes_social_load_flag": bool(label.social_load_flag),
+        "notes_sleep_issue_flag": bool(label.sleep_issue_flag),
+        "notes_flags_json": json.dumps(flags, ensure_ascii=False, separators=(",", ":")),
+        "notes_tags_json": json.dumps(tags, ensure_ascii=False, separators=(",", ":")),
+    }
+
+
 def _load_cached_label(*, date: str, note_text: str, model: str) -> Optional[NoteLabel]:
     if os.getenv("NOTES_LABEL_CACHE_DISABLE", "").strip() == "1":
         return None
@@ -527,12 +627,20 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     results: dict[str, NoteLabel] = {}
     cache_hit_count = 0
     fallback_covered_count = 0
+    persisted_hit_count = 0
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
         for row in [r for r in chunk if not r["notes"]]:
             results[row["date"]] = neutral_label(row["date"])
         targets: list[dict[str, str]] = []
         for row in [r for r in chunk if r["notes"]]:
+            summary = next((s for s in summaries if s.target_date == row["date"]), None)
+            if summary is not None:
+                persisted = load_persisted_note_label(summary)
+                if persisted is not None:
+                    results[row["date"]] = persisted
+                    persisted_hit_count += 1
+                    continue
             cached = _load_cached_label(date=row["date"], note_text=row["notes"], model=model)
             if cached is not None:
                 results[row["date"]] = cached
@@ -814,6 +922,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "normalized_flag_counts": dict(normalized_flag_counts),
             "fallback_reason_counts": fallback_reason_counts,
             "cache_hit_count": cache_hit_count,
+            "persisted_hit_count": persisted_hit_count,
             "cache_miss_count": max(0, len([r for r in rows if r.get("notes")]) - cache_hit_count),
             "fallback_covered_count": fallback_covered_count,
             "final_coverage_count": final_coverage_count,

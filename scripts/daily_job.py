@@ -39,6 +39,13 @@ from scripts.sleep_condition_generator import (
 )
 from scripts.sleep_utils import resolve_sleep_for_target_date
 from scripts.weather_client import fetch_weather_for_date
+from scripts.openai_chat_utils import chat_completion
+from scripts.note_batch_labeler import (
+    build_notes_label_persistence_payload,
+    build_notes_label_input_hash,
+    has_persisted_note_label,
+    label_notes_in_batches,
+)
 
 JST = ZoneInfo("Asia/Tokyo")
 DIARY_GENERATED_FIELDS = {
@@ -816,6 +823,53 @@ def _generate_and_save_today_advice(
     return refreshed_summary or summary
 
 
+def _ensure_notes_label_persisted(
+    config: Config,
+    *,
+    summary: "DailyLogSummary",
+    run_id: str,
+) -> "DailyLogSummary":
+    notes_text = (summary.notes or "").strip()
+    expected_hash = build_notes_label_input_hash(notes_text)
+    persisted_hash = str(summary.notes_label_input_hash or "").strip()
+    if notes_text and has_persisted_note_label(summary) and expected_hash == persisted_hash:
+        logging.info(
+            "phase_c_notes_label_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=matched_hash",
+            summary.target_date,
+            run_id,
+            False,
+        )
+        return summary
+    note_audit: dict[str, Any] = {}
+    labels = label_notes_in_batches(
+        summaries=[summary],
+        chat_completion=chat_completion,
+        model=config.openai_model,
+        audit=note_audit,
+    )
+    label = labels.get(summary.target_date)
+    if label is None:
+        logging.info(
+            "phase_c_notes_label_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_label_generated",
+            summary.target_date,
+            run_id,
+            False,
+        )
+        return summary
+    payload = build_notes_label_persistence_payload(summary=summary, label=label, model=config.openai_model)
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    logging.info(
+        "phase_c_notes_label_saved target_date(JST)=%s run_id=%s updated=%s reason=%s persisted_hit_count=%s",
+        summary.target_date,
+        run_id,
+        save_result.get("updated"),
+        save_result.get("reason"),
+        note_audit.get("persisted_hit_count", 0),
+    )
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    return refreshed_summary or summary
+
+
 def _generate_and_save_weather(
     config: Config,
     *,
@@ -1458,6 +1512,8 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
         expense_f_alert = {"matched": False, "title": "望ましくない支出（Fプロパティ）", "summary": "", "reasons": [], "debug": {"error": str(exc)}}
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _run_optional_enrichment("sleep", _generate_and_save_sleep_insights, summary)
+    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
+    summary = _run_optional_enrichment("notes_label", _ensure_notes_label_persisted, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _run_optional_enrichment("f_risk", _generate_and_save_f_risk, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
