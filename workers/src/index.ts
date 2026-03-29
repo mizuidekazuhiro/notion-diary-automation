@@ -1751,6 +1751,36 @@ function getDateTimeFromProperty(property: Record<string, any> | undefined): str
   return start;
 }
 
+function getIsoStringFromProperty(property: Record<string, any> | undefined): string {
+  if (!property) {
+    return "";
+  }
+  const dateValue = getDateTimeFromProperty(property);
+  if (dateValue) {
+    return dateValue;
+  }
+  const directText = getStringFromProperty(property).trim();
+  if (directText) {
+    return directText;
+  }
+  const formula = property.formula;
+  if (formula) {
+    if (typeof formula.string === "string" && formula.string.trim()) {
+      return formula.string.trim();
+    }
+    if (typeof formula.number === "number") {
+      return String(formula.number);
+    }
+    if (typeof formula.boolean === "boolean") {
+      return formula.boolean ? "true" : "false";
+    }
+    if (typeof formula.date?.start === "string" && formula.date.start.trim()) {
+      return formula.date.start.trim();
+    }
+  }
+  return "";
+}
+
 function normalizeNote(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
@@ -4481,8 +4511,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     (weatherCodePropertyName ? getNumberFromProperty(properties[weatherCodePropertyName]) : null) || null;
   const weatherRetrievedAt =
     (weatherRetrievedAtPropertyName
-      ? getDateTimeFromProperty(properties[weatherRetrievedAtPropertyName]) ||
-        getStringFromProperty(properties[weatherRetrievedAtPropertyName])
+      ? getIsoStringFromProperty(properties[weatherRetrievedAtPropertyName])
       : null) || null;
   const weatherInputHash =
     (weatherInputHashPropertyName
@@ -4490,8 +4519,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       : null) || null;
   const weatherGeneratedAt =
     (weatherGeneratedAtPropertyName
-      ? getDateTimeFromProperty(properties[weatherGeneratedAtPropertyName]) ||
-        getStringFromProperty(properties[weatherGeneratedAtPropertyName])
+      ? getIsoStringFromProperty(properties[weatherGeneratedAtPropertyName])
       : null) || null;
   const diaryInputHash =
     getPlainTextFromRichText(

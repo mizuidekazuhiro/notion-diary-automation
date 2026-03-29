@@ -438,6 +438,12 @@ def _normalize_iso_datetime_for_compare(value: object) -> str:
     return parsed.isoformat()
 
 
+def _is_non_empty_weather_value(*, field: str, value: object) -> bool:
+    if field in {"weather_temp_max_c", "weather_temp_min_c", "weather_precip_probability_max", "weather_code"}:
+        return value is not None
+    return str(value or "").strip() != ""
+
+
 def _weather_field_values_equal(*, field: str, expected: object, actual: object) -> bool:
     if field in {"weather_retrieved_at", "weather_generated_at"}:
         return _normalize_iso_datetime_for_compare(expected) == _normalize_iso_datetime_for_compare(actual)
@@ -449,10 +455,18 @@ def _weather_field_values_equal(*, field: str, expected: object, actual: object)
     return str(expected or "").strip() == str(actual or "").strip()
 
 
-def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_payload: dict[str, object]) -> tuple[bool, list[str]]:
+def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_payload: dict[str, object]) -> dict[str, object]:
     if summary is None:
-        return False, ["summary_unavailable"]
-    failures: list[str] = []
+        return {
+            "readback_ok": False,
+            "compare_ok": False,
+            "missing_fields": ["summary_unavailable"],
+            "mismatch_fields": [],
+            "normalized_save_timestamps": {},
+            "normalized_read_timestamps": {},
+        }
+    missing_fields: list[str] = []
+    mismatch_fields: list[str] = []
     actual_by_field: dict[str, object] = {
         "weather": (summary.weather_summary or "").strip(),
         "weather_summary": (summary.weather_summary or "").strip(),
@@ -465,11 +479,31 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
         "weather_precip_probability_max": summary.weather_precip_probability_max,
         "weather_code": summary.weather_code,
     }
+    normalized_save_timestamps = {
+        key: _normalize_iso_datetime_for_compare(expected_payload.get(key))
+        for key in ("weather_retrieved_at", "weather_generated_at")
+    }
+    normalized_read_timestamps = {
+        key: _normalize_iso_datetime_for_compare(actual_by_field.get(key))
+        for key in ("weather_retrieved_at", "weather_generated_at")
+    }
     for field, expected in expected_payload.items():
         actual = actual_by_field.get(field)
+        if _is_non_empty_weather_value(field=field, value=expected) and not _is_non_empty_weather_value(field=field, value=actual):
+            missing_fields.append(field)
+            continue
         if not _weather_field_values_equal(field=field, expected=expected, actual=actual):
-            failures.append(field)
-    return len(failures) == 0, failures
+            mismatch_fields.append(field)
+    readback_ok = len(missing_fields) == 0
+    compare_ok = len(mismatch_fields) == 0
+    return {
+        "readback_ok": readback_ok,
+        "compare_ok": compare_ok,
+        "missing_fields": missing_fields,
+        "mismatch_fields": mismatch_fields,
+        "normalized_save_timestamps": normalized_save_timestamps,
+        "normalized_read_timestamps": normalized_read_timestamps,
+    }
 
 
 def _generate_and_save_sleep_insights(
@@ -767,7 +801,7 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_readback_missing_fields=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             "",
             resolved_location.resolution_method,
@@ -787,7 +821,11 @@ def _generate_and_save_weather(
             True,
             bool(save_result.get("updated")),
             False,
+            False,
             ["weather", "weather_retrieved_at", "weather_generated_at", "weather_input_hash"],
+            [],
+            {},
+            {},
             skip_reason,
             json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
         )
@@ -866,7 +904,7 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_readback_missing_fields=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             resolved_location.name,
             resolved_location.resolution_method,
@@ -877,7 +915,11 @@ def _generate_and_save_weather(
             True,
             bool(save_result.get("updated")),
             False,
+            False,
             ["weather", "weather_retrieved_at", "weather_generated_at", "weather_input_hash"],
+            [],
+            {},
+            {},
             reason,
             json.dumps(debug_payload, ensure_ascii=False, sort_keys=True, default=str),
         )
@@ -899,10 +941,14 @@ def _generate_and_save_weather(
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
     weather_save_ok = bool(save_result.get("updated")) and str(save_result.get("reason") or "") in {"updated", ""}
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-    readback_ok, readback_failures = _weather_roundtrip_status(summary=refreshed_summary, expected_payload=payload)
-    stage_status = "ok" if readback_ok else "weather_readback_missing"
+    roundtrip_status = _weather_roundtrip_status(summary=refreshed_summary, expected_payload=payload)
+    readback_ok = bool(roundtrip_status["readback_ok"])
+    compare_ok = bool(roundtrip_status["compare_ok"])
+    readback_failures = list(roundtrip_status["missing_fields"])
+    compare_mismatch_fields = list(roundtrip_status["mismatch_fields"])
+    stage_status = "ok" if readback_ok and compare_ok else "weather_readback_or_compare_failed"
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_readback_missing_fields=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s debug=%s",
         resolved_location.source,
         weather.location_label,
         resolved_location.resolution_method,
@@ -925,18 +971,23 @@ def _generate_and_save_weather(
         weather_save_attempted,
         weather_save_ok,
         readback_ok,
+        compare_ok,
         readback_failures,
+        compare_mismatch_fields,
+        roundtrip_status["normalized_save_timestamps"],
+        roundtrip_status["normalized_read_timestamps"],
         "",
-        json.dumps({**weather.debug_summary, "readback_failures": readback_failures}, ensure_ascii=False, sort_keys=True, default=str),
+        json.dumps({**weather.debug_summary, "roundtrip_status": roundtrip_status}, ensure_ascii=False, sort_keys=True, default=str),
     )
-    if not readback_ok:
+    if not (readback_ok and compare_ok):
         logging.warning(
-            "phase_c_weather_readback_mismatch target_date(JST)=%s run_id=%s save_reason=%s merge_status=%s failures=%s",
+            "phase_c_weather_readback_mismatch target_date(JST)=%s run_id=%s save_reason=%s merge_status=%s missing_fields=%s mismatch_fields=%s",
             summary.target_date,
             run_id,
             save_result.get("reason"),
             stage_status,
             readback_failures,
+            compare_mismatch_fields,
         )
     return refreshed_summary or summary
 

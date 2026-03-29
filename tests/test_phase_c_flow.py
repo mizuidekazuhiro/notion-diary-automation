@@ -468,10 +468,12 @@ def test_weather_roundtrip_datetime_normalization_accepts_z_and_utc_offset() -> 
         weather_input_hash="hash-1",
     )
 
-    ok, failures = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
+    status = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
 
-    assert ok is True
-    assert failures == []
+    assert status["readback_ok"] is True
+    assert status["compare_ok"] is True
+    assert status["missing_fields"] == []
+    assert status["mismatch_fields"] == []
 
 
 def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
@@ -499,10 +501,12 @@ def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
         weather_generated_at="2026-03-20T00:01:00+00:00",
     )
 
-    ok, failures = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
+    status = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
 
-    assert ok is True
-    assert failures == []
+    assert status["readback_ok"] is True
+    assert status["compare_ok"] is True
+    assert status["missing_fields"] == []
+    assert status["mismatch_fields"] == []
 
 
 def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fallback() -> None:
@@ -514,6 +518,9 @@ def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fa
     assert "[\"Weather\", \"weather\", \"weather_summary\"]" not in source
     assert "const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);" in source
     assert "const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);" in source
+    assert "function getIsoStringFromProperty(property: Record<string, any> | undefined): string {" in source
+    assert "? getIsoStringFromProperty(properties[weatherRetrievedAtPropertyName])" in source
+    assert "? getIsoStringFromProperty(properties[weatherGeneratedAtPropertyName])" in source
 
 
 def test_build_input_hash_normalizes_empty_values() -> None:
