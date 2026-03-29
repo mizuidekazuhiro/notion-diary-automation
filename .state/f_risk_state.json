@@ -2,16 +2,16 @@
   "by_date": {
     "2026-03-28": {
       "alert_text": null,
-      "generated_at": "2026-03-29T12:57:06Z",
+      "generated_at": "2026-03-29T13:59:30Z",
       "input_hash": "43479842e5e470d74cca0af632bce77fabde65d4b4e73b82eef25ee6973a9321",
       "matched_patterns": [
         "週末バイアス"
       ],
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
-      "score": 0.3200325076231646
+      "score": 0.37114834641603833
     }
   },
-  "updated_at": "2026-03-29T12:57:06Z",
+  "updated_at": "2026-03-29T13:59:30Z",
   "version": 1
 }
