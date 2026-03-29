@@ -217,7 +217,6 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
     { name: "Meal summary", type: "rich_text" },
-    { name: "Weather", type: "rich_text" },
     { name: "Weather Summary", type: "rich_text" },
     { name: "Weather Location", type: "rich_text" },
     { name: "Weather Temp Max C", type: "number" },
@@ -277,6 +276,28 @@ const WEATHER_CODE_PROPERTY_NAME = "Weather Code";
 const WEATHER_RETRIEVED_AT_PROPERTY_NAME = "Weather Retrieved At";
 const WEATHER_INPUT_HASH_PROPERTY_NAME = "Weather Input Hash";
 const WEATHER_GENERATED_AT_PROPERTY_NAME = "Weather Generated At";
+const WEATHER_SELECT_LABEL_BY_CODE: Record<number, string> = {
+  0: "晴れ",
+  1: "晴れ",
+  2: "曇り",
+  3: "曇り",
+  45: "霧",
+  48: "霧",
+  51: "雨",
+  53: "雨",
+  55: "雨",
+  61: "雨",
+  63: "雨",
+  65: "雨",
+  71: "雪",
+  73: "雪",
+  75: "雪",
+  80: "雨",
+  81: "雨",
+  82: "雨",
+  95: "雷雨",
+};
+const WEATHER_SELECT_LABELS = ["晴れ", "曇り", "雨", "雪", "雷雨", "霧"] as const;
 
 function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
   const { statusPropertyName, doneDatePropertyName, dropDatePropertyName } =
@@ -1693,6 +1714,70 @@ function hasNonEmptyValue(value: unknown): boolean {
     return value.trim().length > 0;
   }
   return true;
+}
+
+function buildWeatherSummaryText(params: {
+  weatherCode: number | null;
+  weatherTempMaxC: number | null;
+  weatherTempMinC: number | null;
+  weatherPrecipProbabilityMax: number | null;
+}): string {
+  const weatherLabel =
+    params.weatherCode !== null ? WEATHER_CODE_LABELS[params.weatherCode] ?? "" : "";
+  const metricParts: string[] = [];
+  if (params.weatherTempMaxC !== null) {
+    metricParts.push(`最高${params.weatherTempMaxC.toFixed(1)}℃`);
+  }
+  if (params.weatherTempMinC !== null) {
+    metricParts.push(`最低${params.weatherTempMinC.toFixed(1)}℃`);
+  }
+  if (!weatherLabel && !metricParts.length && params.weatherPrecipProbabilityMax === null) {
+    return "";
+  }
+  const firstSentence = weatherLabel ? `${weatherLabel}。` : "";
+  let secondSentence = "";
+  if (metricParts.length && params.weatherPrecipProbabilityMax !== null) {
+    secondSentence = `${metricParts.join("、")}、降水確率は${params.weatherPrecipProbabilityMax}%です。`;
+  } else if (metricParts.length) {
+    secondSentence = `${metricParts.join("、")}です。`;
+  } else if (params.weatherPrecipProbabilityMax !== null) {
+    secondSentence = `降水確率は${params.weatherPrecipProbabilityMax}%です。`;
+  }
+  return `${firstSentence}${secondSentence}`;
+}
+
+const WEATHER_CODE_LABELS: Record<number, string> = {
+  0: "晴れ",
+  1: "概ね晴れ",
+  2: "一部くもり",
+  3: "くもり",
+  45: "霧",
+  48: "着氷性の霧",
+  51: "弱い霧雨",
+  53: "霧雨",
+  55: "強い霧雨",
+  61: "弱い雨",
+  63: "雨",
+  65: "強い雨",
+  71: "弱い雪",
+  73: "雪",
+  75: "強い雪",
+  80: "弱いにわか雨",
+  81: "にわか雨",
+  82: "強いにわか雨",
+  95: "雷雨",
+};
+
+function inferWeatherSelectLabel(weatherCode: number | null, summaryText: string): string | null {
+  if (weatherCode !== null && WEATHER_SELECT_LABEL_BY_CODE[weatherCode]) {
+    return WEATHER_SELECT_LABEL_BY_CODE[weatherCode];
+  }
+  const normalized = summaryText.trim();
+  if (!normalized) {
+    return null;
+  }
+  const matched = WEATHER_SELECT_LABELS.find((label) => normalized.includes(label));
+  return matched ?? null;
 }
 
 function splitIntoChunks(content: string, maxLength: number): string[] {
@@ -3768,13 +3853,65 @@ async function handleDailyLogGenerateDiary(
   if (todayAdvice) {
     updateProperties["Today advice"] = createRichTextPropertyWithLimit(todayAdvice, DIARY_RICH_TEXT_LIMIT);
   }
-  const weatherPropertyName = getWeatherPropertyName(env);
-  if (hasPropertyType(dailyLogProperties, weatherPropertyName, "rich_text")) {
-    updateProperties[weatherPropertyName] = createRichTextProperty(weatherText || weatherSummaryText);
-  }
   const weatherSummaryPropertyName = getWeatherSummaryPropertyName(env);
-  if (hasPropertyType(dailyLogProperties, weatherSummaryPropertyName, "rich_text")) {
-    updateProperties[weatherSummaryPropertyName] = createRichTextProperty(weatherSummaryText || weatherText);
+  const weatherSummaryTextResolved =
+    weatherSummaryText ||
+    weatherText ||
+    buildWeatherSummaryText({
+      weatherCode,
+      weatherTempMaxC,
+      weatherTempMinC,
+      weatherPrecipProbabilityMax,
+    });
+  const weatherSelectLabel = inferWeatherSelectLabel(weatherCode, weatherSummaryTextResolved);
+  const weatherPropertyName = getWeatherPropertyName(env);
+  const weatherPropertyResolvedName = resolvePropertyName(
+    dailyLogProperties,
+    weatherPropertyName,
+    "generate_diary:weather",
+  );
+  const weatherPropertyType = weatherPropertyResolvedName
+    ? dailyLogProperties[weatherPropertyResolvedName]?.type
+    : "missing";
+  const weatherSummaryPropertyResolvedName = resolvePropertyName(
+    dailyLogProperties,
+    weatherSummaryPropertyName,
+    "generate_diary:weather_summary",
+  );
+  const weatherSummaryPropertyType = weatherSummaryPropertyResolvedName
+    ? dailyLogProperties[weatherSummaryPropertyResolvedName]?.type
+    : "missing";
+  console.log(
+    `[generate_diary] weather_summary_generated=${weatherSummaryTextResolved !== ""} ` +
+      `weather_summary_text=${JSON.stringify(weatherSummaryTextResolved)} ` +
+      `weather_select_label=${weatherSelectLabel ?? "null"} ` +
+      `weather_property_type=${weatherPropertyType} ` +
+      `weather_summary_property_type=${weatherSummaryPropertyType}`,
+  );
+  if (weatherSummaryPropertyType === "rich_text") {
+    updateProperties[weatherSummaryPropertyName] = createRichTextProperty(weatherSummaryTextResolved);
+  }
+  let weatherSummarySaved = weatherSummaryPropertyType === "rich_text";
+  let weatherSelectSaved = false;
+  let weatherSelectSkipReason = "";
+  if (weatherPropertyType === "select") {
+    if (weatherSelectLabel) {
+      updateProperties[weatherPropertyName] = createSelectProperty(weatherSelectLabel);
+      weatherSelectSaved = true;
+    } else {
+      weatherSelectSkipReason = "weather_select_label_unresolved";
+    }
+  } else if (weatherPropertyType === "rich_text") {
+    if (weatherSelectLabel) {
+      updateProperties[weatherPropertyName] = createRichTextProperty(weatherSelectLabel);
+      weatherSelectSaved = true;
+    } else {
+      weatherSelectSkipReason = "weather_select_label_unresolved";
+    }
+  } else if (weatherPropertyType === "missing") {
+    weatherSelectSkipReason = "weather_property_missing";
+  } else {
+    weatherSelectSkipReason = `unsupported_weather_property_type:${weatherPropertyType}`;
   }
   const weatherLocationPropertyName = getWeatherLocationPropertyName(env);
   if (weatherLocation && hasPropertyType(dailyLogProperties, weatherLocationPropertyName, "rich_text")) {
@@ -3927,8 +4064,47 @@ async function handleDailyLogGenerateDiary(
     body: JSON.stringify({ properties: updateProperties }),
   });
   if (!updateResponse.ok) {
+    if (weatherPropertyType === "select" && updateProperties[weatherPropertyName]) {
+      const fallbackProperties = { ...updateProperties };
+      delete fallbackProperties[weatherPropertyName];
+      const selectErrorDetails = await getNotionErrorDetails(updateResponse);
+      weatherSelectSaved = false;
+      weatherSelectSkipReason = "select_option_not_found";
+      console.warn(
+        `[generate_diary] weather select update failed; retry without Weather. ` +
+          `skip_reason=${weatherSelectSkipReason} status=${selectErrorDetails.status} ` +
+          `message=${selectErrorDetails.message}`,
+      );
+      const retryResponse = await notionFetch(env, `/pages/${page.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ properties: fallbackProperties }),
+      });
+      if (!retryResponse.ok) {
+        return notionErrorResponse(retryResponse, "handleDailyLogGenerateDiary.update_weather_summary_retry");
+      }
+      weatherSummarySaved = weatherSummaryPropertyType === "rich_text";
+      console.log(
+        `[generate_diary] weather_summary_saved=${weatherSummarySaved} weather_select_saved=${weatherSelectSaved} ` +
+          `weather_select_skip_reason=${weatherSelectSkipReason}`,
+      );
+      return jsonResponse({
+        ok: true,
+        found: true,
+        target_date: targetDate,
+        page_id: page.id,
+        updated: true,
+        reason: "updated_with_weather_select_skip",
+        weather_summary_saved: weatherSummarySaved,
+        weather_select_saved: weatherSelectSaved,
+        weather_select_skip_reason: weatherSelectSkipReason,
+      });
+    }
     return notionErrorResponse(updateResponse, "handleDailyLogGenerateDiary.update");
   }
+  console.log(
+    `[generate_diary] weather_summary_saved=${weatherSummarySaved} weather_select_saved=${weatherSelectSaved} ` +
+      `weather_select_skip_reason=${weatherSelectSkipReason || "-"}`,
+  );
 
   return jsonResponse({
     ok: true,
@@ -3937,6 +4113,9 @@ async function handleDailyLogGenerateDiary(
     page_id: page.id,
     updated: true,
     reason: "updated",
+    weather_summary_saved: weatherSummarySaved,
+    weather_select_saved: weatherSelectSaved,
+    weather_select_skip_reason: weatherSelectSkipReason || null,
   });
 }
 
@@ -4488,10 +4667,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     "daily_log_read:weather_generated_at",
   );
   const weatherResolvedText = weatherPropertyName
-    ? getPlainTextFromRichText(properties[weatherPropertyName])
+    ? getStringFromProperty(properties[weatherPropertyName])
     : null;
   const weatherSummaryResolvedText = weatherSummaryPropertyName
-    ? getPlainTextFromRichText(properties[weatherSummaryPropertyName])
+    ? getStringFromProperty(properties[weatherSummaryPropertyName])
     : null;
   const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);
   const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);

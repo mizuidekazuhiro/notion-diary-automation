@@ -546,11 +546,21 @@ def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fa
     assert "resolveExactPropertyName(\n    properties,\n    getWeatherSummaryPropertyName(env),\n    \"daily_log_read:weather_summary\"," in source
     assert "[\"Weather Summary\", \"weather\", \"weather_summary\"]" not in source
     assert "[\"Weather\", \"weather\", \"weather_summary\"]" not in source
+    assert "? getStringFromProperty(properties[weatherPropertyName])" in source
+    assert "? getStringFromProperty(properties[weatherSummaryPropertyName])" in source
     assert "const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);" in source
     assert "const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);" in source
     assert "function getIsoStringFromProperty(property: Record<string, any> | undefined): string {" in source
     assert "? getIsoStringFromProperty(properties[weatherRetrievedAtPropertyName])" in source
     assert "? getIsoStringFromProperty(properties[weatherGeneratedAtPropertyName])" in source
+
+
+def test_workers_generate_diary_weather_summary_and_select_are_separated() -> None:
+    source = Path("workers/src/index.ts").read_text(encoding="utf-8")
+    assert "const weatherSummaryTextResolved =" in source
+    assert "const weatherSelectLabel = inferWeatherSelectLabel(weatherCode, weatherSummaryTextResolved);" in source
+    assert 'weatherSelectSkipReason = "select_option_not_found";' in source
+    assert "updated_with_weather_select_skip" in source
 
 
 def test_build_input_hash_normalizes_empty_values() -> None:

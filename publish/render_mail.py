@@ -52,11 +52,19 @@ def render_mail(
 ) -> MailContent:
     subject = f"Daily Log | {summary.target_date}"
     mood_notes_url = _build_mood_notes_url(summary.target_date)
-    weather_summary = (summary.weather_summary or "").strip() or build_weather_summary(
-        weather_code=summary.weather_code,
-        temp_max_c=summary.weather_temp_max_c,
-        temp_min_c=summary.weather_temp_min_c,
-        precip_probability_max=summary.weather_precip_probability_max,
+    weather_summary = (summary.weather_summary or "").strip()
+    weather_summary_source = "saved_weather_summary"
+    if not weather_summary:
+        weather_summary = build_weather_summary(
+            weather_code=summary.weather_code,
+            temp_max_c=summary.weather_temp_max_c,
+            temp_min_c=summary.weather_temp_min_c,
+            precip_probability_max=summary.weather_precip_probability_max,
+        ) or ""
+        weather_summary_source = "fallback_from_raw" if weather_summary else "empty"
+    print(
+        f"[render_mail] weather_summary_source={weather_summary_source} "
+        f"weather_label={(summary.weather_label or '').strip() or '-'}"
     )
     payload = {
         "target_date": summary.target_date,
@@ -104,6 +112,7 @@ def render_mail(
         "weather_location": summary.weather_location,
         "weather": weather_summary,
         "weather_summary": weather_summary,
+        "weather_label": summary.weather_label,
         "weather_temp_max_c": summary.weather_temp_max_c,
         "weather_temp_min_c": summary.weather_temp_min_c,
         "weather_precip_probability_max": summary.weather_precip_probability_max,
