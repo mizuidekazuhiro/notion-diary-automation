@@ -80,7 +80,8 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 #### Today advice の睡眠 source of truth
 - 睡眠は `mood_advice_generator.py` の `selected_sleep_candidate` を唯一の source of truth とします。
 - renderer へ `today_sleep_context` を渡し、renderer 側で再判定しません。
-- ログは `sleep_candidates` / `selected_sleep_candidate` / `selected_candidate_source` / `renderer_received_sleep_context` / `final_today_sleep_context` を出します。
+- LightGBM の寄与表示は target_date の睡眠値（`sleep_hours` / `sleep_score`）で override した `today_contribution_features` を使い、`feature_row_date_used_as_today` と `lightgbm_explanation_source_row_date` を必ず出します。
+- ログは `sleep_candidates` / `selected_sleep_candidate` / `selected_candidate_source` / `renderer_received_sleep_context` / `final_today_sleep_context` / `feature_row_date_used_as_today` を出します。
 
 #### notify 無効時の扱い
 - `email_disabled` は送信 skip 理由のみです。
@@ -247,6 +248,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `scripts/daily_job.py` は Phase C の各保存後に Daily Log を再読込します。
 - weather の地点解決は、Location Log の最新1件を基準にし、lat/lon がある場合は最優先で使います。lat/lon が無い場合のみ place geocode を使い、届かない場合は `place` / `location_summary` / `東京都` へフォールバックします。
 - weather API は key 不要の Open-Meteo（geocoding + forecast）を利用し、失敗時は Phase C 全体を落とさず `phase_c_weather_skip` を出します。
+- weather roundtrip compare は「今回保存した非空フィールドのみ」を比較対象にし、未取得・未保存のフィールドは `ignored_fields` に出します。
 - F risk は `f_event_flag = Expense F Count > 0` を主ラベルとして機械学習（LightGBM 優先、失敗時 LogisticRegression）を実行し、`insufficient_samples` / `single_class_target` / `no_f_history` などを skip_reason で記録します。
 - Today advice と F risk は責務・入力・保存先・ログを分離しています。
 - `scripts/diary_generator.py` の `event_date / done_date` ルールは維持しています。future event を当日実施と誤認しません。

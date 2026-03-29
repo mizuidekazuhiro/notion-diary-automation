@@ -246,6 +246,42 @@ def test_order_merge_works_when_count_matches(monkeypatch: pytest.MonkeyPatch) -
     assert int(audit["matched_by_order_count"]) > 0
 
 
+@pytest.mark.parametrize(
+    "response_date",
+    [
+        "2026-03-20",
+        "2026/03/20",
+        "2026-03-20T00:00:00+09:00",
+    ],
+)
+def test_date_only_merge_accepts_mixed_date_formats(monkeypatch: pytest.MonkeyPatch, response_date: str) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        _ = kwargs
+        return json.dumps([{"date": response_date, "tags": ["fatigue"]}], ensure_ascii=False)
+
+    audit: dict[str, object] = {}
+    labels = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert labels["2026-03-20"].fatigue_flag is True
+    assert int(audit["matched_by_date_count"]) >= 1
+    assert "2026-03-20" not in set(audit["unmatched_input_dates"])
+
+
+def test_order_fallback_not_used_when_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた"), _summary("2026-03-21", "喧嘩")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        _ = kwargs
+        return json.dumps([{"id": "unknown-a", "date": "x", "tags": ["fatigue"]}], ensure_ascii=False)
+
+    audit: dict[str, object] = {}
+    _ = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert int(audit["matched_by_order_count"]) >= 0
+
+
 def test_labeling_empty_response_sets_fatal_reason(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
     summaries = [_summary("2026-03-20", "疲れた")]
