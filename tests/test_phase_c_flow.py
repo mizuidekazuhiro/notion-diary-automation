@@ -453,6 +453,69 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
     assert payload["weather_code"] == 0
 
 
+def test_weather_roundtrip_datetime_normalization_accepts_z_and_utc_offset() -> None:
+    expected_payload = {
+        "weather": "晴れ",
+        "weather_summary": "晴れ",
+        "weather_retrieved_at": "2026-03-29T02:54:47Z",
+        "weather_generated_at": "2026-03-29T02:54:47Z",
+        "weather_input_hash": "hash-1",
+    }
+    summary = _summary(
+        weather_summary="晴れ",
+        weather_retrieved_at="2026-03-29T02:54:47+00:00",
+        weather_generated_at="2026-03-29T02:54:47+00:00",
+        weather_input_hash="hash-1",
+    )
+
+    ok, failures = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
+
+    assert ok is True
+    assert failures == []
+
+
+def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
+    expected_payload = {
+        "weather": "晴れ",
+        "weather_summary": "晴れ",
+        "weather_location": "東京",
+        "weather_temp_max_c": 23.0,
+        "weather_temp_min_c": 15.0,
+        "weather_precip_probability_max": 10.0,
+        "weather_code": 0,
+        "weather_retrieved_at": "2026-03-20T00:00:00Z",
+        "weather_input_hash": "hash-1",
+        "weather_generated_at": "2026-03-20T00:01:00Z",
+    }
+    summary = _summary(
+        weather_summary="晴れ",
+        weather_location="東京",
+        weather_temp_max_c=23.0,
+        weather_temp_min_c=15.0,
+        weather_precip_probability_max=10.0,
+        weather_code=0,
+        weather_retrieved_at="2026-03-20T00:00:00+00:00",
+        weather_input_hash="hash-1",
+        weather_generated_at="2026-03-20T00:01:00+00:00",
+    )
+
+    ok, failures = daily_job._weather_roundtrip_status(summary=summary, expected_payload=expected_payload)
+
+    assert ok is True
+    assert failures == []
+
+
+def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fallback() -> None:
+    source = Path("workers/src/index.ts").read_text(encoding="utf-8")
+
+    assert "resolveExactPropertyName(\n    properties,\n    getWeatherPropertyName(env),\n    \"daily_log_read:weather\"," in source
+    assert "resolveExactPropertyName(\n    properties,\n    getWeatherSummaryPropertyName(env),\n    \"daily_log_read:weather_summary\"," in source
+    assert "[\"Weather Summary\", \"weather\", \"weather_summary\"]" not in source
+    assert "[\"Weather\", \"weather\", \"weather_summary\"]" not in source
+    assert "const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);" in source
+    assert "const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);" in source
+
+
 def test_build_input_hash_normalizes_empty_values() -> None:
     payload_a = {
         "notes": " hello ",

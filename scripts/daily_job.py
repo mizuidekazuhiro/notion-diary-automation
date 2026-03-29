@@ -421,6 +421,34 @@ def _save_daily_log_fields(
     )
 
 
+def _normalize_iso_datetime_for_compare(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    raw = value.strip()
+    if not raw:
+        return ""
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return raw
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(ZoneInfo("UTC"))
+    parsed = parsed.replace(microsecond=0)
+    return parsed.isoformat()
+
+
+def _weather_field_values_equal(*, field: str, expected: object, actual: object) -> bool:
+    if field in {"weather_retrieved_at", "weather_generated_at"}:
+        return _normalize_iso_datetime_for_compare(expected) == _normalize_iso_datetime_for_compare(actual)
+    if isinstance(expected, (int, float)) or isinstance(actual, (int, float)):
+        try:
+            return float(expected) == float(actual)
+        except (TypeError, ValueError):
+            return False
+    return str(expected or "").strip() == str(actual or "").strip()
+
+
 def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_payload: dict[str, object]) -> tuple[bool, list[str]]:
     if summary is None:
         return False, ["summary_unavailable"]
@@ -439,11 +467,7 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
     }
     for field, expected in expected_payload.items():
         actual = actual_by_field.get(field)
-        if isinstance(expected, (int, float)) and expected is not None:
-            if actual is None or float(actual) != float(expected):
-                failures.append(field)
-            continue
-        if (str(actual or "").strip()) != (str(expected or "").strip()):
+        if not _weather_field_values_equal(field=field, expected=expected, actual=actual):
             failures.append(field)
     return len(failures) == 0, failures
 
