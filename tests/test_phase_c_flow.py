@@ -133,7 +133,7 @@ def test_phase_c_runs_sleep_then_advice_then_diary(monkeypatch) -> None:
         order.append("advice")
         return summary
 
-    def fake_diary(config, *, summary, run_id):
+    def fake_diary(config, *, summary, run_id, **kwargs):
         order.append("diary")
         refreshed["current"] = _summary(diary="generated diary")
         return refreshed["current"]
@@ -142,10 +142,10 @@ def test_phase_c_runs_sleep_then_advice_then_diary(monkeypatch) -> None:
         order.append("notify")
         return False
 
-    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id, **kwargs: summary)
     monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: {"matched": False, "reasons": []})
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", fake_sleep)
-    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id, **kwargs: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", fake_advice)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", fake_diary)
     monkeypatch.setattr(daily_job, "_notify_phase_c", fake_notify)
@@ -161,11 +161,11 @@ def test_email_disabled_does_not_mark_notified(monkeypatch) -> None:
     mark_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id, **kwargs: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id, **kwargs: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id, **kwargs: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id, **kwargs: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: summary)
     monkeypatch.setattr(daily_job, "_notify_phase_c", lambda config, *, summary, run_id: False)
     monkeypatch.setattr(daily_job, "post_json", lambda *args, **kwargs: mark_calls.append(kwargs) or {"updated": True})
 
@@ -185,7 +185,7 @@ def test_email_disabled_still_runs_f_risk(monkeypatch) -> None:
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: order.append("f_risk") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id: order.append("diary") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
     monkeypatch.setattr(daily_job, "_notify_phase_c", lambda config, *, summary, run_id: order.append("notify") or False)
 
     daily_job.run_notify_diary(config, "2026-03-20", "run")
@@ -201,7 +201,7 @@ def test_already_notified_skips_only_notify(monkeypatch) -> None:
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id: order.append("diary") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
 
     def fake_notify(config, *, summary, run_id):
         order.append("notify")
@@ -393,6 +393,64 @@ def test_weather_missing_location_log_updates_empty_weather(monkeypatch) -> None
 
     assert len(save_calls) == 1
     assert save_calls[0]["payload"]["weather"] == ""
+
+
+def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -> None:
+    summary = _summary()
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    save_calls: list[dict[str, object]] = []
+    refreshed = _summary(
+        weather_summary="晴れ",
+        weather_location="東京",
+        weather_temp_max_c=23.0,
+        weather_temp_min_c=15.0,
+        weather_precip_probability_max=10.0,
+        weather_code=0,
+        weather_retrieved_at="2026-03-20T00:00:00Z",
+        weather_input_hash="h",
+        weather_generated_at="2026-03-20T00:01:00Z",
+    )
+    monkeypatch.setattr(
+        daily_job,
+        "resolve_location_for_weather",
+        lambda **kwargs: ResolvedLocation(
+            name="東京",
+            source="location_log_db",
+            skip_reason=None,
+            latitude=35.0,
+            longitude=139.0,
+            resolution_method="location_log_latest_latlon",
+            debug_summary={"query_status": "ok"},
+        ),
+    )
+    monkeypatch.setattr(
+        daily_job,
+        "fetch_weather_for_date",
+        lambda **kwargs: SimpleNamespace(
+            available=True,
+            location_label="東京",
+            summary="晴れ",
+            temp_max_c=23.0,
+            temp_min_c=15.0,
+            precip_probability_max=10.0,
+            weather_code=0,
+            retrieved_at="2026-03-20T00:00:00Z",
+            debug_summary={},
+        ),
+    )
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: refreshed)
+
+    daily_job._generate_and_save_weather(config, summary=summary, run_id="run")
+
+    payload = save_calls[0]["payload"]
+    assert payload["weather"] == "晴れ"
+    assert payload["weather_summary"] == "晴れ"
+    assert payload["weather_location"] == "東京"
+    assert payload["weather_temp_max_c"] == 23.0
+    assert payload["weather_temp_min_c"] == 15.0
+    assert payload["weather_precip_probability_max"] == 10.0
+    assert payload["weather_code"] == 0
 
 
 def test_build_input_hash_normalizes_empty_values() -> None:

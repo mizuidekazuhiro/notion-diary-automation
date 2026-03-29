@@ -96,6 +96,12 @@ interface Env {
   DAILY_LOG_TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME?: string;
   DAILY_LOG_TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME?: string;
   DAILY_LOG_WEATHER_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_SUMMARY_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_LOCATION_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_TEMP_MAX_C_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_TEMP_MIN_C_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_PRECIP_PROBABILITY_MAX_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_CODE_PROPERTY_NAME?: string;
   DAILY_LOG_WEATHER_RETRIEVED_AT_PROPERTY_NAME?: string;
   DAILY_LOG_WEATHER_INPUT_HASH_PROPERTY_NAME?: string;
   DAILY_LOG_WEATHER_GENERATED_AT_PROPERTY_NAME?: string;
@@ -194,6 +200,15 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: dailyLogExpenses.total, type: "number" },
     { name: "Meal summary", type: "rich_text" },
     { name: "Weather", type: "rich_text" },
+    { name: "Weather Summary", type: "rich_text" },
+    { name: "Weather Location", type: "rich_text" },
+    { name: "Weather Temp Max C", type: "number" },
+    { name: "Weather Temp Min C", type: "number" },
+    { name: "Weather Precip Probability Max", type: "number" },
+    { name: "Weather Code", type: "number" },
+    { name: "Weather Retrieved At", type: "date" },
+    { name: "Weather Input Hash", type: "rich_text" },
+    { name: "Weather Generated At", type: "date" },
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: "Mood", type: "select" },
@@ -235,6 +250,12 @@ const DIARY_INPUT_HASH_PROPERTY_NAME = "Diary Input Hash";
 const TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME = "Today Advice Input Hash";
 const TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME = "Today Advice Generated At";
 const WEATHER_PROPERTY_NAME = "Weather";
+const WEATHER_SUMMARY_PROPERTY_NAME = "Weather Summary";
+const WEATHER_LOCATION_PROPERTY_NAME = "Weather Location";
+const WEATHER_TEMP_MAX_C_PROPERTY_NAME = "Weather Temp Max C";
+const WEATHER_TEMP_MIN_C_PROPERTY_NAME = "Weather Temp Min C";
+const WEATHER_PRECIP_PROBABILITY_MAX_PROPERTY_NAME = "Weather Precip Probability Max";
+const WEATHER_CODE_PROPERTY_NAME = "Weather Code";
 const WEATHER_RETRIEVED_AT_PROPERTY_NAME = "Weather Retrieved At";
 const WEATHER_INPUT_HASH_PROPERTY_NAME = "Weather Input Hash";
 const WEATHER_GENERATED_AT_PROPERTY_NAME = "Weather Generated At";
@@ -1479,6 +1500,33 @@ function getTodayAdviceGeneratedAtPropertyName(env: Env): string {
 
 function getWeatherPropertyName(env: Env): string {
   return env.DAILY_LOG_WEATHER_PROPERTY_NAME || WEATHER_PROPERTY_NAME;
+}
+
+function getWeatherSummaryPropertyName(env: Env): string {
+  return env.DAILY_LOG_WEATHER_SUMMARY_PROPERTY_NAME || WEATHER_SUMMARY_PROPERTY_NAME;
+}
+
+function getWeatherLocationPropertyName(env: Env): string {
+  return env.DAILY_LOG_WEATHER_LOCATION_PROPERTY_NAME || WEATHER_LOCATION_PROPERTY_NAME;
+}
+
+function getWeatherTempMaxCPropertyName(env: Env): string {
+  return env.DAILY_LOG_WEATHER_TEMP_MAX_C_PROPERTY_NAME || WEATHER_TEMP_MAX_C_PROPERTY_NAME;
+}
+
+function getWeatherTempMinCPropertyName(env: Env): string {
+  return env.DAILY_LOG_WEATHER_TEMP_MIN_C_PROPERTY_NAME || WEATHER_TEMP_MIN_C_PROPERTY_NAME;
+}
+
+function getWeatherPrecipProbabilityMaxPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_WEATHER_PRECIP_PROBABILITY_MAX_PROPERTY_NAME ||
+    WEATHER_PRECIP_PROBABILITY_MAX_PROPERTY_NAME
+  );
+}
+
+function getWeatherCodePropertyName(env: Env): string {
+  return env.DAILY_LOG_WEATHER_CODE_PROPERTY_NAME || WEATHER_CODE_PROPERTY_NAME;
 }
 
 function getWeatherRetrievedAtPropertyName(env: Env): string {
@@ -3596,6 +3644,19 @@ async function handleDailyLogGenerateDiary(
       ? payload.today_advice_generated_at.trim()
       : "";
   const weatherText = typeof payload.weather === "string" ? payload.weather.trim() : "";
+  const weatherSummaryText =
+    typeof payload.weather_summary === "string" ? payload.weather_summary.trim() : "";
+  const weatherLocation =
+    typeof payload.weather_location === "string" ? payload.weather_location.trim() : "";
+  const weatherTempMaxC =
+    typeof payload.weather_temp_max_c === "number" ? payload.weather_temp_max_c : null;
+  const weatherTempMinC =
+    typeof payload.weather_temp_min_c === "number" ? payload.weather_temp_min_c : null;
+  const weatherPrecipProbabilityMax =
+    typeof payload.weather_precip_probability_max === "number"
+      ? payload.weather_precip_probability_max
+      : null;
+  const weatherCode = typeof payload.weather_code === "number" ? payload.weather_code : null;
   const weatherRetrievedAt =
     typeof payload.weather_retrieved_at === "string" ? payload.weather_retrieved_at.trim() : "";
   const weatherInputHash =
@@ -3608,6 +3669,12 @@ async function handleDailyLogGenerateDiary(
     !todayConditionForecastJp &&
     !todayAdvice &&
     weatherText === "" &&
+    weatherSummaryText === "" &&
+    weatherLocation === "" &&
+    weatherTempMaxC === null &&
+    weatherTempMinC === null &&
+    weatherPrecipProbabilityMax === null &&
+    weatherCode === null &&
     !weatherRetrievedAt &&
     !weatherInputHash &&
     !weatherGeneratedAt &&
@@ -3655,7 +3722,34 @@ async function handleDailyLogGenerateDiary(
   }
   const weatherPropertyName = getWeatherPropertyName(env);
   if (hasPropertyType(dailyLogProperties, weatherPropertyName, "rich_text")) {
-    updateProperties[weatherPropertyName] = createRichTextProperty(weatherText);
+    updateProperties[weatherPropertyName] = createRichTextProperty(weatherText || weatherSummaryText);
+  }
+  const weatherSummaryPropertyName = getWeatherSummaryPropertyName(env);
+  if (hasPropertyType(dailyLogProperties, weatherSummaryPropertyName, "rich_text")) {
+    updateProperties[weatherSummaryPropertyName] = createRichTextProperty(weatherSummaryText || weatherText);
+  }
+  const weatherLocationPropertyName = getWeatherLocationPropertyName(env);
+  if (weatherLocation && hasPropertyType(dailyLogProperties, weatherLocationPropertyName, "rich_text")) {
+    updateProperties[weatherLocationPropertyName] = createRichTextProperty(weatherLocation);
+  }
+  const weatherTempMaxCPropertyName = getWeatherTempMaxCPropertyName(env);
+  if (weatherTempMaxC !== null && hasPropertyType(dailyLogProperties, weatherTempMaxCPropertyName, "number")) {
+    updateProperties[weatherTempMaxCPropertyName] = { number: weatherTempMaxC };
+  }
+  const weatherTempMinCPropertyName = getWeatherTempMinCPropertyName(env);
+  if (weatherTempMinC !== null && hasPropertyType(dailyLogProperties, weatherTempMinCPropertyName, "number")) {
+    updateProperties[weatherTempMinCPropertyName] = { number: weatherTempMinC };
+  }
+  const weatherPrecipProbabilityMaxPropertyName = getWeatherPrecipProbabilityMaxPropertyName(env);
+  if (
+    weatherPrecipProbabilityMax !== null &&
+    hasPropertyType(dailyLogProperties, weatherPrecipProbabilityMaxPropertyName, "number")
+  ) {
+    updateProperties[weatherPrecipProbabilityMaxPropertyName] = { number: weatherPrecipProbabilityMax };
+  }
+  const weatherCodePropertyName = getWeatherCodePropertyName(env);
+  if (weatherCode !== null && hasPropertyType(dailyLogProperties, weatherCodePropertyName, "number")) {
+    updateProperties[weatherCodePropertyName] = { number: weatherCode };
   }
   const weatherRetrievedAtPropertyName = getWeatherRetrievedAtPropertyName(env);
   if (weatherRetrievedAt) {
@@ -3760,6 +3854,12 @@ async function handleDailyLogGenerateDiary(
         diary: Boolean(diary),
         today_advice: Boolean(todayAdvice),
         weather: weatherText !== "",
+        weather_summary: weatherSummaryText !== "",
+        weather_location: Boolean(weatherLocation),
+        weather_temp_max_c: weatherTempMaxC !== null,
+        weather_temp_min_c: weatherTempMinC !== null,
+        weather_precip_probability_max: weatherPrecipProbabilityMax !== null,
+        weather_code: weatherCode !== null,
         weather_retrieved_at: Boolean(weatherRetrievedAt),
         weather_input_hash: Boolean(weatherInputHash),
         weather_generated_at: Boolean(weatherGeneratedAt),
@@ -4295,6 +4395,42 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     "daily_log_read:weather",
     ["Weather Summary", "weather", "weather_summary"],
   );
+  const weatherSummaryPropertyName = resolvePropertyName(
+    properties,
+    getWeatherSummaryPropertyName(env),
+    "daily_log_read:weather_summary",
+    ["Weather", "weather", "weather_summary"],
+  );
+  const weatherLocationPropertyName = resolvePropertyName(
+    properties,
+    getWeatherLocationPropertyName(env),
+    "daily_log_read:weather_location",
+    ["weather_location"],
+  );
+  const weatherTempMaxCPropertyName = resolvePropertyName(
+    properties,
+    getWeatherTempMaxCPropertyName(env),
+    "daily_log_read:weather_temp_max_c",
+    ["weather_temp_max_c"],
+  );
+  const weatherTempMinCPropertyName = resolvePropertyName(
+    properties,
+    getWeatherTempMinCPropertyName(env),
+    "daily_log_read:weather_temp_min_c",
+    ["weather_temp_min_c"],
+  );
+  const weatherPrecipProbabilityMaxPropertyName = resolvePropertyName(
+    properties,
+    getWeatherPrecipProbabilityMaxPropertyName(env),
+    "daily_log_read:weather_precip_probability_max",
+    ["weather_precip_probability_max"],
+  );
+  const weatherCodePropertyName = resolvePropertyName(
+    properties,
+    getWeatherCodePropertyName(env),
+    "daily_log_read:weather_code",
+    ["weather_code"],
+  );
   const weatherRetrievedAtPropertyName = resolvePropertyName(
     properties,
     getWeatherRetrievedAtPropertyName(env),
@@ -4314,7 +4450,31 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     ["weather_generated_at"],
   );
   const weatherSummary =
-    (weatherPropertyName ? getPlainTextFromRichText(properties[weatherPropertyName]) : null) || null;
+    (weatherSummaryPropertyName
+      ? getPlainTextFromRichText(properties[weatherSummaryPropertyName])
+      : weatherPropertyName
+        ? getPlainTextFromRichText(properties[weatherPropertyName])
+        : null) || null;
+  const weatherLegacyText =
+    (weatherPropertyName
+      ? getPlainTextFromRichText(properties[weatherPropertyName])
+      : weatherSummaryPropertyName
+        ? getPlainTextFromRichText(properties[weatherSummaryPropertyName])
+        : null) || null;
+  const weatherLocation =
+    (weatherLocationPropertyName
+      ? getPlainTextFromRichText(properties[weatherLocationPropertyName])
+      : null) || null;
+  const weatherTempMaxC =
+    (weatherTempMaxCPropertyName ? getNumberFromProperty(properties[weatherTempMaxCPropertyName]) : null) || null;
+  const weatherTempMinC =
+    (weatherTempMinCPropertyName ? getNumberFromProperty(properties[weatherTempMinCPropertyName]) : null) || null;
+  const weatherPrecipProbabilityMax =
+    (weatherPrecipProbabilityMaxPropertyName
+      ? getNumberFromProperty(properties[weatherPrecipProbabilityMaxPropertyName])
+      : null) || null;
+  const weatherCode =
+    (weatherCodePropertyName ? getNumberFromProperty(properties[weatherCodePropertyName]) : null) || null;
   const weatherRetrievedAt =
     (weatherRetrievedAtPropertyName
       ? getDateTimeFromProperty(properties[weatherRetrievedAtPropertyName]) ||
@@ -4494,7 +4654,13 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       weight,
       page_url: pageUrl,
       diary_notification_sent: diaryNotificationSent,
-      weather: weatherSummary,
+      weather: weatherLegacyText,
+      weather_summary: weatherSummary,
+      weather_location: weatherLocation,
+      weather_temp_max_c: weatherTempMaxC,
+      weather_temp_min_c: weatherTempMinC,
+      weather_precip_probability_max: weatherPrecipProbabilityMax,
+      weather_code: weatherCode,
       weather_retrieved_at: weatherRetrievedAt,
       weather_input_hash: weatherInputHash,
       weather_generated_at: weatherGeneratedAt,

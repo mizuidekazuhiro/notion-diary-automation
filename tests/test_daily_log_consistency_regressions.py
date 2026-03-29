@@ -183,10 +183,12 @@ def test_diary_input_ignores_stale_sleep_analysis_duration() -> None:
     assert "Today Condition Forecast JP" not in used
 
 
-def test_diary_input_includes_today_advice_and_notes() -> None:
+def test_diary_input_excludes_generated_fields_and_keeps_notes() -> None:
     summary = _summary(today_advice="朝は重い判断を後ろ倒しにする", notes="夜更かしした")
     used, _, _, _ = build_diary_input_fields(summary)
-    assert used["Today advice"] == "朝は重い判断を後ろ倒しにする"
+    assert "Today advice" not in used
+    assert "Sleep Analysis JP" not in used
+    assert "Today Condition Forecast JP" not in used
     assert used["Notes"] == "夜更かしした"
 
 
