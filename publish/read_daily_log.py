@@ -234,6 +234,17 @@ class DailyLogSummary:
     f_risk_matched_patterns: Optional[str] = None
     f_risk_input_hash: Optional[str] = None
     f_risk_generated_at: Optional[str] = None
+    notes_label_input_hash: Optional[str] = None
+    notes_label_generated_at: Optional[str] = None
+    notes_label_model: Optional[str] = None
+    notes_sentiment_label: Optional[str] = None
+    notes_sentiment_score: Optional[float] = None
+    notes_stress_flag: Optional[bool] = None
+    notes_fatigue_flag: Optional[bool] = None
+    notes_social_load_flag: Optional[bool] = None
+    notes_sleep_issue_flag: Optional[bool] = None
+    notes_flags_json: Optional[str] = None
+    notes_tags_json: Optional[str] = None
 
 
 def read_daily_log(
@@ -368,4 +379,15 @@ def read_daily_log(
         f_risk_matched_patterns=_safe_text(_get_case_insensitive_value(payload, "F Risk Matched Patterns", "f_risk_matched_patterns")),
         f_risk_input_hash=_safe_text(_get_case_insensitive_value(payload, "F Risk Input Hash", "f_risk_input_hash")),
         f_risk_generated_at=_safe_text(_get_case_insensitive_value(payload, "F Risk Generated At", "f_risk_generated_at")),
+        notes_label_input_hash=_safe_text(_get_case_insensitive_value(payload, "Notes Label Input Hash", "notes_label_input_hash")),
+        notes_label_generated_at=_safe_text(_get_case_insensitive_value(payload, "Notes Label Generated At", "notes_label_generated_at")),
+        notes_label_model=_safe_text(_get_case_insensitive_value(payload, "Notes Label Model", "notes_label_model")),
+        notes_sentiment_label=_safe_text(_get_case_insensitive_value(payload, "Notes Sentiment Label", "notes_sentiment_label")),
+        notes_sentiment_score=_safe_float(_get_case_insensitive_value(payload, "Notes Sentiment Score", "notes_sentiment_score")),
+        notes_stress_flag=_safe_bool(_get_case_insensitive_value(payload, "Notes Stress Flag", "notes_stress_flag")),
+        notes_fatigue_flag=_safe_bool(_get_case_insensitive_value(payload, "Notes Fatigue Flag", "notes_fatigue_flag")),
+        notes_social_load_flag=_safe_bool(_get_case_insensitive_value(payload, "Notes Social Load Flag", "notes_social_load_flag")),
+        notes_sleep_issue_flag=_safe_bool(_get_case_insensitive_value(payload, "Notes Sleep Issue Flag", "notes_sleep_issue_flag")),
+        notes_flags_json=_safe_text(_get_case_insensitive_value(payload, "Notes Flags JSON", "notes_flags_json")),
+        notes_tags_json=_safe_text(_get_case_insensitive_value(payload, "Notes Tags JSON", "notes_tags_json")),
     )

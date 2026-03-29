@@ -12,6 +12,8 @@ from publish.read_daily_log import DailyLogSummary, read_daily_log
 from scripts.note_batch_labeler import label_notes_in_batches, neutral_label
 from scripts.openai_chat_utils import chat_completion
 from scripts.expense_f_aggregator import aggregate_expense_f_for_dates
+from scripts.f_risk_case_patterns import build_f_event_cases, build_recent_case_signature
+from scripts.f_risk_case_similarity import compute_case_similarity
 from scripts.today_advice_feature_builder import build_daily_feature_table
 
 
@@ -130,9 +132,9 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     pre_days = max(1, int(os.getenv("F_RISK_PRE_DAYS", "3") or "3"))
     post_days = max(1, int(os.getenv("F_RISK_POST_DAYS", "2") or "2"))
     top_matches = max(1, int(os.getenv("F_RISK_TOP_MATCHES", "3") or "3"))
-    event_cases = _extract_f_event_cases(train, pre_days=pre_days, post_days=post_days)
-    recent_case = _build_recent_case(work, days=pre_days)
-    similarity = _compute_case_similarity(recent_case=recent_case, event_cases=event_cases, top_n=top_matches)
+    event_cases = build_f_event_cases(train, pre_days=pre_days, post_days=post_days)
+    recent_case = build_recent_case_signature(work, pre_days=pre_days)
+    similarity = compute_case_similarity(recent_case=recent_case, event_cases=event_cases, top_n=top_matches)
 
     pattern_summary = _explore_patterns(train)
     recent_train = train.tail(max(45, min(90, len(train))))
@@ -160,11 +162,14 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
 
     rule_meta = _rule_based_fallback(today.iloc[0].to_dict(), availability=availability)
     rule_count = len(rule_meta.get("matched_factors", []))
+    high_threshold = float(os.getenv("F_RISK_SIMILARITY_HIGH_THRESHOLD", "0.72") or "0.72")
+    medium_threshold = float(os.getenv("F_RISK_SIMILARITY_MEDIUM_THRESHOLD", "0.55") or "0.55")
+    sim_total = float(similarity.get("score_total") or 0.0)
     sim_level = str(similarity.get("strength") or "weak")
-    case_high = sim_level == "strong"
-    case_medium_plus_rule = sim_level == "medium" and rule_count >= 2
+    case_high = sim_total >= high_threshold
+    case_medium_plus_rule = sim_total >= medium_threshold and rule_count >= 2
     model_support = bool(blended is not None and blended >= 0.62)
-    risk_matched = bool(case_high or case_medium_plus_rule or (sim_level in {"strong", "medium"} and model_support and rule_count >= 1))
+    risk_matched = bool(case_high or case_medium_plus_rule)
     if fallback_used:
         blended = _to_float(fallback_meta.get("blended_score"))
 
@@ -186,8 +191,8 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "skipped_reason": None,
             "explanation_points": explanation_points,
             "no_alert_reason": None if risk_matched else (
-                "case_similarity_weak"
-                if sim_level == "weak"
+                "case_similarity_below_medium_threshold"
+                if sim_total < medium_threshold
                 else "case_similarity_medium_but_rule_insufficient"
             ),
             "model_used": {"recent": recent_model.get("model"), "long_term": longterm_model.get("model")},
@@ -226,8 +231,6 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
                 if case_high
                 else "case_similarity_medium_plus_rules"
                 if case_medium_plus_rule
-                else "model_assisted_case_similarity"
-                if risk_matched
                 else "no_case_match"
             ),
         }
