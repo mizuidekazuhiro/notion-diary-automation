@@ -238,6 +238,8 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         "duplicate_dates": set(),
         "merge_failed": False,
         "merge_failed_reason": None,
+        "unmatched_input_dates": set(),
+        "unmatched_response_dates": set(),
     }
     if not str(raw_text or "").strip():
         meta["empty_response"] = True
@@ -416,6 +418,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     duplicate_ids: set[str] = set()
     missing_ids: set[str] = set()
     unknown_ids: set[str] = set()
+    missing_date_rows: set[str] = set()
+    duplicate_date_rows: set[str] = set()
+    merge_failed_reasons: Counter[str] = Counter()
     raw_sentiment_counts: Counter[str] = Counter()
     raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
@@ -456,10 +461,12 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             },
         }
         raw = ""
+        final_parsed: list[NoteLabel] = []
+        final_meta: dict[str, Any] = {}
         attempt_batch_sizes = [len(targets), max(1, len(targets) // 2)]
-        for attempt_index, _size in enumerate(attempt_batch_sizes):
-            raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(user_payload, ensure_ascii=False))
-            parsed, meta = parse_note_label_json_with_meta(raw, targets)
+
+        def _record_metrics(meta: Mapping[str, Any], parsed_rows: Sequence[NoteLabel], expected_size: int) -> None:
+            nonlocal parse_error_count, schema_mismatch_count, empty_response_count, date_match_failure_count
             parse_error_count += int(bool(meta.get("parse_error")))
             schema_mismatch_count += int(bool(meta.get("schema_mismatch")))
             empty_response_count += int(bool(meta.get("empty_response")))
@@ -468,9 +475,13 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             duplicate_ids.update(set(meta.get("duplicate_ids") or set()))
             missing_ids.update(set(meta.get("missing_ids") or set()))
             unknown_ids.update(set(meta.get("unknown_ids") or set()))
-            if not meta["parse_error"] and not meta["schema_mismatch"]:
-                date_match_failure_count += max(0, len(targets) - len(set(meta.get("matched_dates") or set())))
-            for row in parsed:
+            missing_date_rows.update(set(meta.get("missing_dates") or set()))
+            duplicate_date_rows.update(set(meta.get("duplicate_dates") or set()))
+            if meta.get("merge_failed_reason"):
+                merge_failed_reasons[str(meta.get("merge_failed_reason"))] += 1
+            if not meta.get("parse_error") and not meta.get("schema_mismatch"):
+                date_match_failure_count += max(0, expected_size - len(set(meta.get("matched_dates") or set())))
+            for row in parsed_rows:
                 raw_sentiment_counts[row.sentiment_label] += 1
                 if row.fatigue_flag:
                     raw_flag_counts["fatigue"] += 1
@@ -484,6 +495,13 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                     raw_flag_counts["self_care"] += 1
                 if row.sleep_issue_flag:
                     raw_flag_counts["sleep_issue"] += 1
+
+        for attempt_index, _size in enumerate(attempt_batch_sizes):
+            raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(user_payload, ensure_ascii=False))
+            parsed, meta = parse_note_label_json_with_meta(raw, targets)
+            _record_metrics(meta, parsed, len(targets))
+            final_parsed = parsed
+            final_meta = dict(meta)
             quality_ok = (
                 not meta["parse_error"]
                 and not meta["schema_mismatch"]
@@ -498,10 +516,26 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             if attempt_index == 0 and len(targets) > 1:
                 half = max(1, len(targets) // 2)
                 first, second = targets[:half], targets[half:]
-                partial = [parse_note_label_json_with_meta(chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps({**user_payload, "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in sub]}, ensure_ascii=False)), sub)[0] for sub in (first, second) if sub]
-                parsed = [item for batch in partial for item in batch]
+                merged_partial: list[NoteLabel] = []
+                partial_metas: list[dict[str, Any]] = []
+                for sub in (first, second):
+                    if not sub:
+                        continue
+                    partial_payload = {**user_payload, "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in sub]}
+                    partial_raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(partial_payload, ensure_ascii=False))
+                    partial_parsed, partial_meta = parse_note_label_json_with_meta(partial_raw, sub)
+                    _record_metrics(partial_meta, partial_parsed, len(sub))
+                    merged_partial.extend(partial_parsed)
+                    partial_metas.append(partial_meta)
+                if merged_partial:
+                    final_parsed = merged_partial
+                    final_meta = {
+                        "parse_error": any(m.get("parse_error") for m in partial_metas),
+                        "schema_mismatch": any(m.get("schema_mismatch") for m in partial_metas),
+                        "merge_failed": any(m.get("merge_failed") for m in partial_metas),
+                    }
                 break
-        parsed, _ = parse_note_label_json_with_meta(raw, targets)
+        parsed = final_parsed
         if debug_dir:
             path = debug_dir / f"notes_batch_{i // batch_size:02d}.json"
             path.write_text(str(raw), encoding="utf-8")
@@ -542,11 +576,15 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "schema_mismatch_count": schema_mismatch_count,
             "date_match_failure_count": date_match_failure_count,
             "empty_response_count": empty_response_count,
+            "missing_date_count": len(missing_date_rows),
+            "duplicate_date_count": len(duplicate_date_rows),
+            "unknown_ids_count": len(unknown_ids),
+            "missing_ids_count": len(missing_ids),
         }
         audit.update({
             "api_calls": api_calls,
             "notes_classifier_success_rate": round(parse_success / len(labels), 3) if labels else 0.0,
-            "notes_parse_success_rate": round(parse_success / len(labels), 3) if labels else 0.0,
+            "notes_parse_success_rate": round(1.0 - ((parse_error_count + schema_mismatch_count + empty_response_count) / max(api_calls, 1)), 3) if labels else 0.0,
             "notes_unknown_rate": round(sum(1 for x in labels if x.sentiment_label == "unknown") / len(labels), 3) if labels else 0.0,
             "notes_low_confidence_rate": round(sum(1 for x in labels if x.parse_low_confidence) / len(labels), 3) if labels else 0.0,
             "notes_extracted_tags_count": len(all_tags),
@@ -559,14 +597,23 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "empty_response_count": empty_response_count,
             "raw_response_paths": raw_response_paths,
             "matched_dates_count": len(matched_dates),
+            "notes_date_merge_success_rate": round(len(matched_dates) / len(all_input_dates), 3) if all_input_dates else 0.0,
+            "notes_merge_failed_count": int(date_match_failure_count + len(missing_ids) + len(unknown_ids) + len(duplicate_ids)),
+            "notes_unmatched_input_dates_count": len(unmatched_input_dates),
+            "notes_unmatched_response_dates_count": len(unmatched_response_dates),
             "input_dates_count": len(all_input_dates),
             "output_dates_count": len(matched_dates) + len(unmatched_response_dates),
             "matched_dates": sorted(matched_dates),
             "unmatched_input_dates": unmatched_input_dates,
             "unmatched_response_dates": sorted(unmatched_response_dates),
             "missing_dates": unmatched_input_dates,
-            "duplicate_dates": sorted(duplicate_ids),
-            "merge_failed_reason": "merge_failed" if (date_match_failure_count or missing_ids or unknown_ids or duplicate_ids) else None,
+            "duplicate_dates": sorted(duplicate_date_rows),
+            "merge_failed_reason": ",".join(sorted(merge_failed_reasons.keys())) if merge_failed_reasons else ("merge_failed" if (date_match_failure_count or missing_ids or unknown_ids or duplicate_ids or unmatched_input_dates or unmatched_response_dates) else None),
+            "merge_failed_reason_counts": dict(merge_failed_reasons),
+            "parse_error": bool(parse_error_count),
+            "schema_mismatch": bool(schema_mismatch_count),
+            "missing_date": sorted(missing_date_rows),
+            "duplicate_date": sorted(duplicate_date_rows),
             "duplicate_ids": sorted(duplicate_ids),
             "missing_ids": sorted(missing_ids),
             "unknown_ids": sorted(unknown_ids),

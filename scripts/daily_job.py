@@ -411,6 +411,30 @@ def _save_daily_log_fields(
     )
 
 
+def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_payload: dict[str, object]) -> tuple[bool, list[str]]:
+    if summary is None:
+        return False, ["weather_readback_missing:summary_unavailable"]
+    failures: list[str] = []
+    for field, expected in expected_payload.items():
+        if field == "weather":
+            actual = (summary.weather_summary or "").strip()
+            if actual != (str(expected or "").strip()):
+                failures.append("weather_readback_missing:weather")
+        elif field == "weather_retrieved_at":
+            actual = (summary.weather_retrieved_at or "").strip()
+            if actual != (str(expected or "").strip()):
+                failures.append("weather_readback_missing:weather_retrieved_at")
+        elif field == "weather_input_hash":
+            actual = (summary.weather_input_hash or "").strip()
+            if actual != (str(expected or "").strip()):
+                failures.append("weather_readback_missing:weather_input_hash")
+        elif field == "weather_generated_at":
+            actual = (summary.weather_generated_at or "").strip()
+            if actual != (str(expected or "").strip()):
+                failures.append("weather_readback_missing:weather_generated_at")
+    return len(failures) == 0, failures
+
+
 def _generate_and_save_sleep_insights(
     config: Config,
     *,
@@ -706,7 +730,7 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=skipped latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
             resolved_location.source,
             "",
             resolved_location.resolution_method,
@@ -764,7 +788,7 @@ def _generate_and_save_weather(
     )
     if has_weather and not input_changed:
         logging.info(
-            "phase_c_weather_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input",
+            "phase_c_weather_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input unchanged_input_skip=true",
             summary.target_date,
             run_id,
         )
@@ -819,13 +843,17 @@ def _generate_and_save_weather(
         "weather_generated_at": _utc_timestamp(),
     }
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    readback_ok, readback_failures = _weather_roundtrip_status(summary=refreshed_summary, expected_payload=payload)
+    stage_status = "ok" if readback_ok else "weather_readback_missing"
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=ok latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_saved=%s readback_ok=%s empty_update_reason=%s debug=%s",
         resolved_location.source,
         weather.location_label,
         resolved_location.resolution_method,
         (resolved_location.debug_summary.get("geocode_debug") or {}).get("status")
         or ("skipped_latlon_available" if resolved_location.resolution_method == "latlon_direct" else "ok"),
+        stage_status,
         bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
         resolved_location.debug_summary.get("query_status"),
         resolved_location.debug_summary.get("latest_selected_page_id"),
@@ -838,10 +866,20 @@ def _generate_and_save_weather(
         resolved_location.debug_summary.get("geocode_query"),
         resolved_location.debug_summary.get("fallback_used"),
         save_result.get("updated"),
+        bool(save_result.get("updated")),
+        readback_ok,
         "",
-        json.dumps(weather.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+        json.dumps({**weather.debug_summary, "readback_failures": readback_failures}, ensure_ascii=False, sort_keys=True, default=str),
     )
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    if not readback_ok:
+        logging.warning(
+            "phase_c_weather_readback_mismatch target_date(JST)=%s run_id=%s save_reason=%s merge_status=%s failures=%s",
+            summary.target_date,
+            run_id,
+            save_result.get("reason"),
+            stage_status,
+            readback_failures,
+        )
     return refreshed_summary or summary
 
 
@@ -859,14 +897,15 @@ def _compute_expense_f_alert(
     matched = aggregate.available and aggregate.count > 0
     reasons: list[str] = []
     if matched:
-        reasons.append(f"Fフラグ付き支出が {aggregate.count} 件検出されました")
+        reasons.append(f"件数: {aggregate.count} 件")
         if aggregate.total > 0:
-            reasons.append(f"合計金額は {aggregate.total:.0f} 円です")
+            reasons.append(f"合計金額: {aggregate.total:.0f} 円")
         if aggregate.merchants:
-            reasons.append(f"利用先: {', '.join(aggregate.merchants[:3])}")
+            reasons.append(f"代表merchant: {', '.join(aggregate.merchants[:3])}")
         if aggregate.first_time or aggregate.last_time:
             time_label = f"{aggregate.first_time or '不明'} 〜 {aggregate.last_time or '不明'}"
-            reasons.append(f"支出時刻帯: {time_label}")
+            reasons.append(f"発生時刻帯: {time_label}")
+        reasons.append("再発防止: 同時刻帯と同merchantの支出前に必要性を10秒確認する")
 
     reason_labels = [reason.split(":")[0] if ":" in reason else reason for reason in reasons[:3]]
     logging.info(
@@ -907,9 +946,9 @@ def _compute_expense_f_alert(
 
     return {
         "matched": matched,
-        "title": "注意すべき支出パターン",
+        "title": "望ましくない支出（Fプロパティ）",
         "summary": (
-            f"{summary.target_date} に F 支出パターンを検知しました。大きな支出判断は一度保留してください。"
+            f"{summary.target_date} に Fプロパティ付きの望ましくない支出を検知しました。再発防止の判断に使ってください。"
             if matched
             else ""
         ),
@@ -1239,7 +1278,7 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             exc.__class__.__name__,
             str(exc),
         )
-        expense_f_alert = {"matched": False, "title": "注意すべき支出パターン", "summary": "", "reasons": [], "debug": {"error": str(exc)}}
+        expense_f_alert = {"matched": False, "title": "望ましくない支出（Fプロパティ）", "summary": "", "reasons": [], "debug": {"error": str(exc)}}
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary
     summary = _run_optional_enrichment("sleep", _generate_and_save_sleep_insights, summary)
     summary = _refresh_daily_log_summary(config, summary.target_date) or summary

@@ -95,6 +95,10 @@ interface Env {
   DAILY_LOG_DIARY_INPUT_HASH_PROPERTY_NAME?: string;
   DAILY_LOG_TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME?: string;
   DAILY_LOG_TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_RETRIEVED_AT_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_INPUT_HASH_PROPERTY_NAME?: string;
+  DAILY_LOG_WEATHER_GENERATED_AT_PROPERTY_NAME?: string;
 }
 
 type NotionPropertyType =
@@ -230,6 +234,10 @@ const DIARY_GENERATED_AT_PROPERTY_NAME = "Diary Generated At";
 const DIARY_INPUT_HASH_PROPERTY_NAME = "Diary Input Hash";
 const TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME = "Today Advice Input Hash";
 const TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME = "Today Advice Generated At";
+const WEATHER_PROPERTY_NAME = "Weather";
+const WEATHER_RETRIEVED_AT_PROPERTY_NAME = "Weather Retrieved At";
+const WEATHER_INPUT_HASH_PROPERTY_NAME = "Weather Input Hash";
+const WEATHER_GENERATED_AT_PROPERTY_NAME = "Weather Generated At";
 
 function buildTaskProperties(env: TaskPropertyNameEnv): ExpectedProperty[] {
   const { statusPropertyName, doneDatePropertyName, dropDatePropertyName } =
@@ -1466,6 +1474,29 @@ function getTodayAdviceGeneratedAtPropertyName(env: Env): string {
   return (
     env.DAILY_LOG_TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME ||
     TODAY_ADVICE_GENERATED_AT_PROPERTY_NAME
+  );
+}
+
+function getWeatherPropertyName(env: Env): string {
+  return env.DAILY_LOG_WEATHER_PROPERTY_NAME || WEATHER_PROPERTY_NAME;
+}
+
+function getWeatherRetrievedAtPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_WEATHER_RETRIEVED_AT_PROPERTY_NAME ||
+    WEATHER_RETRIEVED_AT_PROPERTY_NAME
+  );
+}
+
+function getWeatherInputHashPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_WEATHER_INPUT_HASH_PROPERTY_NAME || WEATHER_INPUT_HASH_PROPERTY_NAME
+  );
+}
+
+function getWeatherGeneratedAtPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_WEATHER_GENERATED_AT_PROPERTY_NAME || WEATHER_GENERATED_AT_PROPERTY_NAME
   );
 }
 
@@ -3565,12 +3596,21 @@ async function handleDailyLogGenerateDiary(
       ? payload.today_advice_generated_at.trim()
       : "";
   const weatherText = typeof payload.weather === "string" ? payload.weather.trim() : "";
+  const weatherRetrievedAt =
+    typeof payload.weather_retrieved_at === "string" ? payload.weather_retrieved_at.trim() : "";
+  const weatherInputHash =
+    typeof payload.weather_input_hash === "string" ? payload.weather_input_hash.trim() : "";
+  const weatherGeneratedAt =
+    typeof payload.weather_generated_at === "string" ? payload.weather_generated_at.trim() : "";
   if (
     !diary &&
     !sleepAnalysisJp &&
     !todayConditionForecastJp &&
     !todayAdvice &&
     weatherText === "" &&
+    !weatherRetrievedAt &&
+    !weatherInputHash &&
+    !weatherGeneratedAt &&
     !diaryInputHash &&
     !todayAdviceInputHash &&
     !diaryGeneratedAt &&
@@ -3613,8 +3653,29 @@ async function handleDailyLogGenerateDiary(
   if (todayAdvice) {
     updateProperties["Today advice"] = createRichTextPropertyWithLimit(todayAdvice, DIARY_RICH_TEXT_LIMIT);
   }
-  if (hasPropertyType(dailyLogProperties, "Weather", "rich_text")) {
-    updateProperties["Weather"] = createRichTextProperty(weatherText);
+  const weatherPropertyName = getWeatherPropertyName(env);
+  if (hasPropertyType(dailyLogProperties, weatherPropertyName, "rich_text")) {
+    updateProperties[weatherPropertyName] = createRichTextProperty(weatherText);
+  }
+  const weatherRetrievedAtPropertyName = getWeatherRetrievedAtPropertyName(env);
+  if (weatherRetrievedAt) {
+    if (hasPropertyType(dailyLogProperties, weatherRetrievedAtPropertyName, "date")) {
+      updateProperties[weatherRetrievedAtPropertyName] = createDateProperty(weatherRetrievedAt);
+    } else if (hasPropertyType(dailyLogProperties, weatherRetrievedAtPropertyName, "rich_text")) {
+      updateProperties[weatherRetrievedAtPropertyName] = createRichTextProperty(weatherRetrievedAt);
+    }
+  }
+  const weatherInputHashPropertyName = getWeatherInputHashPropertyName(env);
+  if (weatherInputHash && hasPropertyType(dailyLogProperties, weatherInputHashPropertyName, "rich_text")) {
+    updateProperties[weatherInputHashPropertyName] = createRichTextProperty(weatherInputHash);
+  }
+  const weatherGeneratedAtPropertyName = getWeatherGeneratedAtPropertyName(env);
+  if (weatherGeneratedAt) {
+    if (hasPropertyType(dailyLogProperties, weatherGeneratedAtPropertyName, "date")) {
+      updateProperties[weatherGeneratedAtPropertyName] = createDateProperty(weatherGeneratedAt);
+    } else if (hasPropertyType(dailyLogProperties, weatherGeneratedAtPropertyName, "rich_text")) {
+      updateProperties[weatherGeneratedAtPropertyName] = createRichTextProperty(weatherGeneratedAt);
+    }
   }
   const diaryInputHashPropertyName = getDiaryInputHashPropertyName(env);
   if (diaryInputHash && hasPropertyType(dailyLogProperties, diaryInputHashPropertyName, "rich_text")) {
@@ -3693,6 +3754,26 @@ async function handleDailyLogGenerateDiary(
     );
   }
 
+  if (!Object.keys(updateProperties).length) {
+    console.warn(
+      `generate_diary property_unavailable target_date=${targetDate} requested_fields=${JSON.stringify({
+        diary: Boolean(diary),
+        today_advice: Boolean(todayAdvice),
+        weather: weatherText !== "",
+        weather_retrieved_at: Boolean(weatherRetrievedAt),
+        weather_input_hash: Boolean(weatherInputHash),
+        weather_generated_at: Boolean(weatherGeneratedAt),
+      })}`,
+    );
+    return jsonResponse({
+      ok: true,
+      found: true,
+      target_date: targetDate,
+      page_id: page.id,
+      updated: false,
+      reason: "property_unavailable",
+    });
+  }
   const updateResponse = await notionFetch(env, `/pages/${page.id}`, {
     method: "PATCH",
     body: JSON.stringify({ properties: updateProperties }),
@@ -4208,6 +4289,46 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
+  const weatherPropertyName = resolvePropertyName(
+    properties,
+    getWeatherPropertyName(env),
+    "daily_log_read:weather",
+    ["Weather Summary", "weather", "weather_summary"],
+  );
+  const weatherRetrievedAtPropertyName = resolvePropertyName(
+    properties,
+    getWeatherRetrievedAtPropertyName(env),
+    "daily_log_read:weather_retrieved_at",
+    ["weather_retrieved_at"],
+  );
+  const weatherInputHashPropertyName = resolvePropertyName(
+    properties,
+    getWeatherInputHashPropertyName(env),
+    "daily_log_read:weather_input_hash",
+    ["weather_input_hash"],
+  );
+  const weatherGeneratedAtPropertyName = resolvePropertyName(
+    properties,
+    getWeatherGeneratedAtPropertyName(env),
+    "daily_log_read:weather_generated_at",
+    ["weather_generated_at"],
+  );
+  const weatherSummary =
+    (weatherPropertyName ? getPlainTextFromRichText(properties[weatherPropertyName]) : null) || null;
+  const weatherRetrievedAt =
+    (weatherRetrievedAtPropertyName
+      ? getDateTimeFromProperty(properties[weatherRetrievedAtPropertyName]) ||
+        getStringFromProperty(properties[weatherRetrievedAtPropertyName])
+      : null) || null;
+  const weatherInputHash =
+    (weatherInputHashPropertyName
+      ? getPlainTextFromRichText(properties[weatherInputHashPropertyName])
+      : null) || null;
+  const weatherGeneratedAt =
+    (weatherGeneratedAtPropertyName
+      ? getDateTimeFromProperty(properties[weatherGeneratedAtPropertyName]) ||
+        getStringFromProperty(properties[weatherGeneratedAtPropertyName])
+      : null) || null;
   const diaryInputHash =
     getPlainTextFromRichText(
       properties[getDiaryInputHashPropertyName(env)],
@@ -4373,6 +4494,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       weight,
       page_url: pageUrl,
       diary_notification_sent: diaryNotificationSent,
+      weather: weatherSummary,
+      weather_retrieved_at: weatherRetrievedAt,
+      weather_input_hash: weatherInputHash,
+      weather_generated_at: weatherGeneratedAt,
     }),
     { headers: jsonHeaders },
   );

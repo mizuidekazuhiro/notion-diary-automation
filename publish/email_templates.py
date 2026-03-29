@@ -305,7 +305,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             )
     expense_f_alert_payload = payload.get("expense_f_alert") if isinstance(payload, Mapping) else None
     expense_f_alert_matched = False
-    expense_f_alert_title = "注意すべき支出パターン"
+    expense_f_alert_title = "望ましくない支出（Fプロパティ）"
     expense_f_alert_summary = ""
     expense_f_alert_reasons: list[str] = []
     if isinstance(expense_f_alert_payload, Mapping):
@@ -730,7 +730,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             )
     expense_f_alert_payload = payload.get("expense_f_alert") if isinstance(payload, Mapping) else None
     expense_f_alert_matched = False
-    expense_f_alert_title = "注意すべき支出パターン"
+    expense_f_alert_title = "望ましくない支出（Fプロパティ）"
     expense_f_alert_summary = ""
     expense_f_alert_reasons: list[str] = []
     if isinstance(expense_f_alert_payload, Mapping):
