@@ -213,6 +213,7 @@ def _normalize_date_key(value: object) -> str:
 def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[str, str]]) -> tuple[list[NoteLabel], dict[str, Any]]:
     fallback = {}
     row_key_to_date: dict[str, str] = {}
+    row_id_to_key: dict[str, str] = {}
     date_to_keys: dict[str, list[str]] = {}
     input_ids: set[str] = set()
     for row in input_rows:
@@ -222,6 +223,8 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         key = row_id or normalized or raw_date
         fallback[key] = neutral_label(raw_date)
         row_key_to_date[key] = raw_date
+        if row_id:
+            row_id_to_key[row_id] = key
         normalized_date_key = normalized or raw_date
         date_to_keys.setdefault(normalized_date_key, []).append(key)
         if row_id:
@@ -249,7 +252,13 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         "merge_key_mode_used": "id_then_date",
         "matched_by_id_count": 0,
         "matched_by_date_count": 0,
+        "matched_by_order_count": 0,
+        "date_only_match_count": 0,
+        "id_date_conflict_count": 0,
+        "order_merge_used": False,
         "unmatched_due_to_format_count": 0,
+        "matched_input_keys": set(),
+        "unmatched_input_keys": set(),
         "input_date_normalized_examples": [],
         "response_date_normalized_examples": [],
         "unmatched_input_dates": set(),
@@ -278,52 +287,101 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         meta["schema_mismatch"] = True
         return list(fallback.values()), meta
 
-    for row in rows:
+    pending_for_order_merge: list[tuple[int, Mapping[str, Any]]] = []
+    used_response_indexes: set[int] = set()
+    for idx, row in enumerate(rows):
         if not isinstance(row, Mapping):
             continue
+        used_index = False
         row_id = str(row.get("id") or "").strip()
         raw_date = str(row.get("date") or "")
         date = _normalize_date_key(raw_date)
-        key = row_id or date
+        key = row_id_to_key.get(row_id, row_id or date)
         if row_id:
             if row_id in meta["matched_ids"]:
                 meta["duplicate_ids"].add(row_id)
+                pending_for_order_merge.append((idx, row))
                 continue
             if row_id not in input_ids:
                 meta["unknown_ids"].add(row_id)
+                pending_for_order_merge.append((idx, row))
                 continue
-            if row_id in fallback:
-                key = row_id
+            if row_id in row_id_to_key:
+                key = row_id_to_key[row_id]
                 meta["matched_by_id_count"] += 1
+                used_index = True
             elif not date:
                 meta["missing_dates"].add(raw_date)
                 meta["merge_failed"] = True
                 meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "missing_date"
+                pending_for_order_merge.append((idx, row))
                 continue
         if key not in fallback:
             if not date:
                 meta["missing_dates"].add(raw_date)
                 meta["merge_failed"] = True
                 meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "missing_date"
+                pending_for_order_merge.append((idx, row))
                 continue
             candidate_keys = date_to_keys.get(date, [])
             if len(candidate_keys) == 1:
                 key = candidate_keys[0]
                 meta["matched_by_date_count"] += 1
+                if not row_id:
+                    meta["date_only_match_count"] += 1
+                used_index = True
             elif len(candidate_keys) > 1:
                 meta["duplicate_dates"].add(date)
                 meta["merge_failed"] = True
                 meta["merge_failed_reason"] = meta.get("merge_failed_reason") or "duplicate_date"
+                pending_for_order_merge.append((idx, row))
                 continue
             else:
                 meta["unmatched_response_dates"].add(date)
                 meta["unmatched_due_to_format_count"] += 1
+                pending_for_order_merge.append((idx, row))
                 continue
         canonical_date = row_key_to_date.get(key, date)
-        fallback[key] = _normalize_result(canonical_date, row)
+        canonical_norm = _normalize_date_key(canonical_date)
+        if row_id and date and canonical_norm and date != canonical_norm:
+            meta["id_date_conflict_count"] += 1
+        normalized_row = row
+        if not row_id and used_index:
+            row_meta = dict(row.get("meta") or {})
+            row_meta["parse_quality"] = "low"
+            normalized_row = dict(row)
+            normalized_row["meta"] = row_meta
+        fallback[key] = _normalize_result(canonical_date, normalized_row)
         meta["matched_dates"].add(canonical_date)
+        meta["matched_input_keys"].add(key)
         if row_id:
             meta["matched_ids"].add(row_id)
+        if used_index:
+            used_response_indexes.add(idx)
+    can_order_merge = (
+        not meta.get("parse_error")
+        and not meta.get("schema_mismatch")
+        and len(rows) == len(input_rows)
+        and bool(pending_for_order_merge)
+    )
+    if can_order_merge:
+        remaining_keys = [k for k in row_key_to_date.keys() if k not in meta["matched_input_keys"]]
+        remaining_rows = [rows[idx] for idx in range(len(rows)) if idx not in used_response_indexes and isinstance(rows[idx], Mapping)]
+        if len(remaining_keys) == len(remaining_rows):
+            meta["order_merge_used"] = True
+            for key, row in zip(remaining_keys, remaining_rows):
+                row_meta = dict(row.get("meta") or {})
+                row_meta["parse_quality"] = "low"
+                normalized_row = dict(row)
+                normalized_row["meta"] = row_meta
+                canonical_date = row_key_to_date.get(key, str(row.get("date") or ""))
+                fallback[key] = _normalize_result(canonical_date, normalized_row)
+                meta["matched_dates"].add(canonical_date)
+                meta["matched_input_keys"].add(key)
+                meta["matched_by_order_count"] += 1
+                order_row_id = str(row.get("id") or "").strip()
+                if order_row_id and order_row_id in input_ids:
+                    meta["matched_ids"].add(order_row_id)
     if input_ids:
         meta["missing_ids"] = set(input_ids) - set(meta["matched_ids"])
     meta["output_count"] = len(rows)
@@ -336,6 +394,7 @@ def parse_note_label_json_with_meta(raw_text: str, input_rows: Sequence[Mapping[
         key = row_id or normalized or raw_date
         parsed.append(fallback[key])
     meta["matched_dates_count"] = len(set(meta.get("matched_dates") or set()))
+    meta["unmatched_input_keys"] = set(row_key_to_date.keys()) - set(meta.get("matched_input_keys") or set())
     meta["unmatched_input_dates"] = set(row_key_to_date.values()) - set(meta.get("matched_dates") or set())
     input_date_set = set(row_key_to_date.values())
     output_date_set = {str(_normalize_date_key(row.get("date"))) for row in rows if isinstance(row, Mapping) and _normalize_date_key(row.get("date"))}
@@ -436,6 +495,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
         return {}
     assets = load_notes_prompt_assets()
     debug_dir = Path(raw_response_dir) if raw_response_dir else None
+    default_debug_dir = Path("debug/notes_labeler")
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
 
@@ -455,6 +515,10 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     merge_failed_reasons: Counter[str] = Counter()
     matched_by_id_count = 0
     matched_by_date_count = 0
+    matched_by_order_count = 0
+    order_merge_used = False
+    date_only_match_count = 0
+    id_date_conflict_count = 0
     unmatched_due_to_format_count = 0
     input_date_normalized_examples: list[dict[str, str]] = []
     response_date_normalized_examples: list[dict[str, str]] = []
@@ -462,6 +526,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
     cache_hit_count = 0
+    fallback_covered_count = 0
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
         for row in [r for r in chunk if not r["notes"]]:
@@ -480,6 +545,11 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
         user_payload = {
             "target_date": targets[-1]["date"],
             "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in targets],
+            "constraints": [
+                "各rowのidは入力rowsのidをそのまま返すこと（必須）",
+                "各rowのdateは入力rowsのdateをそのまま返すこと",
+                "返却順は入力順を維持し、欠損/重複/追加をしないこと",
+            ],
             "few_shot": assets.get("few_shots", [])[:5],
             "schema": {
                 "id": "input.id",
@@ -517,8 +587,13 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             if meta.get("merge_failed_reason"):
                 merge_failed_reasons[str(meta.get("merge_failed_reason"))] += 1
             nonlocal matched_by_id_count, matched_by_date_count, unmatched_due_to_format_count
+            nonlocal matched_by_order_count, date_only_match_count, order_merge_used, id_date_conflict_count
             matched_by_id_count += int(meta.get("matched_by_id_count", 0) or 0)
             matched_by_date_count += int(meta.get("matched_by_date_count", 0) or 0)
+            matched_by_order_count += int(meta.get("matched_by_order_count", 0) or 0)
+            date_only_match_count += int(meta.get("date_only_match_count", 0) or 0)
+            id_date_conflict_count += int(meta.get("id_date_conflict_count", 0) or 0)
+            order_merge_used = order_merge_used or bool(meta.get("order_merge_used"))
             unmatched_due_to_format_count += int(meta.get("unmatched_due_to_format_count", 0) or 0)
             if not input_date_normalized_examples and isinstance(meta.get("input_date_normalized_examples"), list):
                 input_date_normalized_examples.extend(meta.get("input_date_normalized_examples")[:5])
@@ -581,18 +656,37 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                     }
                 break
         parsed = final_parsed
-        if debug_dir:
-            path = debug_dir / f"notes_batch_{i // batch_size:02d}.json"
-            path.write_text(str(raw), encoding="utf-8")
-            raw_response_paths.append(str(path))
+        should_force_debug_save = bool(
+            final_meta.get("merge_failed")
+            or final_meta.get("unmatched_input_dates")
+            or final_meta.get("unknown_ids")
+            or final_meta.get("missing_ids")
+            or final_meta.get("duplicate_ids")
+            or final_meta.get("order_merge_used")
+        )
+        write_debug_dir = debug_dir
+        if should_force_debug_save and write_debug_dir is None:
+            write_debug_dir = default_debug_dir
+        if write_debug_dir:
+            try:
+                write_debug_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+                path = write_debug_dir / f"notes_batch_{i // batch_size:02d}_{ts}.json"
+                path.write_text(str(raw), encoding="utf-8")
+                raw_response_paths.append(str(path))
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("notes_label_raw_save_failed batch=%s error=%s", i // batch_size, exc)
         for item in parsed:
             results[item.date] = item
             source_row = next((r for r in targets if r["date"] == item.date), None)
             if source_row is not None:
                 _save_cached_label(date=item.date, note_text=source_row["notes"], model=model, label=item)
         for row in targets:
-            if row["date"] not in results:
+            key = str(row["id"])
+            unmatched_keys = set(final_meta.get("unmatched_input_keys") or set())
+            if row["date"] not in results or key in unmatched_keys:
                 results[row["date"]] = _rule_based_note_label(row)
+                fallback_covered_count += 1
 
     ordered = {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}
     if audit is not None:
@@ -626,6 +720,31 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "unknown_ids_count": len(unknown_ids),
             "missing_ids_count": len(missing_ids),
         }
+        final_coverage_count = len([d for d in all_input_dates if d in ordered and isinstance(ordered[d], NoteLabel)])
+        final_coverage_rate = round(final_coverage_count / len(all_input_dates), 3) if all_input_dates else 0.0
+        labels_usable = final_coverage_count == len(all_input_dates)
+        merge_quality_low = bool(
+            unmatched_input_dates
+            or unmatched_response_dates
+            or duplicate_ids
+            or missing_ids
+            or unknown_ids
+            or date_match_failure_count
+            or unmatched_due_to_format_count
+            or order_merge_used
+            or date_only_match_count
+            or id_date_conflict_count
+        )
+        fatal_reason: str | None = None
+        if parse_error_count > 0:
+            fatal_reason = "parse_error"
+        elif schema_mismatch_count > 0:
+            fatal_reason = "schema_mismatch"
+        elif empty_response_count > 0:
+            fatal_reason = "empty_response"
+        elif not labels_usable:
+            fatal_reason = "insufficient_coverage"
+        labeling_failed = bool(fatal_reason)
         audit.update({
             "api_calls": api_calls,
             "notes_classifier_success_rate": round(parse_success / len(labels), 3) if labels else 0.0,
@@ -667,6 +786,10 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "merge_key_mode_used": "id_then_date",
             "matched_by_id_count": matched_by_id_count,
             "matched_by_date_count": matched_by_date_count,
+            "matched_by_order_count": matched_by_order_count,
+            "order_merge_used": order_merge_used,
+            "date_only_match_count": date_only_match_count,
+            "id_date_conflict_count": id_date_conflict_count,
             "unmatched_due_to_format_count": unmatched_due_to_format_count,
             "input_date_normalized_examples": input_date_normalized_examples[:5],
             "response_date_normalized_examples": response_date_normalized_examples[:5],
@@ -686,7 +809,13 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "fallback_reason_counts": fallback_reason_counts,
             "cache_hit_count": cache_hit_count,
             "cache_miss_count": max(0, len([r for r in rows if r.get("notes")]) - cache_hit_count),
-            "labeling_failed": bool(parse_error_count or schema_mismatch_count or date_match_failure_count or empty_response_count or unmatched_input_dates),
+            "fallback_covered_count": fallback_covered_count,
+            "final_coverage_count": final_coverage_count,
+            "final_coverage_rate": final_coverage_rate,
+            "labels_usable": labels_usable,
+            "merge_quality_low": merge_quality_low,
+            "labeling_failed_fatal_reason": fatal_reason,
+            "labeling_failed": labeling_failed,
         })
         if audit.get("notes_date_merge_success_rate", 0.0) <= 0.0 and all_input_dates:
             if unknown_ids or missing_ids:

@@ -171,3 +171,75 @@ def test_audit_metrics_include_failure_and_top_tags(monkeypatch: pytest.MonkeyPa
     assert int(audit.get("parse_error_count", 0)) >= 1
     assert int(audit.get("signals_detected_count", 0)) >= 1
     assert isinstance(audit.get("top_tags"), list) and len(audit.get("top_tags", [])) >= 1
+
+
+def test_merge_quality_high_when_id_and_date_are_correct(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        _ = kwargs
+        return json.dumps([{"id": "note_0000_2026-03-20", "date": "2026-03-20", "tags": ["fatigue"], "meta": {"parse_quality": "high"}}], ensure_ascii=False)
+
+    audit: dict[str, object] = {}
+    labels = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert labels["2026-03-20"].fatigue_flag is True
+    assert audit["labeling_failed"] is False
+    assert audit["labels_usable"] is True
+    assert audit["merge_quality_low"] is False
+
+
+def test_id_match_survives_date_break_with_low_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        _ = kwargs
+        return json.dumps([{"id": "note_0000_2026-03-20", "date": "2026-03-99", "tags": ["fatigue"]}], ensure_ascii=False)
+
+    audit: dict[str, object] = {}
+    labels = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert labels["2026-03-20"].fatigue_flag is True
+    assert audit["labeling_failed"] is False
+    assert audit["labels_usable"] is True
+    assert audit["merge_quality_low"] is True
+    assert int(audit["matched_by_id_count"]) > 0
+
+
+def test_date_only_match_is_usable_but_low_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        _ = kwargs
+        return json.dumps([{"date": "2026-03-20", "tags": ["fatigue"]}], ensure_ascii=False)
+
+    audit: dict[str, object] = {}
+    _ = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert audit["labeling_failed"] is False
+    assert audit["labels_usable"] is True
+    assert audit["merge_quality_low"] is True
+    assert int(audit["date_only_match_count"]) > 0
+
+
+def test_order_merge_works_when_count_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DISABLE", "1")
+    summaries = [_summary("2026-03-20", "疲れた"), _summary("2026-03-21", "喧嘩")]
+
+    def _chat_completion(**kwargs: object) -> str:
+        payload = json.loads(str(kwargs["user_prompt"]))
+        count = len(payload.get("rows") or [])
+        base = [
+            {"id": "unknown-1", "date": "x", "tags": ["fatigue"]},
+            {"id": "unknown-2", "date": "y", "tags": ["conflict"]},
+        ]
+        return json.dumps(base[:count], ensure_ascii=False)
+
+    audit: dict[str, object] = {}
+    labels = label_notes_in_batches(summaries=summaries, chat_completion=_chat_completion, model="x", audit=audit)
+    assert labels["2026-03-20"].fatigue_flag is True
+    assert labels["2026-03-21"].sentiment_label in {"negative", "unknown"}
+    assert audit["labeling_failed"] is False
+    assert audit["labels_usable"] is True
+    assert audit["order_merge_used"] is True
+    assert int(audit["matched_by_order_count"]) > 0

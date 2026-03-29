@@ -383,9 +383,48 @@ def test_f_risk_labeling_failed_returns_clear_skip_reason(monkeypatch: pytest.Mo
     monkeypatch.setattr(
         f_risk_generator,
         "label_notes_in_batches",
-        lambda **kwargs: kwargs["audit"].update({"labeling_failed": True}) or {},
+        lambda **kwargs: kwargs["audit"].update({"labeling_failed": True, "labels_usable": False}) or {},
     )
 
     result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result.skip_reason == "labeling_failed"
     assert result.debug_summary["risk_json"]["skipped_reason"] == "labeling_failed"
+
+
+def test_f_risk_continues_when_labels_usable_even_if_merge_quality_low(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not HAS_PANDAS:
+        pytest.skip("pandas not installed")
+    import pandas as pd
+
+    histories = [_summary(i) for i in range(1, 21)]
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: histories)
+    monkeypatch.setattr(
+        f_risk_generator,
+        "label_notes_in_batches",
+        lambda **kwargs: kwargs["audit"].update(
+            {"labeling_failed": False, "labels_usable": True, "merge_quality_low": True, "final_coverage_rate": 1.0, "unmatched_input_dates": ["2026-03-20"]}
+        ) or {h.target_date: object() for h in histories},
+    )
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda _h, _l: pd.DataFrame(
+            {
+                "date": [h.target_date for h in histories],
+                "expense_f_count": [1 if i % 5 == 0 else 0 for i, _ in enumerate(histories)],
+                "sleep_hours": [6.5] * len(histories),
+                "sleep_score": [70] * len(histories),
+                "spending_total": [1000] * len(histories),
+                "weather_temp_max_c": [20] * len(histories),
+                "weather_precip_probability_max": [10] * len(histories),
+                "task_drop_count": [0] * len(histories),
+                "notes_stress_flag": [0] * len(histories),
+                "is_weekend": [0] * len(histories),
+            }
+        ),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"skipped_reason": "ml_lib_not_installed"})
+
+    result = f_risk_generator.generate_f_risk(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
+    assert result.skip_reason != "labeling_failed"
+    assert result.debug_summary["risk_json"]["notes_labeling_quality"] == "low"

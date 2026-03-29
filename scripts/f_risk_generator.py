@@ -100,10 +100,24 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         audit=note_audit,
     )
-    if note_audit.get("labeling_failed"):
+    labels_usable = bool(note_audit.get("labels_usable", not note_audit.get("labeling_failed", False)))
+    merge_quality_low = bool(note_audit.get("merge_quality_low", False))
+    logging.info(
+        "[FRisk][NotesAudit] labels_usable=%s merge_quality_low=%s labeling_failed=%s final_coverage_rate=%s exclusion_reason=%s",
+        labels_usable,
+        merge_quality_low,
+        bool(note_audit.get("labeling_failed")),
+        note_audit.get("final_coverage_rate"),
+        note_audit.get("exclusion_reason"),
+    )
+    if not labels_usable:
         risk_json["skipped_reason"] = "labeling_failed"
         risk_json["no_alert_reason"] = "insufficient_evidence"
         risk_json["notes_labeling_ok"] = False
+        logging.warning(
+            "[FRisk][NotesAudit] skip labeling_failed fatal_reason=%s",
+            note_audit.get("labeling_failed_fatal_reason"),
+        )
         return FRiskResult(None, None, None, [], "labeling_failed", {"risk_json": risk_json, "note_label_audit": note_audit})
 
     df = build_daily_feature_table(histories, labels)
@@ -182,6 +196,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "feature_count": int(len(work.columns)),
             "feature_group_counts": availability["group_counts"],
             "notes_labeling_ok": True,
+            "notes_labeling_quality": "low" if merge_quality_low else "high",
             "schedule_features_used": availability["schedule_used"],
             "weather_features_used": availability["weather_used"],
             "fallback_used": fallback_used,
