@@ -115,6 +115,17 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
         done = int(item.done_count or 0)
         drop = int(item.drop_count or 0)
         denom = done + drop
+        schedule_total = len(item.done_tasks_detail or [])
+        same_day_events = 0
+        future_events = 0
+        for task in item.done_tasks_detail or []:
+            event_date = (task.event_date or "").strip()
+            if not event_date:
+                continue
+            if event_date == item.target_date:
+                same_day_events += 1
+            elif event_date > item.target_date:
+                future_events += 1
 
         rows.append(
             {
@@ -183,11 +194,15 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "overeating_like_flag": bool(re.search(r"食べすぎ|食べ過ぎ|夜食|暴食", meal_text)),
                 "eating_out_like_flag": bool(re.search(r"外食|レストラン|居酒屋|カフェ", meal_text)),
                 "late_meal_like_flag": bool(re.search(r"夜食|深夜|遅い", meal_text)),
+                "low_protein_flag": bool(_safe_float(item.protein) is not None and float(item.protein) < 55.0),
+                "high_fat_flag": bool(_safe_float(item.fat) is not None and float(item.fat) > 75.0),
+                "high_carb_flag": bool(_safe_float(item.carb) is not None and float(item.carb) > 320.0),
                 "spending_total": _safe_float(item.expenses_total),
                 "expense_f_count": _safe_float(item.expense_f_count),
                 "expense_f_total": _safe_float(item.expense_f_total),
                 "transport_spend_like_flag": bool(re.search(r"交通|電車|タクシー|バス", notes_text + activity_text)),
                 "social_spend_like_flag": bool(re.search(r"会食|飲み会|友人|同僚", notes_text + activity_text)),
+                "convenience_store_like_flag": bool(re.search(r"コンビニ|セブン|ファミマ|ローソン", notes_text + activity_text + meal_text)),
                 "task_done_count": done,
                 "task_drop_count": drop,
                 "task_completion_ratio": (done / denom) if denom > 0 else np.nan,
@@ -203,6 +218,21 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "weather_temp_min_c": _safe_float(item.weather_temp_min_c),
                 "weather_precip_probability_max": _safe_float(item.weather_precip_probability_max),
                 "weather_code": _safe_float(item.weather_code),
+                "weather_bad_flag": bool((_safe_float(item.weather_precip_probability_max) or 0) >= 60 or (_safe_float(item.weather_code) or 0) >= 60),
+                "weather_temp_range_c": (
+                    (_safe_float(item.weather_temp_max_c) - _safe_float(item.weather_temp_min_c))
+                    if _safe_float(item.weather_temp_max_c) is not None and _safe_float(item.weather_temp_min_c) is not None
+                    else np.nan
+                ),
+                "weather_retrieved_flag": bool(
+                    _safe_float(item.weather_code) is not None
+                    or _safe_float(item.weather_precip_probability_max) is not None
+                    or _safe_float(item.weather_temp_max_c) is not None
+                ),
+                "schedule_signal_available_flag": bool(schedule_total > 0),
+                "schedule_same_day_event_count": same_day_events,
+                "schedule_future_event_count": future_events,
+                "late_event_like_flag": bool(any((task.event_date or "").strip() > item.target_date for task in item.done_tasks_detail or [])),
                 "is_weekend": _is_weekend(item.target_date),
                 **location_flags,
             }

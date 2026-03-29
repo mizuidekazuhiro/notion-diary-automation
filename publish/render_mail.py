@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary
+from scripts.weather_client import build_weather_summary
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,12 @@ def render_mail(
 ) -> MailContent:
     subject = f"Daily Log | {summary.target_date}"
     mood_notes_url = _build_mood_notes_url(summary.target_date)
+    weather_summary = (summary.weather_summary or "").strip() or build_weather_summary(
+        weather_code=summary.weather_code,
+        temp_max_c=summary.weather_temp_max_c,
+        temp_min_c=summary.weather_temp_min_c,
+        precip_probability_max=summary.weather_precip_probability_max,
+    )
     payload = {
         "target_date": summary.target_date,
         "run_id": summary.mail_id,
@@ -95,8 +102,8 @@ def render_mail(
         "rem_duration_min": summary.rem_duration_min,
         "sleep_source": summary.sleep_source,
         "weather_location": summary.weather_location,
-        "weather": summary.weather_summary,
-        "weather_summary": summary.weather_summary,
+        "weather": weather_summary,
+        "weather_summary": weather_summary,
         "weather_temp_max_c": summary.weather_temp_max_c,
         "weather_temp_min_c": summary.weather_temp_min_c,
         "weather_precip_probability_max": summary.weather_precip_probability_max,

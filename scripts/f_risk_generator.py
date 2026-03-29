@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -102,6 +103,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     if note_audit.get("labeling_failed"):
         risk_json["skipped_reason"] = "labeling_failed"
         risk_json["no_alert_reason"] = "insufficient_evidence"
+        risk_json["notes_labeling_ok"] = False
         return FRiskResult(None, None, None, [], "labeling_failed", {"risk_json": risk_json, "note_label_audit": note_audit})
 
     df = build_daily_feature_table(histories, labels)
@@ -120,12 +122,14 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
 
     pattern_summary = _explore_patterns(train)
     recent_train = train.tail(max(45, min(90, len(train))))
+    availability = _build_input_availability(work)
     recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
     longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
+    fallback_used = False
+    fallback_meta: dict[str, Any] = {}
     if recent_model.get("skipped_reason") and longterm_model.get("skipped_reason"):
-        risk_json["skipped_reason"] = "model_unavailable"
-        risk_json["no_alert_reason"] = "insufficient_evidence"
-        return FRiskResult(None, None, None, [], "model_unavailable", {"risk_json": risk_json, "pattern": pattern_summary})
+        fallback_used = True
+        fallback_meta = _rule_based_fallback(today.iloc[0].to_dict(), availability=availability)
 
     recent_score = _to_float(recent_model.get("score"))
     long_score = _to_float(longterm_model.get("score"))
@@ -137,7 +141,14 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     confidence = "high" if len(train) >= 60 else "medium" if len(train) >= 30 else "low"
     reliability = "high" if similarity["strength"] == "strong" else "medium" if similarity["strength"] == "medium" else "low"
 
-    risk_matched = bool(blended is not None and blended >= 0.62 and len(matched) >= 1 and similarity["strength"] in {"strong", "medium"} and len(explanation_points) >= 2)
+    model_risk_matched = bool(blended is not None and blended >= 0.62 and len(matched) >= 1 and similarity["strength"] in {"strong", "medium"} and len(explanation_points) >= 2)
+    risk_matched = model_risk_matched
+    if fallback_used:
+        risk_matched = bool(fallback_meta.get("risk_matched"))
+        blended = _to_float(fallback_meta.get("blended_score"))
+        if risk_matched and fallback_meta.get("matched_factors"):
+            matched = [str(x) for x in fallback_meta.get("matched_factors", [])]
+            explanation_points = [f"fallback判定: {f}" for f in matched[:3]] + explanation_points[:2]
 
     risk_json.update(
         {
@@ -156,12 +167,48 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "evidence_sufficiency": evidence_sufficiency,
             "skipped_reason": None,
             "explanation_points": explanation_points,
-            "no_alert_reason": None if risk_matched else ("not_matched" if evidence_sufficiency == "sufficient" else "insufficient_evidence"),
+            "no_alert_reason": None if risk_matched else (
+                fallback_meta.get("no_alert_reason")
+                if fallback_used
+                else ("not_matched" if evidence_sufficiency == "sufficient" else "insufficient_evidence")
+            ),
             "model_used": {"recent": recent_model.get("model"), "long_term": longterm_model.get("model")},
             "history_count": len(train),
             "class_balance": float(train["f_event_flag"].mean()),
             "used_feature_groups": ["lag", "rolling", "streak", "interaction", "notes", "sleep", "weather", "weekday"],
+            "input_groups_available": availability["available_groups"],
+            "input_groups_unavailable": availability["unavailable_groups"],
+            "excluded_reasons": availability["excluded_reasons"],
+            "feature_count": int(len(work.columns)),
+            "feature_group_counts": availability["group_counts"],
+            "notes_labeling_ok": True,
+            "schedule_features_used": availability["schedule_used"],
+            "weather_features_used": availability["weather_used"],
+            "fallback_used": fallback_used,
+            "fallback_details": fallback_meta,
+            "forbidden_inputs_used": False,
         }
+    )
+    logging.info(
+        "f_risk_stage_a_summary target_date=%s feature_count=%s feature_group_counts=%s available=%s unavailable=%s excluded=%s fallback_used=%s model_recent=%s model_long=%s history_count=%s class_balance=%.3f risk_recent=%s risk_long=%s risk_blended=%s matched=%s protective=%s no_alert_reason=%s forbidden_inputs_used=%s",
+        target_date,
+        risk_json["feature_count"],
+        risk_json["feature_group_counts"],
+        risk_json["input_groups_available"],
+        risk_json["input_groups_unavailable"],
+        risk_json["excluded_reasons"],
+        fallback_used,
+        recent_model.get("model"),
+        longterm_model.get("model"),
+        risk_json["history_count"],
+        risk_json["class_balance"],
+        risk_json["risk_probability_recent"],
+        risk_json["risk_probability_longterm"],
+        blended,
+        risk_json["matched_risk_factors"],
+        risk_json["matched_protective_factors"],
+        risk_json["no_alert_reason"],
+        risk_json["forbidden_inputs_used"],
     )
 
     if not risk_matched:
@@ -291,6 +338,9 @@ def _build_xy(train: Any, today_row: Any):
         "sleep_short_x_social_load", "stress_x_late_work", "drinking_x_low_sleep", "high_carb_x_low_sleep",
         "spending_total_rolling_mean_7d", "spending_total_rolling_sum_14d", "weather_precip_probability_max_lag_1",
         "notes_stress_flag_lag_1", "notes_has_drinking_lag_3", "is_weekend", "place", "location_summary",
+        "kcal_vs_7d_delta", "protein_vs_7d_delta", "fat_vs_7d_delta", "task_completion_ratio",
+        "drop_vs_7d_delta", "done_vs_7d_delta", "weather_bad_flag", "weather_temp_range_c",
+        "late_outing_flag", "multi_stop_flag", "schedule_same_day_event_count",
     ]
     for feature in features:
         if feature not in train.columns:
@@ -317,6 +367,14 @@ def _derive_matched_features(today: dict[str, Any]) -> list[str]:
         matched.append("飲酒×短睡眠の重なり")
     if bool(today.get("is_weekend")):
         matched.append("週末バイアス")
+    if _to_float(today.get("fat_vs_7d_delta")) and _to_float(today.get("fat_vs_7d_delta")) > 10:
+        matched.append("脂質摂取が直近平均より高い")
+    if _to_float(today.get("task_completion_ratio")) is not None and _to_float(today.get("task_completion_ratio")) < 0.35:
+        matched.append("タスク進捗が低下")
+    if bool(today.get("late_outing_flag")):
+        matched.append("夜行動パターン")
+    if _to_float(today.get("schedule_same_day_event_count")) and _to_float(today.get("schedule_same_day_event_count")) >= 3:
+        matched.append("当日予定密度が高い")
     return matched
 
 
@@ -391,3 +449,82 @@ def _to_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _build_input_availability(work: Any) -> dict[str, Any]:
+    latest = work.iloc[-1].to_dict() if len(work) else {}
+    groups = {
+        "sleep": ["sleep_hours", "sleep_score"],
+        "meal": ["kcal", "protein", "fat", "carb"],
+        "spending": ["spending_total", "expense_f_count", "expense_f_total"],
+        "tasks": ["task_done_count", "task_drop_count", "task_completion_ratio"],
+        "notes": ["notes_present_flag", "notes_signal_count"],
+        "location": ["location_present_flag", "late_outing_flag", "multi_stop_flag"],
+        "weather": ["weather_retrieved_flag", "weather_code", "weather_precip_probability_max"],
+        "schedule": ["schedule_signal_available_flag", "schedule_same_day_event_count"],
+    }
+    available: list[str] = []
+    unavailable: list[str] = []
+    excluded_reasons: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for group, keys in groups.items():
+        group_available = 0
+        for key in keys:
+            value = latest.get(key)
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            if isinstance(value, bool):
+                if value:
+                    group_available += 1
+            else:
+                group_available += 1
+        counts[group] = group_available
+        if group_available > 0:
+            available.append(group)
+        else:
+            unavailable.append(group)
+            excluded_reasons[group] = "unavailable_from_existing_read_path"
+    return {
+        "available_groups": available,
+        "unavailable_groups": unavailable,
+        "excluded_reasons": excluded_reasons,
+        "group_counts": counts,
+        "schedule_used": "schedule" in available,
+        "weather_used": "weather" in available,
+    }
+
+
+def _rule_based_fallback(today: dict[str, Any], *, availability: dict[str, Any]) -> dict[str, Any]:
+    matches: list[str] = []
+    short_sleep = (_to_float(today.get("sleep_short_streak")) or 0) >= 2
+    stress = bool(today.get("notes_stress_flag")) or bool(today.get("notes_stress_flag_lag_1"))
+    late_outing = bool(today.get("late_outing_flag"))
+    drinking = bool(today.get("notes_has_drinking"))
+    high_fat = bool(today.get("high_fat_flag")) or ((_to_float(today.get("fat_vs_7d_delta")) or 0) > 12)
+    high_kcal = (_to_float(today.get("kcal_vs_7d_delta")) or 0) > 350
+    schedule_dense = (_to_float(today.get("schedule_same_day_event_count")) or 0) >= 3
+    spend_spike = (_to_float(today.get("spending_vs_7d_delta")) or 0) > 3000
+    social_load = bool(today.get("notes_social_load_flag"))
+    fatigue = bool(today.get("notes_fatigue_flag"))
+    f_spend = (_to_float(today.get("expense_f_count")) or 0) > 0
+    weekend_or_late = bool(today.get("is_weekend")) or late_outing
+
+    if short_sleep and stress and late_outing:
+        matches.append("短睡眠連続 + stress signal + late outing")
+    if drinking and (high_fat or high_kcal) and schedule_dense:
+        matches.append("飲酒/会食示唆 + 高脂質/高カロリー + 当日予定密度")
+    if spend_spike and social_load and fatigue:
+        matches.append("支出スパイク + social load + fatigue")
+    if f_spend and short_sleep and weekend_or_late:
+        matches.append("F支出あり + 短睡眠 + 週末/夜行動パターン")
+
+    matched = len(matches) >= 1
+    return {
+        "risk_matched": matched,
+        "blended_score": 0.65 if matched else 0.32,
+        "matched_factors": matches,
+        "no_alert_reason": None if matched else "fallback_no_multi_factor_match",
+        "unavailable_groups": availability.get("unavailable_groups", []),
+    }
