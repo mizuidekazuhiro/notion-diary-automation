@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from publish.email_templates import render_daily_log_html, render_daily_log_text
+from publish.email_templates import (
+    _resolve_weather_summary,
+    render_daily_log_html,
+    render_daily_log_text,
+)
 from publish.read_daily_log import read_daily_log
 from scripts.daily_job import _weather_roundtrip_status
 
@@ -37,6 +41,59 @@ def test_read_daily_log_weather_summary_and_raw_fields_are_available(monkeypatch
     assert summary.weather_precip_probability_max == 100
 
 
+def test_read_daily_log_weather_summary_prefers_weather_summary_and_reads_weather_select(monkeypatch) -> None:
+    def _fake_fetch_json(url: str, bearer_token: str | None) -> dict[str, object]:
+        del url, bearer_token
+        return {
+            "found": True,
+            "target_date": "2026-03-29",
+            "page_id": "page",
+            "title": "Daily Log",
+            "summary_text": "",
+            "summary_html": "",
+            "mail_id": "run",
+            "Weather Summary": "雨。最高17.4℃、最低8.9℃、降水確率は100%です。",
+            "Weather": "雨",
+            "weather_temp_max_c": 17.4,
+            "weather_temp_min_c": 8.9,
+            "weather_precip_probability_max": 100,
+            "weather_code": 61,
+            "expenses": {"total": 0, "count": 0, "top": [], "remaining": 0},
+        }
+
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", _fake_fetch_json)
+    summary = read_daily_log(daily_log_read_url="https://example.com/api/daily_log", target_date="2026-03-29", bearer_token=None)
+
+    assert summary is not None
+    assert summary.weather_summary == "雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+    assert summary.weather_label == "雨"
+
+
+def test_read_daily_log_weather_summary_falls_back_to_raw(monkeypatch) -> None:
+    def _fake_fetch_json(url: str, bearer_token: str | None) -> dict[str, object]:
+        del url, bearer_token
+        return {
+            "found": True,
+            "target_date": "2026-03-29",
+            "page_id": "page",
+            "title": "Daily Log",
+            "summary_text": "",
+            "summary_html": "",
+            "mail_id": "run",
+            "weather_temp_max_c": 17.4,
+            "weather_temp_min_c": 8.9,
+            "weather_precip_probability_max": 100,
+            "weather_code": 61,
+            "expenses": {"total": 0, "count": 0, "top": [], "remaining": 0},
+        }
+
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", _fake_fetch_json)
+    summary = read_daily_log(daily_log_read_url="https://example.com/api/daily_log", target_date="2026-03-29", bearer_token=None)
+
+    assert summary is not None
+    assert summary.weather_summary == "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+
+
 def test_email_templates_render_weather_section_for_html_and_text_with_fallback() -> None:
     payload = {
         "target_date": "2026-03-29",
@@ -58,6 +115,12 @@ def test_email_templates_render_weather_section_for_html_and_text_with_fallback(
     assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in text
     assert "未取得" not in html
     assert "未取得" not in text
+
+
+def test_resolve_weather_summary_source_prefers_saved_weather_summary() -> None:
+    saved, source = _resolve_weather_summary({"weather_summary": "雨。最高17.4℃、最低8.9℃、降水確率は100%です。", "weather": "雨"})
+    assert saved == "雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+    assert source == "saved_weather_summary"
 
 
 def test_email_templates_render_weather_section_last_for_html_and_text() -> None:

@@ -67,3 +67,15 @@ def test_build_weather_summary_japanese_sentence_from_raw_values() -> None:
         precip_probability_max=100,
     )
     assert summary == "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。"
+
+
+def test_build_weather_select_label_from_weather_code() -> None:
+    assert weather_client.build_weather_select_label(61) == "雨"
+    assert weather_client.build_weather_select_label(0) == "晴れ"
+    assert weather_client.build_weather_select_label(95) == "雷雨"
+
+
+def test_build_weather_select_label_fallbacks_to_summary_text() -> None:
+    assert weather_client.build_weather_select_label(999, "雪。最高2.0℃、最低-1.0℃です。") == "雪"
+    assert weather_client.build_weather_select_label(None, "霧。視界が悪いです。") == "霧"
+    assert weather_client.build_weather_select_label(None, "天気情報なし") is None

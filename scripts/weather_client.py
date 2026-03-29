@@ -43,6 +43,30 @@ WEATHER_CODE_MAP = {
     95: "雷雨",
 }
 
+WEATHER_SELECT_CODE_LABEL_MAP = {
+    0: "晴れ",
+    1: "晴れ",
+    2: "曇り",
+    3: "曇り",
+    45: "霧",
+    48: "霧",
+    51: "雨",
+    53: "雨",
+    55: "雨",
+    61: "雨",
+    63: "雨",
+    65: "雨",
+    71: "雪",
+    73: "雪",
+    75: "雪",
+    80: "雨",
+    81: "雨",
+    82: "雨",
+    95: "雷雨",
+}
+
+WEATHER_SELECT_LABELS = ("晴れ", "曇り", "雨", "雪", "雷雨", "霧")
+
 
 def build_weather_summary(
     *,
@@ -70,6 +94,24 @@ def build_weather_summary(
     else:
         second_sentence = ""
     return f"{first_sentence}{second_sentence}" or None
+
+
+def build_weather_select_label(
+    weather_code: Optional[int],
+    summary_text: Optional[str] = None,
+) -> Optional[str]:
+    if weather_code is not None:
+        coarse = WEATHER_SELECT_CODE_LABEL_MAP.get(weather_code)
+        if coarse:
+            return coarse
+
+    if isinstance(summary_text, str):
+        normalized = summary_text.strip()
+        if normalized:
+            for label in WEATHER_SELECT_LABELS:
+                if label in normalized:
+                    return label
+    return None
 
 
 def _to_iso_utc() -> str:

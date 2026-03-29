@@ -82,10 +82,10 @@ def _optional_text(value: object) -> Optional[str]:
 
 
 def _resolve_weather_summary(payload: Mapping[str, object]) -> tuple[Optional[str], str]:
-    for key in ("weather_summary", "weather", "Weather Summary", "Weather"):
+    for key in ("weather_summary", "Weather Summary"):
         value = _optional_text(payload.get(key))
         if value:
-            return value, "saved"
+            return value, "saved_weather_summary"
 
     fallback = build_weather_summary(
         weather_code=_safe_int(payload.get("weather_code")),

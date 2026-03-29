@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 
 from ingest.http_client import fetch_json
 from scripts.sleep_utils import format_sleep_duration_text, resolve_sleep_duration_minutes
+from scripts.weather_client import build_weather_summary
 
 
 def _safe_text(value: object) -> Optional[str]:
@@ -106,11 +107,29 @@ def _get_sleep_value(payload: Mapping[str, Any], internal_name: str) -> object:
 
 
 def _get_weather_summary_value(payload: Mapping[str, Any]) -> Optional[str]:
-    for key in ("weather_summary", "weather", "Weather Summary", "Weather"):
+    for key in ("Weather Summary", "weather_summary"):
         value = _safe_text(_get_case_insensitive_value(payload, key))
         if value:
             return value
-    return None
+    fallback_legacy = _safe_text(_get_case_insensitive_value(payload, "Weather", "weather"))
+    if fallback_legacy:
+        return fallback_legacy
+    return build_weather_summary(
+        weather_code=_safe_int(_get_case_insensitive_value(payload, "Weather Code", "weather_code")),
+        temp_max_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Max C", "weather_temp_max_c")),
+        temp_min_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Min C", "weather_temp_min_c")),
+        precip_probability_max=_safe_float(
+            _get_case_insensitive_value(
+                payload,
+                "Weather Precip Probability Max",
+                "weather_precip_probability_max",
+            )
+        ),
+    )
+
+
+def _get_weather_label_value(payload: Mapping[str, Any]) -> Optional[str]:
+    return _safe_text(_get_case_insensitive_value(payload, "Weather", "weather"))
 
 
 @dataclass(frozen=True)
@@ -194,6 +213,7 @@ class DailyLogSummary:
     diary_notification_sent: Optional[bool] = None
     weather_location: Optional[str] = None
     weather_summary: Optional[str] = None
+    weather_label: Optional[str] = None
     weather_temp_max_c: Optional[float] = None
     weather_temp_min_c: Optional[float] = None
     weather_precip_probability_max: Optional[float] = None
@@ -327,6 +347,7 @@ def read_daily_log(
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
         weather_location=_safe_text(_get_case_insensitive_value(payload, "Weather Location", "weather_location")),
         weather_summary=_get_weather_summary_value(payload),
+        weather_label=_get_weather_label_value(payload),
         weather_temp_max_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Max C", "weather_temp_max_c")),
         weather_temp_min_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Min C", "weather_temp_min_c")),
         weather_precip_probability_max=_safe_float(_get_case_insensitive_value(payload, "Weather Precip Probability Max", "weather_precip_probability_max")),
