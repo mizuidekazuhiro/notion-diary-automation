@@ -52,15 +52,6 @@ def _format_yen(value: Optional[float]) -> str:
     return f"¥{value:g}"
 
 
-def _format_percent(value: object) -> Optional[str]:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return f"{float(value):g}%"
-    except (TypeError, ValueError):
-        return None
-
-
 def _normalize_photo_urls(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -367,7 +358,6 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     weather_label = _resolve_weather_label(payload if isinstance(payload, Mapping) else {})
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
     weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
-    weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
     weather_retrieved_at = _optional_text(payload.get("weather_retrieved_at") if isinstance(payload, Mapping) else None)
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
@@ -400,7 +390,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
         weather_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
             "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
-            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary)} / 天気: {html.escape(weather_label)} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 降水確率: {html.escape(weather_precip or '—')} / 取得時刻: {html.escape(weather_retrieved_at or '—')}</div>"
+            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary)} / 天気: {html.escape(weather_label)} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 取得時刻: {html.escape(weather_retrieved_at or '—')}</div>"
             "</div>"
         )
     elif weather_summary_source == "empty":
@@ -801,7 +791,6 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     weather_label = _resolve_weather_label(payload if isinstance(payload, Mapping) else {})
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
     weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
-    weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
     weather_retrieved_at = _optional_text(payload.get("weather_retrieved_at") if isinstance(payload, Mapping) else None)
     sleep_start = _format_sleep_clock(
         payload.get("sleep_start") if isinstance(payload, Mapping) else None
@@ -914,7 +903,6 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             f"- 概要: {weather_summary}",
             f"- 天気: {weather_label}",
             f"- 最高/最低: {weather_temp_max}℃ / {weather_temp_min}℃",
-            f"- 降水確率: {weather_precip or '—'}",
             f"- 取得時刻: {weather_retrieved_at or '—'}",
         ]
     elif weather_summary_source == "empty":

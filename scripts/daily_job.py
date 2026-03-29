@@ -67,6 +67,7 @@ WEATHER_DETAIL_FIELDS = (
     "weather_precip_probability_max",
     "weather_code",
 )
+WEATHER_PROVIDER = "open-meteo-jma"
 
 
 @dataclass(frozen=True)
@@ -919,7 +920,7 @@ def _generate_and_save_weather(
             [],
             {},
             {},
-            skip_reason,
+            f"location_resolution_failed:{skip_reason}",
             "",
             resolved_location.source,
             json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
@@ -934,6 +935,7 @@ def _generate_and_save_weather(
         "location_longitude": resolved_location.longitude,
         "location_resolution_method": resolved_location.resolution_method,
         "location_source": resolved_location.source,
+        "weather_provider": WEATHER_PROVIDER,
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(weather_hash_payload)
     previous_input_hash = (summary.weather_input_hash or "").strip() or None
@@ -1003,7 +1005,7 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s weather_retrieved_at=%s location_source=%s debug=%s",
+            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s save_result=%s debug=%s",
             resolved_location.source,
             resolved_location.name,
             resolved_location.resolution_method,
@@ -1021,9 +1023,17 @@ def _generate_and_save_weather(
             [],
             {},
             {},
-            reason,
+            f"weather_fetch_failed:{reason}",
             "",
             resolved_location.source,
+            weather.debug_summary.get("api_endpoint"),
+            weather.debug_summary.get("requested_daily_fields"),
+            weather.debug_summary.get("returned_daily_keys"),
+            weather.weather_code,
+            weather.temp_max_c,
+            weather.temp_min_c,
+            weather.precipitation_sum_mm,
+            save_result.get("reason"),
             json.dumps(debug_payload, ensure_ascii=False, sort_keys=True, default=str),
         )
         return _refresh_daily_log_summary(config, summary.target_date) or summary
@@ -1034,20 +1044,21 @@ def _generate_and_save_weather(
         "weather_location": weather.location_label or resolved_location.name or "",
         "weather_temp_max_c": weather.temp_max_c,
         "weather_temp_min_c": weather.temp_min_c,
-        "weather_precip_probability_max": weather.precip_probability_max,
+        "weather_precip_probability_max": None,
         "weather_code": weather.weather_code,
         "weather_retrieved_at": weather.retrieved_at,
         "weather_input_hash": current_input_hash,
         "weather_generated_at": _utc_timestamp(),
     }
     logging.info(
-        "weather_summary_generated=%s daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s resolution_method=%s weather_summary_text=%s",
+        "weather_summary_generated=%s daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s resolution_method=%s precipitation_sum=%s weather_summary_text=%s",
         bool(weather.summary),
         summary.target_date,
         weather_forecast_date_jst,
         weather.retrieved_at,
         resolved_location.source,
         resolved_location.resolution_method,
+        weather.precipitation_sum_mm,
         weather.summary or "",
     )
     weather_save_attempted = True
@@ -1061,7 +1072,7 @@ def _generate_and_save_weather(
     compare_mismatch_fields = list(roundtrip_status["mismatch_fields"])
     stage_status = "ok" if readback_ok and compare_ok else "weather_readback_or_compare_failed"
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s weather_compare_normalized=%s weather_compare_ignored_fields=%s weather_summary_source=%s weather_summary_text=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s weather_compare_normalized=%s weather_compare_ignored_fields=%s weather_summary_source=%s weather_summary_text=%s empty_update_reason=%s save_result=%s debug=%s",
         resolved_location.source,
         weather.location_label,
         resolved_location.resolution_method,
@@ -1083,6 +1094,13 @@ def _generate_and_save_weather(
         weather_forecast_date_jst,
         weather.retrieved_at,
         resolved_location.source,
+        weather.debug_summary.get("api_endpoint"),
+        weather.debug_summary.get("requested_daily_fields"),
+        weather.debug_summary.get("returned_daily_keys"),
+        weather.weather_code,
+        weather.temp_max_c,
+        weather.temp_min_c,
+        weather.precipitation_sum_mm,
         save_result.get("updated"),
         weather.available,
         weather_save_attempted,
@@ -1098,6 +1116,7 @@ def _generate_and_save_weather(
         "saved" if (weather.summary or "").strip() else "empty",
         weather.summary or "",
         "",
+        save_result.get("reason"),
         json.dumps({**weather.debug_summary, "roundtrip_status": roundtrip_status}, ensure_ascii=False, sort_keys=True, default=str),
     )
     if not (readback_ok and compare_ok):

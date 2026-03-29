@@ -434,7 +434,8 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
             summary="晴れ",
             temp_max_c=23.0,
             temp_min_c=15.0,
-            precip_probability_max=10.0,
+            precip_probability_max=None,
+            precipitation_sum_mm=0.0,
             weather_code=0,
             retrieved_at="2026-03-20T00:00:00Z",
             debug_summary={},
@@ -461,7 +462,7 @@ def test_weather_save_payload_contains_required_and_detail_fields(monkeypatch) -
     assert payload["weather_location"] == "東京"
     assert payload["weather_temp_max_c"] == 23.0
     assert payload["weather_temp_min_c"] == 15.0
-    assert payload["weather_precip_probability_max"] == 10.0
+    assert payload["weather_precip_probability_max"] is None
     assert payload["weather_code"] == 0
 
 
@@ -474,8 +475,9 @@ def test_weather_input_hash_changes_when_forecast_date_changes() -> None:
         "location_longitude": 139.0,
         "location_resolution_method": "location_log_latest_latlon",
         "location_source": "location_log_db",
+        "weather_provider": "open-meteo-jma",
     }
-    next_payload = {**base_payload, "weather_forecast_date_jst": "2026-03-30"}
+    next_payload = {**base_payload, "weather_provider": "legacy-provider"}
 
     first_hash, _, _ = daily_job._build_input_hash(base_payload)
     second_hash, _, _ = daily_job._build_input_hash(next_payload)
@@ -513,7 +515,7 @@ def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
         "weather_location": "東京",
         "weather_temp_max_c": 23.0,
         "weather_temp_min_c": 15.0,
-        "weather_precip_probability_max": 10.0,
+        "weather_precip_probability_max": None,
         "weather_code": 0,
         "weather_retrieved_at": "2026-03-20T00:00:00Z",
         "weather_input_hash": "hash-1",
@@ -524,7 +526,7 @@ def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
         weather_location="東京",
         weather_temp_max_c=23.0,
         weather_temp_min_c=15.0,
-        weather_precip_probability_max=10.0,
+        weather_precip_probability_max=None,
         weather_code=0,
         weather_retrieved_at="2026-03-20T00:00:00+00:00",
         weather_input_hash="hash-1",

@@ -177,11 +177,11 @@ def test_mail_weather_uses_human_summary_fallback_when_raw_weather_exists(monkey
             weather_code=61,
             weather_temp_max_c=17.4,
             weather_temp_min_c=8.9,
-            weather_precip_probability_max=100,
+            weather_precip_probability_max=None,
         ),
         expense_f_alert={"matched": False},
         f_risk_alert={"matched": False},
     )
-    assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in mail.plain_text
+    assert "弱い雨。最高17.4℃、最低8.9℃です。" in mail.plain_text
     assert "weather_code" not in mail.plain_text
-    assert "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。" in mail.html_body
+    assert "弱い雨。最高17.4℃、最低8.9℃です。" in mail.html_body
