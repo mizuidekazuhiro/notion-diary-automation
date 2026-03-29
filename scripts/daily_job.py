@@ -213,7 +213,21 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         bool(f_risk_alert.get("matched")),
         bool(expense_f_alert.get("matched")),
     )
+    weather_summary_source = "saved" if (summary.weather_summary or "").strip() else ("fallback_from_raw" if any(value is not None for value in (summary.weather_code, summary.weather_temp_max_c, summary.weather_temp_min_c, summary.weather_precip_probability_max)) else "empty")
+    weather_summary_text = (summary.weather_summary or "").strip()
+    logging.info(
+        "weather_summary_source=%s weather_summary_text=%s",
+        weather_summary_source,
+        weather_summary_text,
+    )
     mail = render_mail(summary, expense_f_alert=expense_f_alert, f_risk_alert=f_risk_alert)
+    weather_section_rendered_html = "Weather" in mail.html_body
+    weather_section_rendered_text = "Weather" in mail.plain_text
+    logging.info(
+        "weather_section_rendered_html=%s weather_section_rendered_text=%s",
+        weather_section_rendered_html,
+        weather_section_rendered_text,
+    )
     mail_config = MailConfig(
         mail_from=config.mail_from,
         mail_to=config.mail_to,
@@ -421,7 +435,7 @@ def _save_daily_log_fields(
     )
 
 
-def _normalize_iso_datetime_for_compare(value: object) -> str:
+def _normalize_iso_datetime_for_compare(value: object, *, precision: str = "second") -> str:
     if not isinstance(value, str):
         return ""
     raw = value.strip()
@@ -434,7 +448,10 @@ def _normalize_iso_datetime_for_compare(value: object) -> str:
         return raw
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(ZoneInfo("UTC"))
-    parsed = parsed.replace(microsecond=0)
+    if precision == "minute":
+        parsed = parsed.replace(second=0, microsecond=0)
+    else:
+        parsed = parsed.replace(microsecond=0)
     return parsed.isoformat()
 
 
@@ -446,7 +463,7 @@ def _is_non_empty_weather_value(*, field: str, value: object) -> bool:
 
 def _weather_field_values_equal(*, field: str, expected: object, actual: object) -> bool:
     if field in {"weather_retrieved_at", "weather_generated_at"}:
-        return _normalize_iso_datetime_for_compare(expected) == _normalize_iso_datetime_for_compare(actual)
+        return _normalize_iso_datetime_for_compare(expected, precision="minute") == _normalize_iso_datetime_for_compare(actual, precision="minute")
     if isinstance(expected, (int, float)) or isinstance(actual, (int, float)):
         try:
             return float(expected) == float(actual)
@@ -480,13 +497,23 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
         "weather_code": summary.weather_code,
     }
     normalized_save_timestamps = {
-        key: _normalize_iso_datetime_for_compare(expected_payload.get(key))
+        key: _normalize_iso_datetime_for_compare(expected_payload.get(key), precision="minute")
         for key in ("weather_retrieved_at", "weather_generated_at")
     }
     normalized_read_timestamps = {
-        key: _normalize_iso_datetime_for_compare(actual_by_field.get(key))
+        key: _normalize_iso_datetime_for_compare(actual_by_field.get(key), precision="minute")
         for key in ("weather_retrieved_at", "weather_generated_at")
     }
+    raw_save_timestamps = {
+        key: _normalize_iso_datetime_for_compare(expected_payload.get(key), precision="second")
+        for key in ("weather_retrieved_at", "weather_generated_at")
+    }
+    raw_read_timestamps = {
+        key: _normalize_iso_datetime_for_compare(actual_by_field.get(key), precision="second")
+        for key in ("weather_retrieved_at", "weather_generated_at")
+    }
+    compare_normalized = normalized_save_timestamps != raw_save_timestamps or normalized_read_timestamps != raw_read_timestamps
+    ignored_fields: list[str] = []
     for field, expected in expected_payload.items():
         actual = actual_by_field.get(field)
         if _is_non_empty_weather_value(field=field, value=expected) and not _is_non_empty_weather_value(field=field, value=actual):
@@ -494,6 +521,8 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
             continue
         if not _weather_field_values_equal(field=field, expected=expected, actual=actual):
             mismatch_fields.append(field)
+        elif field in {"weather_retrieved_at", "weather_generated_at"} and raw_save_timestamps.get(field) != raw_read_timestamps.get(field):
+            ignored_fields.append(field)
     readback_ok = len(missing_fields) == 0
     compare_ok = len(mismatch_fields) == 0
     return {
@@ -503,6 +532,8 @@ def _weather_roundtrip_status(*, summary: Optional["DailyLogSummary"], expected_
         "mismatch_fields": mismatch_fields,
         "normalized_save_timestamps": normalized_save_timestamps,
         "normalized_read_timestamps": normalized_read_timestamps,
+        "compare_normalized": compare_normalized,
+        "ignored_fields": ignored_fields,
     }
 
 
@@ -937,6 +968,11 @@ def _generate_and_save_weather(
         "weather_input_hash": current_input_hash,
         "weather_generated_at": _utc_timestamp(),
     }
+    logging.info(
+        "weather_summary_generated=%s weather_summary_text=%s",
+        bool(weather.summary),
+        weather.summary or "",
+    )
     weather_save_attempted = True
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
     weather_save_ok = bool(save_result.get("updated")) and str(save_result.get("reason") or "") in {"updated", ""}
@@ -948,7 +984,7 @@ def _generate_and_save_weather(
     compare_mismatch_fields = list(roundtrip_status["mismatch_fields"])
     stage_status = "ok" if readback_ok and compare_ok else "weather_readback_or_compare_failed"
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s debug=%s",
+        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s weather_compare_normalized=%s weather_compare_ignored_fields=%s weather_summary_source=%s weather_summary_text=%s empty_update_reason=%s debug=%s",
         resolved_location.source,
         weather.location_label,
         resolved_location.resolution_method,
@@ -976,6 +1012,10 @@ def _generate_and_save_weather(
         compare_mismatch_fields,
         roundtrip_status["normalized_save_timestamps"],
         roundtrip_status["normalized_read_timestamps"],
+        roundtrip_status["compare_normalized"],
+        roundtrip_status["ignored_fields"],
+        "saved" if (weather.summary or "").strip() else "empty",
+        weather.summary or "",
         "",
         json.dumps({**weather.debug_summary, "roundtrip_status": roundtrip_status}, ensure_ascii=False, sort_keys=True, default=str),
     )

@@ -105,6 +105,14 @@ def _get_sleep_value(payload: Mapping[str, Any], internal_name: str) -> object:
     return _get_case_insensitive_value(payload, *candidates)
 
 
+def _get_weather_summary_value(payload: Mapping[str, Any]) -> Optional[str]:
+    for key in ("weather_summary", "weather", "Weather Summary", "Weather"):
+        value = _safe_text(_get_case_insensitive_value(payload, key))
+        if value:
+            return value
+    return None
+
+
 @dataclass(frozen=True)
 class ExpenseItem:
     title: str
@@ -318,7 +326,7 @@ def read_daily_log(
         page_url=_safe_text(payload.get("page_url")),
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
         weather_location=_safe_text(_get_case_insensitive_value(payload, "Weather Location", "weather_location")),
-        weather_summary=_safe_text(_get_case_insensitive_value(payload, "Weather Summary", "weather_summary", "Weather", "weather")),
+        weather_summary=_get_weather_summary_value(payload),
         weather_temp_max_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Max C", "weather_temp_max_c")),
         weather_temp_min_c=_safe_float(_get_case_insensitive_value(payload, "Weather Temp Min C", "weather_temp_min_c")),
         weather_precip_probability_max=_safe_float(_get_case_insensitive_value(payload, "Weather Precip Probability Max", "weather_precip_probability_max")),

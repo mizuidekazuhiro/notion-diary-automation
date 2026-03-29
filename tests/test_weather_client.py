@@ -44,7 +44,7 @@ def test_fetch_weather_for_date_bypasses_geocode_when_coordinates_exist(monkeypa
 
     assert result.available is True
     assert result.location_label == "東京"
-    assert result.summary == "晴れ。最高25.0℃、最低15.0℃、降水確率10%。"
+    assert result.summary == "晴れ。最高25.0℃、最低15.0℃、降水確率は10%です。"
     assert called_urls == ["https://api.open-meteo.com/v1/forecast"]
     assert result.debug_summary["used_geocoding"] is False
 
@@ -56,4 +56,14 @@ def test_build_weather_summary_omits_missing_fields() -> None:
         temp_min_c=None,
         precip_probability_max=100,
     )
-    assert summary == "最高17.4℃、降水確率100%。"
+    assert summary == "最高17.4℃、降水確率は100%です。"
+
+
+def test_build_weather_summary_japanese_sentence_from_raw_values() -> None:
+    summary = weather_client.build_weather_summary(
+        weather_code=61,
+        temp_max_c=17.4,
+        temp_min_c=8.9,
+        precip_probability_max=100,
+    )
+    assert summary == "弱い雨。最高17.4℃、最低8.9℃、降水確率は100%です。"

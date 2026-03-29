@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Tuple
+from scripts.weather_client import build_weather_summary, WEATHER_CODE_MAP
 
 MAX_TASK_ITEMS = 30
 SECTION_ORDER = [
@@ -78,6 +79,48 @@ def _optional_text(value: object) -> Optional[str]:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _resolve_weather_summary(payload: Mapping[str, object]) -> tuple[Optional[str], str]:
+    for key in ("weather_summary", "weather", "Weather Summary", "Weather"):
+        value = _optional_text(payload.get(key))
+        if value:
+            return value, "saved"
+
+    fallback = build_weather_summary(
+        weather_code=_safe_int(payload.get("weather_code")),
+        temp_max_c=_safe_float(payload.get("weather_temp_max_c")),
+        temp_min_c=_safe_float(payload.get("weather_temp_min_c")),
+        precip_probability_max=_safe_float(payload.get("weather_precip_probability_max")),
+    )
+    if fallback:
+        return fallback, "fallback_from_raw"
+    return None, "empty"
+
+
+def _safe_float(value: object) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: object) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_weather_label(payload: Mapping[str, object]) -> str:
+    code = _safe_int(payload.get("weather_code"))
+    if code is None:
+        return "—"
+    return WEATHER_CODE_MAP.get(code, str(code))
 
 
 def _format_sleep_clock(value: object) -> Optional[str]:
@@ -320,7 +363,8 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 str(item).strip() for item in reasons_raw if isinstance(item, str) and str(item).strip()
             ]
     weather_location = _optional_text(payload.get("weather_location") if isinstance(payload, Mapping) else None)
-    weather_summary = _optional_text(payload.get("weather_summary") if isinstance(payload, Mapping) else None)
+    weather_summary, weather_summary_source = _resolve_weather_summary(payload if isinstance(payload, Mapping) else {})
+    weather_label = _resolve_weather_label(payload if isinstance(payload, Mapping) else {})
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
     weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
     weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
@@ -356,10 +400,10 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
         weather_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
             "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
-            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary)} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 降水確率: {html.escape(weather_precip or '—')} / 取得時刻: {html.escape(weather_retrieved_at or '—')}</div>"
+            f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary)} / 天気: {html.escape(weather_label)} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 降水確率: {html.escape(weather_precip or '—')} / 取得時刻: {html.escape(weather_retrieved_at or '—')}</div>"
             "</div>"
         )
-    elif weather_location or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip or weather_retrieved_at:
+    elif weather_summary_source == "empty":
         weather_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
             "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
@@ -753,7 +797,8 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
                 str(item).strip() for item in reasons_raw if isinstance(item, str) and str(item).strip()
             ]
     weather_location = _optional_text(payload.get("weather_location") if isinstance(payload, Mapping) else None)
-    weather_summary = _optional_text(payload.get("weather_summary") if isinstance(payload, Mapping) else None)
+    weather_summary, weather_summary_source = _resolve_weather_summary(payload if isinstance(payload, Mapping) else {})
+    weather_label = _resolve_weather_label(payload if isinstance(payload, Mapping) else {})
     weather_temp_max = _normalize_number(payload.get("weather_temp_max_c") if isinstance(payload, Mapping) else None)
     weather_temp_min = _normalize_number(payload.get("weather_temp_min_c") if isinstance(payload, Mapping) else None)
     weather_precip = _format_percent(payload.get("weather_precip_probability_max") if isinstance(payload, Mapping) else None)
@@ -800,11 +845,12 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             "Weather",
             f"- 地点: {weather_location or '—'}",
             f"- 概要: {weather_summary}",
+            f"- 天気: {weather_label}",
             f"- 最高/最低: {weather_temp_max}℃ / {weather_temp_min}℃",
             f"- 降水確率: {weather_precip or '—'}",
             f"- 取得時刻: {weather_retrieved_at or '—'}",
         ]
-    elif weather_location or weather_temp_max != "—" or weather_temp_min != "—" or weather_precip or weather_retrieved_at:
+    elif weather_summary_source == "empty":
         lines += ["", "Weather", "- 未取得"]
     if today_advice:
         lines += ["", "Today advice", today_advice]

@@ -51,22 +51,25 @@ def build_weather_summary(
     temp_min_c: Optional[float],
     precip_probability_max: Optional[float],
 ) -> Optional[str]:
-    parts: list[str] = []
     weather_label = WEATHER_CODE_MAP.get(weather_code) if weather_code is not None else None
-    if weather_label:
-        parts.append(weather_label)
     metric_parts: list[str] = []
     if temp_max_c is not None:
         metric_parts.append(f"最高{temp_max_c:.1f}℃")
     if temp_min_c is not None:
         metric_parts.append(f"最低{temp_min_c:.1f}℃")
-    if precip_probability_max is not None:
-        metric_parts.append(f"降水確率{precip_probability_max:g}%")
-    if metric_parts:
-        parts.append("、".join(metric_parts))
-    if not parts:
+    if not weather_label and not metric_parts and precip_probability_max is None:
         return None
-    return "。".join(parts) + "。"
+
+    first_sentence = f"{weather_label}。" if weather_label else ""
+    if metric_parts and precip_probability_max is not None:
+        second_sentence = f"{'、'.join(metric_parts)}、降水確率は{precip_probability_max:g}%です。"
+    elif metric_parts:
+        second_sentence = f"{'、'.join(metric_parts)}です。"
+    elif precip_probability_max is not None:
+        second_sentence = f"降水確率は{precip_probability_max:g}%です。"
+    else:
+        second_sentence = ""
+    return f"{first_sentence}{second_sentence}" or None
 
 
 def _to_iso_utc() -> str:
