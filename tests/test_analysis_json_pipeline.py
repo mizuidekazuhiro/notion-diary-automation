@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import requests
@@ -93,9 +94,15 @@ def test_openai_chat_final_failure_is_not_success(monkeypatch: pytest.MonkeyPatc
 
 
 def test_f_risk_labeling_failed_sets_skip_reason(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [object()] * 20)
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_load_histories",
+        lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 21)],
+    )
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
     def _fake_labeler(**kwargs):
         kwargs["audit"]["labeling_failed"] = True
+        kwargs["audit"]["labels_usable"] = False
         return {}
     monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", _fake_labeler)
     result = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
