@@ -32,8 +32,19 @@
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
       "score": 0.0008494468520048651
+    },
+    "2026-03-31": {
+      "alert_text": null,
+      "generated_at": "2026-03-31T23:42:23Z",
+      "input_hash": "d24af7b7e1015475226a34b44135c719988b44eb06693088910b4b62cbcf20ea",
+      "matched_patterns": [
+        "睡眠短縮が連続"
+      ],
+      "no_alert_reason": "case_similarity_below_medium_threshold",
+      "reason": "no_alert:case_similarity_below_medium_threshold",
+      "score": 0.01856989243741898
     }
   },
-  "updated_at": "2026-03-31T00:29:03Z",
+  "updated_at": "2026-03-31T23:42:24Z",
   "version": 1
 }
