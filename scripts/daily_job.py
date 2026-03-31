@@ -74,6 +74,8 @@ WEATHER_PROVIDER = "open-meteo-jma"
 class Config:
     mail_from: str
     mail_to: List[str]
+    mail_cc: List[str]
+    mail_bcc: List[str]
     gmail_app_password: str
     tasks_closed_url: str
     daily_log_upsert_url: str
@@ -113,12 +115,16 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
 
     mail_to_raw = read_env("MAIL_TO", need_mail)
     mail_to = [item.strip() for item in mail_to_raw.split(",") if item.strip()]
+    mail_cc = [item.strip() for item in os.getenv("MAIL_CC", "").split(",") if item.strip()]
+    mail_bcc = [item.strip() for item in os.getenv("MAIL_BCC", "").split(",") if item.strip()]
 
     daily_log_upsert_url = read_env("DAILY_LOG_UPSERT_URL", True)
 
     return Config(
         mail_from=read_env("MAIL_FROM", need_mail),
         mail_to=mail_to,
+        mail_cc=mail_cc,
+        mail_bcc=mail_bcc,
         gmail_app_password=read_env("GMAIL_APP_PASSWORD", need_mail),
         tasks_closed_url=read_env("TASKS_CLOSED_URL", need_tasks),
         daily_log_upsert_url=daily_log_upsert_url,
@@ -240,6 +246,8 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         mail_from=config.mail_from,
         mail_to=config.mail_to,
         gmail_app_password=config.gmail_app_password,
+        mail_cc=config.mail_cc,
+        mail_bcc=config.mail_bcc,
     )
     send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
 

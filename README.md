@@ -377,3 +377,35 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - LightGBM を正式依存として導入しています（`requirements.txt` / CI install / verify 対応）。
 - メール本文セクション順は `Today advice -> Diary -> Sleep & Condition -> Summary -> Tasks -> Meal summary` です。
 - Drop 0 件時は `- None` / `- —` のダミー明細を表示しません（件数と本文を一致）。
+
+## Weekly Report（新規）
+
+既存の日次メール基盤を流用して、週次の長文 HTML メールを送信できます。目的は **振り返り + 改善提案 + 異常検知** の同時提供です。
+
+- 対象期間: **前週月曜 05:00 JST 〜 当週日曜 04:59:59 JST**（表示は月曜〜土曜の週次レポート）
+- 送信タイミング: 日曜夜（workflow は 21:00 JST 相当で起動、実送信可否は `WEEKLY_REPORT_SEND_HOUR_JST` で最終判定）
+- 送信有効化: `WEEKLY_REPORT_ENABLED` が true 系のときのみ
+- 送信先: 既存 `MAIL_FROM` / `MAIL_TO` を流用（`MAIL_CC` / `MAIL_BCC` は設定時のみ使用、未設定でも正常動作）
+- Weight の source of truth: **Daily Log の `Weight` のみ**（Health DB 直接補完なし）
+- 欠損時挙動:
+  - 中核集計失敗は送信中止
+  - 一部欠損は送信継続し本文に不足を明記
+  - Weight 記録が 3 日未満なら体重は「記録不足」扱い
+
+### 追加環境変数
+
+- `WEEKLY_REPORT_ENABLED`: true 系で週次配信を有効化
+- `WEEKLY_REPORT_SEND_HOUR_JST`: 0-23。未設定時 21
+
+### 週次メール本文の構成（固定順）
+
+1. 週の総括
+2. 主要指標サマリー
+3. グラフ5本（睡眠 / mood / 支出 / Done&Drop / 体重）
+4. 良かった点
+5. 注意点・異常検知
+6. パターン分析
+7. 来週の具体アクション
+8. 日別ログ要約
+
+体重グラフは Daily Log `Weight` のみを描画し、欠損補完しません。
