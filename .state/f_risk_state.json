@@ -58,14 +58,14 @@
     },
     "2026-04-02": {
       "alert_text": null,
-      "generated_at": "2026-04-02T23:11:14Z",
+      "generated_at": "2026-04-02T23:21:43Z",
       "input_hash": "6217013df02149ff3627cf1833de7d002aafd1211749ffd1e810483de905acf0",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
-      "score": 0.9608219841530017
+      "score": 0.9780394203151603
     }
   },
-  "updated_at": "2026-04-02T23:11:15Z",
+  "updated_at": "2026-04-02T23:21:43Z",
   "version": 1
 }
