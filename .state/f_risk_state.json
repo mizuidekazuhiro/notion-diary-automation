@@ -46,7 +46,7 @@
     },
     "2026-04-01": {
       "alert_text": null,
-      "generated_at": "2026-04-01T23:58:23Z",
+      "generated_at": "2026-04-02T00:09:16Z",
       "input_hash": "55948f50480c5d1c179068087de50e7cd591a9f9fdcc0d113adac713a062548e",
       "matched_patterns": [
         "睡眠短縮が連続",
@@ -57,6 +57,6 @@
       "score": 0.0007974018912661606
     }
   },
-  "updated_at": "2026-04-01T23:58:23Z",
+  "updated_at": "2026-04-02T00:09:16Z",
   "version": 1
 }
