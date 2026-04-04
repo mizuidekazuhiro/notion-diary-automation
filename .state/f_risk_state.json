@@ -64,8 +64,19 @@
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
       "score": 0.9780394203151603
+    },
+    "2026-04-03": {
+      "alert_text": null,
+      "generated_at": "2026-04-04T13:08:37Z",
+      "input_hash": "cfd7331bf7ff88df1eccc50085a0c03174dfe6efdd1f742b50ebec9d7dfeb7d7",
+      "matched_patterns": [
+        "直近でストレス信号"
+      ],
+      "no_alert_reason": "case_similarity_below_medium_threshold",
+      "reason": "no_alert:case_similarity_below_medium_threshold",
+      "score": 0.7477721453789108
     }
   },
-  "updated_at": "2026-04-02T23:21:43Z",
+  "updated_at": "2026-04-04T13:08:37Z",
   "version": 1
 }
