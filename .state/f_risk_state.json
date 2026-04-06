@@ -100,14 +100,16 @@
     },
     "2026-04-06": {
       "alert_text": null,
-      "generated_at": "2026-04-06T23:20:24Z",
+      "generated_at": "2026-04-06T23:30:05Z",
       "input_hash": "ec67d2a7534c5bed28a291c493a67b60749c7a0a1dc3b21b3a8b5e9aab79a31d",
-      "matched_patterns": [],
+      "matched_patterns": [
+        "直近でストレス信号"
+      ],
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
-      "score": 0.46367219592059167
+      "score": 0.4155985704248304
     }
   },
-  "updated_at": "2026-04-06T23:20:24Z",
+  "updated_at": "2026-04-06T23:30:05Z",
   "version": 1
 }
