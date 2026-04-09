@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -322,11 +323,16 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
 def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:
     base = datetime.strptime(target_date, "%Y-%m-%d")
     out: list[DailyLogSummary] = []
+    fetch_interval_seconds = max(
+        0.0, float(os.getenv("F_RISK_HISTORY_FETCH_INTERVAL_SECONDS", "0.4") or "0.4")
+    )
     for offset in range(days):
         day = (base - timedelta(days=offset)).strftime("%Y-%m-%d")
         summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
         if summary:
             out.append(summary)
+        if fetch_interval_seconds > 0 and offset < (days - 1):
+            time.sleep(fetch_interval_seconds)
     return out
 
 

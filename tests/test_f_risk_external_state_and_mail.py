@@ -96,6 +96,52 @@ def test_f_risk_runtime_never_writes_notion_fields(monkeypatch) -> None:
     assert payload["matched"] is True
 
 
+def test_f_risk_runtime_reuses_previous_state_when_hash_unchanged(monkeypatch) -> None:
+    summary = _summary()
+    config = SimpleNamespace(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    monkeypatch.setattr(daily_job, "aggregate_daily_expense_f", lambda *_: SimpleNamespace(count=1, total=1000, data_status="ok"))
+    monkeypatch.setattr(
+        daily_job.FRiskStateStore,
+        "get_for_date",
+        lambda self, *_: {
+            "input_hash": "reuse-hash",
+            "alert_text": "cached alert",
+            "score": 0.5,
+            "reason": "cached",
+            "matched_patterns": ["p1"],
+            "no_alert_reason": None,
+        },
+    )
+    monkeypatch.setattr(daily_job, "_build_input_hash", lambda *_: ("reuse-hash", {}, ""))
+    monkeypatch.setattr(
+        daily_job,
+        "generate_f_risk",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("generate_f_risk must not be called")),
+    )
+
+    payload = daily_job._compute_f_risk_alert_runtime(config, summary=summary, run_id="run")
+
+    assert payload["matched"] is True
+    assert payload["alert_text"] == "cached alert"
+    assert payload["reason"] == "cached"
+    assert payload["state_meta"]["reused_previous_state"] is True
+
+
+def test_f_risk_runtime_soft_fail_continues_when_generate_fails(monkeypatch) -> None:
+    summary = _summary()
+    config = SimpleNamespace(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    monkeypatch.setattr(daily_job, "aggregate_daily_expense_f", lambda *_: SimpleNamespace(count=1, total=1000, data_status="ok"))
+    monkeypatch.setattr(daily_job.FRiskStateStore, "get_for_date", lambda self, *_: {})
+    monkeypatch.setattr(daily_job, "_build_input_hash", lambda *_: ("new-hash", {}, ""))
+    monkeypatch.setattr(daily_job, "generate_f_risk", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    payload = daily_job._compute_f_risk_alert_runtime(config, summary=summary, run_id="run")
+
+    assert payload["matched"] is False
+    assert payload["skip_reason"] == "f_risk_exception"
+    assert payload["reason"] == "f_risk_failed_soft"
+
+
 def test_read_daily_log_keeps_backward_compat_with_old_f_fields(monkeypatch) -> None:
     monkeypatch.setattr(
         "publish.read_daily_log.fetch_json",
