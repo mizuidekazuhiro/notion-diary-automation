@@ -122,16 +122,16 @@
     },
     "2026-04-08": {
       "alert_text": null,
-      "generated_at": "2026-04-08T23:57:28Z",
-      "input_hash": "e84cc3e96bdced4252d4792e5daa7e02efb99b5822bd67d867aee1892be0df7a",
+      "generated_at": "2026-04-09T04:05:18Z",
+      "input_hash": "13d0c494c5259136dfc05fdac12d583afaef4e48befd8ad0afe1730b7864bb27",
       "matched_patterns": [
         "睡眠短縮が連続"
       ],
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
-      "score": 0.05426033186513614
+      "score": 0.0604699625271477
     }
   },
-  "updated_at": "2026-04-08T23:57:28Z",
+  "updated_at": "2026-04-09T04:05:18Z",
   "version": 1
 }
