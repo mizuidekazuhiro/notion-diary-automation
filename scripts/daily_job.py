@@ -1290,13 +1290,18 @@ def _compute_f_risk_alert_runtime(
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(hash_payload)
     previous_input_hash = (previous_state.get("input_hash") or "").strip() or None
     input_changed = current_input_hash != previous_input_hash
+    can_reuse_previous = bool(previous_state) and not input_changed and any(
+        key in previous_state for key in ("alert_text", "score", "reason", "matched_patterns", "no_alert_reason")
+    )
     logging.info(
-        "f_risk_runtime_input_summary source=f_risk_runtime target_date(JST)=%s run_id=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s state_store_backend=%s state_read_ok=%s branch_name=%s path=%s fallback_used=%s debug_summary=%s",
+        "f_risk_runtime_input_summary source=f_risk_runtime target_date(JST)=%s run_id=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s skip_recompute=%s reuse_previous_state=%s state_store_backend=%s state_read_ok=%s branch_name=%s path=%s fallback_used=%s debug_summary=%s",
         summary.target_date,
         run_id,
         current_input_hash,
         previous_input_hash,
         input_changed,
+        can_reuse_previous,
+        can_reuse_previous,
         store.meta.backend,
         store.meta.state_read_ok,
         store.meta.branch_name,
@@ -1311,6 +1316,33 @@ def _compute_f_risk_alert_runtime(
             default=str,
         ),
     )
+    if can_reuse_previous:
+        matched_patterns = previous_state.get("matched_patterns")
+        if not isinstance(matched_patterns, list):
+            matched_patterns = []
+        logging.info(
+            "f_risk_runtime_skip_recompute source=f_risk_runtime target_date=%s run_id=%s skip_reason=unchanged_input reuse_previous_state=true",
+            summary.target_date,
+            run_id,
+        )
+        return {
+            "matched": bool((previous_state.get("alert_text") or "").strip()),
+            "alert_text": str(previous_state.get("alert_text") or ""),
+            "score": previous_state.get("score"),
+            "reason": str(previous_state.get("reason") or "reused_from_state"),
+            "matched_patterns": [str(item) for item in matched_patterns],
+            "skip_reason": "unchanged_input_reused_state",
+            "no_alert_reason": previous_state.get("no_alert_reason"),
+            "state_meta": {
+                "backend": store.meta.backend,
+                "state_read_ok": store.meta.state_read_ok,
+                "state_write_ok": store.meta.state_write_ok,
+                "branch_name": store.meta.branch_name,
+                "path": store.meta.path,
+                "fallback_used": store.meta.fallback_used,
+                "reused_previous_state": True,
+            },
+        }
 
     try:
         result = generate_f_risk(
@@ -1319,13 +1351,39 @@ def _compute_f_risk_alert_runtime(
             target_date=summary.target_date,
         )
     except Exception as exc:  # noqa: BLE001
+        soft_fail = str(os.getenv("F_RISK_SOFT_FAIL", "true")).strip().lower() not in {"0", "false", "no", "off"}
         logging.exception(
             "phase_c_f_risk_failed target_date(JST)=%s run_id=%s reason=%s",
             summary.target_date,
             run_id,
             str(exc),
         )
-        raise
+        if not soft_fail:
+            raise
+        logging.info(
+            "phase_c_f_risk_continue target_date(JST)=%s run_id=%s continue=true f_risk_soft_fail=%s",
+            summary.target_date,
+            run_id,
+            soft_fail,
+        )
+        return {
+            "matched": False,
+            "alert_text": "",
+            "score": None,
+            "reason": "f_risk_failed_soft",
+            "matched_patterns": [],
+            "skip_reason": "f_risk_exception",
+            "no_alert_reason": type(exc).__name__,
+            "state_meta": {
+                "backend": store.meta.backend,
+                "state_read_ok": store.meta.state_read_ok,
+                "state_write_ok": store.meta.state_write_ok,
+                "branch_name": store.meta.branch_name,
+                "path": store.meta.path,
+                "fallback_used": store.meta.fallback_used,
+                "reused_previous_state": False,
+            },
+        }
     if result.skip_reason:
         logging.info(
             "[FRisk] source=f_risk_runtime target_date=%s skip_reason=%s state_store_backend=%s risk_matched=false score=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
@@ -1379,6 +1437,7 @@ def _compute_f_risk_alert_runtime(
             "branch_name": store.meta.branch_name,
             "path": store.meta.path,
             "fallback_used": store.meta.fallback_used,
+            "reused_previous_state": False,
         },
     }
 

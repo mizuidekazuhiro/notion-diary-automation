@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
+import email.utils
 import json
+import logging
+import os
+import random
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -24,6 +30,18 @@ _RETRY = Retry(
 )
 
 _SESSION: Optional[requests.Session] = None
+
+FETCH_RETRY_MAX_RETRIES = max(0, int(os.getenv("HTTP_FETCH_MAX_RETRIES", "5") or "5"))
+FETCH_RETRY_BACKOFF_BASE_SECONDS = max(
+    0.0, float(os.getenv("HTTP_FETCH_BACKOFF_BASE_SECONDS", "2") or "2")
+)
+FETCH_RETRY_BACKOFF_MAX_SECONDS = max(
+    FETCH_RETRY_BACKOFF_BASE_SECONDS,
+    float(os.getenv("HTTP_FETCH_BACKOFF_MAX_SECONDS", "60") or "60"),
+)
+FETCH_RETRY_JITTER_MAX_SECONDS = max(
+    0.0, float(os.getenv("HTTP_FETCH_JITTER_MAX_SECONDS", "1") or "1")
+)
 
 
 def _mask_headers(headers: Dict[str, str]) -> Dict[str, str]:
@@ -92,18 +110,86 @@ def _session() -> requests.Session:
     return _SESSION
 
 
+def _parse_retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    if stripped.isdigit():
+        return max(0.0, float(stripped))
+    try:
+        retry_at = email.utils.parsedate_to_datetime(stripped)
+    except (TypeError, ValueError):
+        return None
+    if retry_at is None:
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=dt.timezone.utc)
+    delta = (retry_at - dt.datetime.now(dt.timezone.utc)).total_seconds()
+    return max(0.0, delta)
+
+
+def _compute_retry_wait_seconds(response: requests.Response, retry_count: int) -> float:
+    retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
+    if retry_after is not None:
+        return retry_after
+    exp_backoff = FETCH_RETRY_BACKOFF_BASE_SECONDS * (2 ** max(0, retry_count - 1))
+    jitter = random.uniform(0.0, FETCH_RETRY_JITTER_MAX_SECONDS)
+    return min(FETCH_RETRY_BACKOFF_MAX_SECONDS, exp_backoff + jitter)
+
+
 def fetch_json(url: str, bearer_token: Optional[str]) -> Dict[str, Any]:
     headers: Dict[str, str] = {}
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
 
-    try:
-        resp = _session().get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.RequestException as e:
-        # どのURLで落ちたかを必ず残す（Actionsログで原因特定しやすい）
-        raise RuntimeError(f"fetch_json failed: url={url}") from e
+    for retry_count in range(FETCH_RETRY_MAX_RETRIES + 1):
+        try:
+            resp = _session().get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
+        except requests.exceptions.RequestException as e:
+            if retry_count < FETCH_RETRY_MAX_RETRIES:
+                wait_seconds = min(
+                    FETCH_RETRY_BACKOFF_MAX_SECONDS,
+                    FETCH_RETRY_BACKOFF_BASE_SECONDS * (2 ** retry_count)
+                    + random.uniform(0.0, FETCH_RETRY_JITTER_MAX_SECONDS),
+                )
+                logging.warning(
+                    "fetch_json retrying request_exception retry=%s/%s wait_seconds=%.3f url=%s error=%s",
+                    retry_count + 1,
+                    FETCH_RETRY_MAX_RETRIES,
+                    wait_seconds,
+                    url,
+                    type(e).__name__,
+                )
+                time.sleep(wait_seconds)
+                continue
+            raise RuntimeError(f"fetch_json failed: url={url}") from e
+
+        status = resp.status_code
+        if status < 400:
+            return resp.json()
+
+        retriable_status = status == 429 or 500 <= status <= 599
+        if retriable_status and retry_count < FETCH_RETRY_MAX_RETRIES:
+            wait_seconds = _compute_retry_wait_seconds(resp, retry_count + 1)
+            logging.warning(
+                "fetch_json retrying status_code=%s retry=%s/%s wait_seconds=%.3f url=%s",
+                status,
+                retry_count + 1,
+                FETCH_RETRY_MAX_RETRIES,
+                wait_seconds,
+                url,
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"fetch_json failed: url={url}") from e
+
+    raise RuntimeError(f"fetch_json failed: url={url}")
 
 
 def post_json(url: str, payload: Dict[str, Any], bearer_token: Optional[str]) -> Dict[str, Any]:
