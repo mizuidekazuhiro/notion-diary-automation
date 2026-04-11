@@ -141,8 +141,19 @@
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
       "score": 0.7357608658825758
+    },
+    "2026-04-10": {
+      "alert_text": null,
+      "generated_at": "2026-04-11T12:16:57Z",
+      "input_hash": "8adee37fce8b2dbb0ce1e1df9425ab0a047efa43a0a3a3dc473e4e3ec4da5c30",
+      "matched_patterns": [
+        "睡眠短縮が連続"
+      ],
+      "no_alert_reason": "case_similarity_below_medium_threshold",
+      "reason": "no_alert:case_similarity_below_medium_threshold",
+      "score": 0.7672744861412504
     }
   },
-  "updated_at": "2026-04-09T23:20:06Z",
+  "updated_at": "2026-04-11T12:16:57Z",
   "version": 1
 }
