@@ -493,12 +493,12 @@ def _parse_json_list(raw_text: object) -> list[str]:
 
 def _persisted_label_required_fields_present(summary: DailyLogSummary) -> bool:
     required = [
-        summary.notes_label_input_hash,
-        summary.notes_label_generated_at,
-        summary.notes_label_model,
-        summary.notes_sentiment_label,
-        summary.notes_flags_json,
-        summary.notes_tags_json,
+        getattr(summary, "notes_label_input_hash", None),
+        getattr(summary, "notes_label_generated_at", None),
+        getattr(summary, "notes_label_model", None),
+        getattr(summary, "notes_sentiment_label", None),
+        getattr(summary, "notes_flags_json", None),
+        getattr(summary, "notes_tags_json", None),
     ]
     return all(bool(str(v or "").strip()) for v in required)
 
@@ -510,29 +510,36 @@ def has_persisted_note_label(summary: DailyLogSummary) -> bool:
 def load_persisted_note_label(summary: DailyLogSummary) -> Optional[NoteLabel]:
     if not _persisted_label_required_fields_present(summary):
         return None
-    notes_text = (summary.notes or "").strip()
+    notes_text = str(getattr(summary, "notes", "") or "").strip()
+    target_date = str(getattr(summary, "target_date", "") or "")
+    if not target_date:
+        return None
     if not notes_text:
-        return neutral_label(summary.target_date)
+        return neutral_label(target_date)
     expected_hash = build_notes_label_input_hash(notes_text)
-    actual_hash = str(summary.notes_label_input_hash or "").strip()
+    actual_hash = str(getattr(summary, "notes_label_input_hash", "") or "").strip()
     if expected_hash != actual_hash:
         return None
-    flags = _parse_json_dict(summary.notes_flags_json)
-    tags = _parse_json_list(summary.notes_tags_json)
-    sentiment_score = int(summary.notes_sentiment_score or 0)
+    flags = _parse_json_dict(getattr(summary, "notes_flags_json", None))
+    tags = _parse_json_list(getattr(summary, "notes_tags_json", None))
+    sentiment_score = int(getattr(summary, "notes_sentiment_score", 0) or 0)
+    notes_fatigue_flag = getattr(summary, "notes_fatigue_flag", None)
+    notes_stress_flag = getattr(summary, "notes_stress_flag", None)
+    notes_social_load_flag = getattr(summary, "notes_social_load_flag", None)
+    notes_sleep_issue_flag = getattr(summary, "notes_sleep_issue_flag", None)
     payload = {
         "tags": tags,
         "flags": {
-            "fatigue": bool(summary.notes_fatigue_flag if summary.notes_fatigue_flag is not None else flags.get("fatigue")),
-            "stress": bool(summary.notes_stress_flag if summary.notes_stress_flag is not None else flags.get("stress")),
-            "social_load": bool(summary.notes_social_load_flag if summary.notes_social_load_flag is not None else flags.get("social_load")),
-            "sleep_issue": bool(summary.notes_sleep_issue_flag if summary.notes_sleep_issue_flag is not None else flags.get("sleep_issue")),
+            "fatigue": bool(notes_fatigue_flag if notes_fatigue_flag is not None else flags.get("fatigue")),
+            "stress": bool(notes_stress_flag if notes_stress_flag is not None else flags.get("stress")),
+            "social_load": bool(notes_social_load_flag if notes_social_load_flag is not None else flags.get("social_load")),
+            "sleep_issue": bool(notes_sleep_issue_flag if notes_sleep_issue_flag is not None else flags.get("sleep_issue")),
         },
         "meta": {"parse_quality": "medium"},
-        "sentiment": str(summary.notes_sentiment_label or "unknown"),
+        "sentiment": str(getattr(summary, "notes_sentiment_label", "unknown") or "unknown"),
         "sentiment_score": sentiment_score,
     }
-    return _normalize_result(summary.target_date, payload)
+    return _normalize_result(target_date, payload)
 
 
 def build_notes_label_persistence_payload(*, summary: DailyLogSummary, label: NoteLabel, model: str) -> dict[str, Any]:

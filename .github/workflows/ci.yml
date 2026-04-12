@@ -1,0 +1,40 @@
+name: CI - Test & Requirements Gate
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "fix/**"
+      - "chore/**"
+  pull_request:
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Verify repository requirements (strict)
+        env:
+          CI_STRICT: "1"
+          RELATIONS_TS_PATH: workers/src/application/daily_log_task_relations.ts
+        run: python scripts/verify_requirements.py
+
+      - name: Verify workflow contracts
+        run: python scripts/workflow_contracts.py
+
+      - name: Run pytest
+        run: pytest -q

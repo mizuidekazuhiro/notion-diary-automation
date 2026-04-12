@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, List, Optional
@@ -40,6 +40,7 @@ from scripts.sleep_condition_generator import (
 from scripts.sleep_utils import resolve_sleep_for_target_date
 from scripts.weather_client import fetch_weather_for_date
 from scripts.openai_chat_utils import chat_completion
+from scripts.daily_job_phase_c import PhaseCDeps, run_phase_c
 from scripts.note_batch_labeler import (
     build_notes_label_persistence_payload,
     build_notes_label_input_hash,
@@ -74,8 +75,6 @@ WEATHER_PROVIDER = "open-meteo-jma"
 class Config:
     mail_from: str
     mail_to: List[str]
-    mail_cc: List[str]
-    mail_bcc: List[str]
     gmail_app_password: str
     tasks_closed_url: str
     daily_log_upsert_url: str
@@ -87,6 +86,8 @@ class Config:
     diary_mark_notified_url: str
     bearer_token: Optional[str]
     openai_model: str
+    mail_cc: List[str] = field(default_factory=list)
+    mail_bcc: List[str] = field(default_factory=list)
 
 
 WORKER_EXECUTE_BASE_PATH = "/execute/api/daily_log"
@@ -1583,80 +1584,28 @@ def _notify_phase_c(
 
 
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
-    logging.info("phase_c_start target_date(JST)=%s run_id=%s", target_date, run_id)
-    summary = _refresh_daily_log_summary(config, target_date)
-    if not summary:
-        logging.info("phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]", target_date, run_id, False)
-        return
-    def _run_optional_enrichment(step_name: str, fn, current_summary: "DailyLogSummary") -> "DailyLogSummary":
-        try:
-            return fn(config, summary=current_summary, run_id=run_id)
-        except Exception as exc:  # noqa: BLE001
-            logging.exception(
-                "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
-                current_summary.target_date,
-                run_id,
-                step_name,
-                exc.__class__.__name__,
-                str(exc),
-                step_name,
-            )
-            return current_summary
-
-    summary = _run_optional_enrichment("weather", _generate_and_save_weather, summary)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    try:
-        expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
-    except Exception as exc:  # noqa: BLE001
-        logging.exception(
-            "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=expense_f exception_class=%s exception_message=%s failing_stage=expense_f",
-            summary.target_date,
-            run_id,
-            exc.__class__.__name__,
-            str(exc),
-        )
-        expense_f_alert = {"matched": False, "title": "望ましくない支出（Fプロパティ）", "summary": "", "reasons": [], "debug": {"error": str(exc)}}
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("sleep", _generate_and_save_sleep_insights, summary)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("notes_label", _ensure_notes_label_persisted, summary)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("f_risk", _generate_and_save_f_risk, summary)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _generate_and_save_today_advice(config, summary=summary, run_id=run_id)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-    summary = _generate_and_save_diary(config, summary=summary, run_id=run_id, reloaded_after_sleep_save=True)
-    summary = _refresh_daily_log_summary(config, summary.target_date) or summary
-
-    if not (summary.diary or "").strip():
-        logging.info(
-            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=no_daily_log",
-            summary.target_date,
-            run_id,
-        )
-        return
-    if expense_f_alert.get("matched"):
-        logging.info(
-            "phase_c_notify_expense_f_alert target_date(JST)=%s run_id=%s matched=%s reasons=%s",
-            summary.target_date,
-            run_id,
-            expense_f_alert.get("matched"),
-            (expense_f_alert.get("reasons") or [])[:3],
-        )
-    sent = _notify_phase_c(config, summary=summary, run_id=run_id)
-    if sent:
-        post_json(
+    deps = PhaseCDeps(
+        refresh_summary=_refresh_daily_log_summary,
+        run_weather=lambda summary: _generate_and_save_weather(config, summary=summary, run_id=run_id),
+        run_expense_f=lambda summary: _compute_expense_f_alert(summary=summary, run_id=run_id),
+        run_sleep=lambda summary: _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id),
+        run_notes_label=lambda summary: _ensure_notes_label_persisted(config, summary=summary, run_id=run_id),
+        run_f_risk=lambda summary: _generate_and_save_f_risk(config, summary=summary, run_id=run_id),
+        run_today_advice=lambda summary: _generate_and_save_today_advice(config, summary=summary, run_id=run_id),
+        run_diary=lambda summary: _generate_and_save_diary(
+            config,
+            summary=summary,
+            run_id=run_id,
+            reloaded_after_sleep_save=True,
+        ),
+        run_notify=lambda summary: _notify_phase_c(config, summary=summary, run_id=run_id),
+        mark_notified=lambda target: post_json(
             config.diary_mark_notified_url,
-            {"target_date": summary.target_date},
+            {"target_date": target},
             config.bearer_token,
-        )
-        logging.info(
-            "phase_c_notify_sent target_date(JST)=%s run_id=%s notified_updated=%s",
-            summary.target_date,
-            run_id,
-            True,
-        )
-    logging.info("phase_c_end target_date(JST)=%s run_id=%s", summary.target_date, run_id)
+        ),
+    )
+    run_phase_c(config, target_date=target_date, run_id=run_id, deps=deps)
 
 
 def parse_args() -> argparse.Namespace:

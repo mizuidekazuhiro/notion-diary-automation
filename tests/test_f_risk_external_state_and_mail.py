@@ -180,6 +180,7 @@ def test_hydrate_histories_with_expenses_db_labels(monkeypatch) -> None:
 
 
 def test_f_risk_state_store_local_fallback_read_write(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     monkeypatch.chdir(tmp_path)

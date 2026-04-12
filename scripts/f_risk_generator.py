@@ -192,6 +192,11 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "skipped_reason": None,
             "explanation_points": explanation_points,
             "no_alert_reason": None if risk_matched else (
+                "case_similarity_weak"
+                if sim_total < medium_threshold
+                else "case_similarity_medium_but_rule_insufficient"
+            ),
+            "no_alert_reason_detail": None if risk_matched else (
                 "case_similarity_below_medium_threshold"
                 if sim_total < medium_threshold
                 else "case_similarity_medium_but_rule_insufficient"
