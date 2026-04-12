@@ -152,8 +152,20 @@
       "no_alert_reason": "case_similarity_below_medium_threshold",
       "reason": "no_alert:case_similarity_below_medium_threshold",
       "score": 0.7672744861412504
+    },
+    "2026-04-11": {
+      "alert_text": null,
+      "generated_at": "2026-04-12T02:01:48Z",
+      "input_hash": "0e46a0b6facd7055fd1fd2a7d7310aed2a2993262589cb2a4ac1515a74c25f84",
+      "matched_patterns": [
+        "睡眠短縮が連続",
+        "週末バイアス"
+      ],
+      "no_alert_reason": "case_similarity_below_medium_threshold",
+      "reason": "no_alert:case_similarity_below_medium_threshold",
+      "score": 0.6047513589310429
     }
   },
-  "updated_at": "2026-04-11T12:16:57Z",
+  "updated_at": "2026-04-12T02:01:49Z",
   "version": 1
 }
