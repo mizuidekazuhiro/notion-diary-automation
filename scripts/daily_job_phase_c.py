@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class PhaseCDeps:
+    refresh_summary: Callable[[Any, str], Any | None]
+    run_weather: Callable[[Any], Any]
+    run_expense_f: Callable[[Any], dict[str, Any]]
+    run_sleep: Callable[[Any], Any]
+    run_notes_label: Callable[[Any], Any]
+    run_f_risk: Callable[[Any], Any]
+    run_today_advice: Callable[[Any], Any]
+    run_diary: Callable[[Any], Any]
+    run_notify: Callable[[Any], bool]
+    mark_notified: Callable[[str], None]
+
+
+def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: Any, run_id: str) -> Any:
+    try:
+        return fn(summary)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception(
+            "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
+            getattr(summary, "target_date", "unknown"),
+            run_id,
+            step_name,
+            exc.__class__.__name__,
+            str(exc),
+            step_name,
+        )
+        return summary
+
+
+def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps) -> None:
+    logging.info("phase_c_start target_date(JST)=%s run_id=%s", target_date, run_id)
+    summary = deps.refresh_summary(config, target_date)
+    if not summary:
+        logging.info(
+            "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]",
+            target_date,
+            run_id,
+            False,
+        )
+        return
+
+    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id)
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+
+    try:
+        expense_f_alert = deps.run_expense_f(summary)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception(
+            "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=expense_f exception_class=%s exception_message=%s failing_stage=expense_f",
+            summary.target_date,
+            run_id,
+            exc.__class__.__name__,
+            str(exc),
+        )
+        expense_f_alert = {
+            "matched": False,
+            "title": "望ましくない支出（Fプロパティ）",
+            "summary": "",
+            "reasons": [],
+            "debug": {"error": str(exc)},
+        }
+
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id)
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id)
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id)
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+    summary = deps.run_today_advice(summary)
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+    summary = deps.run_diary(summary)
+    summary = deps.refresh_summary(config, summary.target_date) or summary
+
+    if not (summary.diary or "").strip():
+        logging.info(
+            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=no_daily_log",
+            summary.target_date,
+            run_id,
+        )
+        return
+
+    if expense_f_alert.get("matched"):
+        logging.info(
+            "phase_c_notify_expense_f_alert target_date(JST)=%s run_id=%s matched=%s reasons=%s",
+            summary.target_date,
+            run_id,
+            expense_f_alert.get("matched"),
+            (expense_f_alert.get("reasons") or [])[:3],
+        )
+
+    sent = deps.run_notify(summary)
+    if sent:
+        deps.mark_notified(summary.target_date)
+        logging.info(
+            "phase_c_notify_sent target_date(JST)=%s run_id=%s notified_updated=%s",
+            summary.target_date,
+            run_id,
+            True,
+        )
+
+    logging.info("phase_c_end target_date(JST)=%s run_id=%s", summary.target_date, run_id)

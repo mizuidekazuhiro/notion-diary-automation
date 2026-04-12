@@ -1,0 +1,25 @@
+export const ROUTES = {
+  INBOX: "/api/inbox",
+  TASKS: "/api/tasks",
+  TASKS_CLOSED: "/api/tasks/closed",
+  DAILY_LOG_READ: "/api/daily_log",
+  DAILY_LOG_UPSERT: "/api/daily_log/upsert",
+  DAILY_LOG_CONFIRM_UPSERT: "/confirm/daily_log/upsert",
+  DAILY_LOG_EXECUTE_UPSERT: "/execute/api/daily_log/upsert",
+  DAILY_LOG_INGEST_HEALTH: "/execute/api/daily_log/ingest_health",
+  DAILY_LOG_INGEST_PHOTOS: "/execute/api/daily_log/ingest_photos",
+  DAILY_LOG_INGEST_DAILY_LOG: "/execute/api/daily_log/ingest_daily_log",
+  DAILY_LOG_INGEST_EXPENSES: "/execute/api/daily_log/ingest_expenses",
+  DAILY_LOG_INGEST_LOCATION: "/execute/api/daily_log/ingest_location",
+  DAILY_LOG_GENERATE_DIARY: "/execute/api/daily_log/generate_diary",
+  DAILY_LOG_MARK_DIARY_NOTIFIED: "/execute/api/daily_log/mark_diary_notified",
+  DAILY_LOG_ENSURE: "/execute/api/daily_log/ensure",
+  MOOD_NOTES_CONFIRM: "/confirm/mood-notes",
+  MOOD_NOTES_EXECUTE: "/execute/mood-notes",
+  MOOD_NOTES_INGEST: "/ingest/mood-notes",
+  TASKS_PROMOTE_CONFIRM: "/confirm/tasks/promote",
+  TASKS_PROMOTE_EXECUTE: "/execute/tasks/promote",
+  HEALTH: "/health",
+} as const;
+
+export type RoutePath = (typeof ROUTES)[keyof typeof ROUTES];

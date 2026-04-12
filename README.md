@@ -6,12 +6,17 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 
 | Order | Workflow name | Trigger | 実責務 |
 | --- | --- | --- | --- |
+| 00 | `CI - Test & Requirements Gate` | `push` / `pull_request` | pytest + requirements/workflow contract checks（deployの前提） |
 | 01 | `Daily Diary 01 - Ingest Daily Log` | `workflow_dispatch` | Phase A: Daily Log の ensure / ingest |
 | 02 | `Daily Diary 02 - Generate Location Summary` | `workflow_run` from 01 / manual | Phase B: `Location summary (GPT)` 更新 |
 | 03 | `Daily Diary 03 - Generate Diary & Sleep Insights` | `workflow_run` from 02 / manual | Phase C: sleep insights → Today advice → Diary → notify 判定 |
 | 04 | `Daily Diary 04 - Publish Daily Mail` | `workflow_run` from 03 / manual | Phase D: 朝メール配信 |
 
 `workflow_run.workflows` は上記 `name:` と一致しています。README の名称・YAML の `name:`・依存先は同じです。
+
+補足:
+- `Deploy Cloudflare Workers` は `main` ブランチで `CI - Test & Requirements Gate` が成功した後にのみ自動実行されます（`workflow_run` 連携）。
+- 手動 `workflow_dispatch` でも deploy できますが、通常運用は CI 成功後の自動 deploy を前提にします。
 
 ## Phase ごとの最終仕様
 

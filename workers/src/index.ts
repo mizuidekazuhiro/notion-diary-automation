@@ -32,6 +32,8 @@ import {
   TaskPropertyNameEnv,
 } from "./config/task_property_names";
 import { TITLE_PROPERTIES } from "./config/title_properties";
+import { dispatchRoute } from "./http/router";
+import { ROUTES } from "./http/routes";
 
 interface Env {
   NOTION_TOKEN: string;
@@ -5010,73 +5012,47 @@ export default {
     const path = normalizePath(url.pathname);
 
     try {
-      if (path === "/api/inbox") {
-        return await handleInbox(request, env);
-      }
-      if (path === "/api/tasks") {
-        return await handleTasks(request, env);
-      }
-      if (path === "/api/tasks/closed") {
-        return await handleTasksClosed(request, env);
-      }
-      if (path === "/api/daily_log") {
-        return await handleDailyLogRead(request, env);
-      }
-      if (path === "/api/daily_log/upsert") {
-        return new Response(
-          JSON.stringify({
-            error: "use /execute/api/daily_log/upsert for updates",
-          }),
-          { status: 405, headers: jsonHeaders },
-        );
-      }
-      if (path === "/confirm/daily_log/upsert" && request.method === "GET") {
-        return await handleDailyLogConfirm(request);
-      }
-      if (path === "/execute/api/daily_log/upsert") {
-        return await handleDailyLogExecute(request, env);
-      }
-      if (path === "/execute/api/daily_log/ingest_health") {
-        return await handleDailyLogHealthIngest(request, env);
-      }
-      if (path === "/execute/api/daily_log/ingest_photos") {
-        return await handleDailyLogPhotosIngest(request, env);
-      }
-      if (path === "/execute/api/daily_log/ingest_daily_log") {
-        return await handleDailyLogIngest(request, env);
-      }
-      if (path === "/execute/api/daily_log/ingest_expenses") {
-        return await handleDailyLogExpensesIngest(request, env);
-      }
-      if (path === "/execute/api/daily_log/ingest_location") {
-        return await handleDailyLogLocationIngest(request, env);
-      }
-      if (path === "/execute/api/daily_log/generate_diary") {
-        return await handleDailyLogGenerateDiary(request, env);
-      }
-      if (path === "/execute/api/daily_log/mark_diary_notified") {
-        return await handleDailyLogMarkDiaryNotified(request, env);
-      }
-      if (path === "/confirm/mood-notes") {
-        return await handleMoodNotesConfirm(request, env);
-      }
-      if (path === "/execute/mood-notes") {
-        return await handleMoodNotesExecute(request, env);
-      }
-      if (path === "/ingest/mood-notes") {
-        return await handleMoodNotesIngest(request, env);
-      }
-      if (path === "/execute/api/daily_log/ensure") {
-        return await handleDailyLogEnsure(request, env);
-      }
-      if (path === "/confirm/tasks/promote" && request.method === "GET") {
-        return await handleTaskPromoteConfirm(request);
-      }
-      if (path === "/execute/tasks/promote") {
-        return await handleTaskPromoteExecute(request, env);
-      }
-      if (path === "/health") {
-        return healthCheck();
+      const routed = await dispatchRoute(path, {
+        [ROUTES.INBOX]: () => handleInbox(request, env),
+        [ROUTES.TASKS]: () => handleTasks(request, env),
+        [ROUTES.TASKS_CLOSED]: () => handleTasksClosed(request, env),
+        [ROUTES.DAILY_LOG_READ]: () => handleDailyLogRead(request, env),
+        [ROUTES.DAILY_LOG_UPSERT]: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: "use /execute/api/daily_log/upsert for updates",
+              }),
+              { status: 405, headers: jsonHeaders },
+            ),
+          ),
+        [ROUTES.DAILY_LOG_CONFIRM_UPSERT]: () =>
+          request.method === "GET"
+            ? handleDailyLogConfirm(request)
+            : Promise.resolve(methodNotAllowed("use GET /confirm/daily_log/upsert")),
+        [ROUTES.DAILY_LOG_EXECUTE_UPSERT]: () => handleDailyLogExecute(request, env),
+        [ROUTES.DAILY_LOG_INGEST_HEALTH]: () => handleDailyLogHealthIngest(request, env),
+        [ROUTES.DAILY_LOG_INGEST_PHOTOS]: () => handleDailyLogPhotosIngest(request, env),
+        [ROUTES.DAILY_LOG_INGEST_DAILY_LOG]: () => handleDailyLogIngest(request, env),
+        [ROUTES.DAILY_LOG_INGEST_EXPENSES]: () => handleDailyLogExpensesIngest(request, env),
+        [ROUTES.DAILY_LOG_INGEST_LOCATION]: () => handleDailyLogLocationIngest(request, env),
+        [ROUTES.DAILY_LOG_GENERATE_DIARY]: () => handleDailyLogGenerateDiary(request, env),
+        [ROUTES.DAILY_LOG_MARK_DIARY_NOTIFIED]: () =>
+          handleDailyLogMarkDiaryNotified(request, env),
+        [ROUTES.MOOD_NOTES_CONFIRM]: () => handleMoodNotesConfirm(request, env),
+        [ROUTES.MOOD_NOTES_EXECUTE]: () => handleMoodNotesExecute(request, env),
+        [ROUTES.MOOD_NOTES_INGEST]: () => handleMoodNotesIngest(request, env),
+        [ROUTES.DAILY_LOG_ENSURE]: () => handleDailyLogEnsure(request, env),
+        [ROUTES.TASKS_PROMOTE_CONFIRM]: () =>
+          request.method === "GET"
+            ? handleTaskPromoteConfirm(request)
+            : Promise.resolve(methodNotAllowed("use GET /confirm/tasks/promote")),
+        [ROUTES.TASKS_PROMOTE_EXECUTE]: () => handleTaskPromoteExecute(request, env),
+        [ROUTES.HEALTH]: () => Promise.resolve(healthCheck()),
+      });
+
+      if (routed) {
+        return routed;
       }
 
       return notFound();
