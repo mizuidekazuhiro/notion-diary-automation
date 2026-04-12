@@ -70,6 +70,9 @@ def _location_query_debug_base(*, time_prop: str, place_prop: str, token: str, d
         "location_log_db_id_present": bool(db_id),
         "effective_time_prop": time_prop,
         "effective_place_prop": place_prop,
+        "effective_lat_prop": "Latitude (raw)",
+        "effective_lon_prop": "Longitude (raw)",
+        # backward compatibility for older debug consumers
         "resolved_lat_prop": "Latitude (raw)",
         "resolved_lon_prop": "Longitude (raw)",
         "latest_selected_page_id": None,
@@ -121,7 +124,7 @@ def _query_location_log_place(now: datetime) -> tuple[dict[str, Any], dict[str, 
     except Exception as exc:  # noqa: BLE001
         debug.update(
             {
-                "query_status": "query_failed",
+                "query_status": "notion_error",
                 "weather_status": "skipped",
                 "query_exception_class": exc.__class__.__name__,
                 "query_exception_message": str(exc),
