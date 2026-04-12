@@ -62,17 +62,27 @@ def build_sleep_insight_context(
     resolved_duration_hours = _safe_float(getattr(today_summary, "resolved_sleep_duration_hours", None))
     resolved_duration_text = _safe_text(getattr(today_summary, "resolved_sleep_duration_text", None))
 
-    if resolved_duration_min is not None:
-        canonical_today = resolve_canonical_sleep_metrics(
-            today_summary.sleep_start,
-            today_summary.sleep_end,
+    resolved_duration_source = _safe_text(getattr(today_summary, "sleep_duration_source", None))
+    if (
+        resolved_duration_min is not None
+        or resolved_duration_hours is not None
+        or resolved_duration_text is not None
+        or resolved_duration_source is not None
+    ):
+        canonical_from_resolved = resolve_canonical_sleep_metrics(
+            None,
+            None,
             resolved_duration_min,
         )
         canonical_today = dataclasses.replace(
-            canonical_today,
-            resolved_sleep_duration_hours=resolved_duration_hours if resolved_duration_hours is not None else canonical_today.resolved_sleep_duration_hours,
-            resolved_sleep_duration_text=resolved_duration_text or canonical_today.resolved_sleep_duration_text,
-            sleep_duration_source=_safe_text(getattr(today_summary, "sleep_duration_source", None)) or canonical_today.sleep_duration_source,
+            canonical_from_resolved,
+            resolved_sleep_duration_hours=(
+                resolved_duration_hours
+                if resolved_duration_hours is not None
+                else canonical_from_resolved.resolved_sleep_duration_hours
+            ),
+            resolved_sleep_duration_text=resolved_duration_text or canonical_from_resolved.resolved_sleep_duration_text,
+            sleep_duration_source=resolved_duration_source or canonical_from_resolved.sleep_duration_source,
         )
     else:
         canonical_today = resolve_canonical_sleep_metrics(
@@ -343,8 +353,8 @@ def _deterministic_sleep_fallback(context: SleepInsightContext) -> dict[str, str
 
 
 def _validate_sleep_outputs(result: dict[str, str], context: SleepInsightContext) -> tuple[bool, str | None]:
-    canonical_min = context.today_values.get("canonical_sleep_duration_min")
     canonical_text = context.today_values.get("canonical_sleep_duration_text")
+    canonical_min = context.today_values.get("canonical_sleep_duration_min")
     for key in ("sleep_analysis_jp", "today_condition_forecast_jp"):
         value = result.get(key)
         validation = validate_generated_sleep_text(
@@ -435,7 +445,11 @@ def generate_sleep_insights(
             return result
         last_validation_error = found_text
         if attempt < max_attempts - 1:
-            logging.warning("sleep_text_consistency_retry attempt=%s", attempt + 1)
+            logging.warning(
+                "sleep_text_consistency_retry attempt=%s fail_reason=duration_text_mismatch found_duration_text=%s",
+                attempt + 1,
+                found_text,
+            )
             continue
     logging.warning("sleep_text_consistency_fallback reason=validation_failed found_duration_text=%s", last_validation_error)
     return _deterministic_sleep_fallback(context)
