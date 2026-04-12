@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, List, Optional
@@ -75,8 +75,6 @@ WEATHER_PROVIDER = "open-meteo-jma"
 class Config:
     mail_from: str
     mail_to: List[str]
-    mail_cc: List[str]
-    mail_bcc: List[str]
     gmail_app_password: str
     tasks_closed_url: str
     daily_log_upsert_url: str
@@ -88,6 +86,8 @@ class Config:
     diary_mark_notified_url: str
     bearer_token: Optional[str]
     openai_model: str
+    mail_cc: List[str] = field(default_factory=list)
+    mail_bcc: List[str] = field(default_factory=list)
 
 
 WORKER_EXECUTE_BASE_PATH = "/execute/api/daily_log"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -57,11 +58,29 @@ def build_sleep_insight_context(
     history_summaries: Sequence[DailyLogSummary],
 ) -> SleepInsightContext:
     # Fields sent to Sleep GPT as raw "today_values".
-    canonical_today = resolve_canonical_sleep_metrics(
-        today_summary.sleep_start,
-        today_summary.sleep_end,
-        today_summary.sleep_duration_min,
-    )
+    resolved_duration_min = _safe_float(getattr(today_summary, "resolved_sleep_duration_min", None))
+    resolved_duration_hours = _safe_float(getattr(today_summary, "resolved_sleep_duration_hours", None))
+    resolved_duration_text = _safe_text(getattr(today_summary, "resolved_sleep_duration_text", None))
+
+    if resolved_duration_min is not None:
+        canonical_today = resolve_canonical_sleep_metrics(
+            today_summary.sleep_start,
+            today_summary.sleep_end,
+            resolved_duration_min,
+        )
+        canonical_today = dataclasses.replace(
+            canonical_today,
+            resolved_sleep_duration_hours=resolved_duration_hours if resolved_duration_hours is not None else canonical_today.resolved_sleep_duration_hours,
+            resolved_sleep_duration_text=resolved_duration_text or canonical_today.resolved_sleep_duration_text,
+            sleep_duration_source=_safe_text(getattr(today_summary, "sleep_duration_source", None)) or canonical_today.sleep_duration_source,
+        )
+    else:
+        canonical_today = resolve_canonical_sleep_metrics(
+            today_summary.sleep_start,
+            today_summary.sleep_end,
+            today_summary.sleep_duration_min,
+        )
+
     today_duration = canonical_today.resolved_sleep_duration_min
     today_values = {
         "sleep_start": _safe_text(today_summary.sleep_start),
@@ -375,7 +394,9 @@ def generate_sleep_insights(
         input_summary=_build_sleep_advice_debug_summary(context=context),
         prompt_text=prompt_text,
     )
-    for attempt in range(2):
+    max_attempts = 2
+    last_validation_error: str | None = None
+    for attempt in range(max_attempts):
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={
@@ -409,11 +430,14 @@ def generate_sleep_insights(
             result["sleep_analysis_jp"] = sleep_analysis
         if today_forecast:
             result["today_condition_forecast_jp"] = today_forecast
-        is_valid, _ = _validate_sleep_outputs(result, context)
+        is_valid, found_text = _validate_sleep_outputs(result, context)
         if is_valid:
             return result
-        logging.warning("sleep_text_consistency_retry attempt=%s", attempt + 1)
-    logging.warning("sleep_text_consistency_fallback reason=validation_failed")
+        last_validation_error = found_text
+        if attempt < max_attempts - 1:
+            logging.warning("sleep_text_consistency_retry attempt=%s", attempt + 1)
+            continue
+    logging.warning("sleep_text_consistency_fallback reason=validation_failed found_duration_text=%s", last_validation_error)
     return _deterministic_sleep_fallback(context)
 
 
