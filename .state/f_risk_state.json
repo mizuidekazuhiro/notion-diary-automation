@@ -175,8 +175,17 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.11471276300019172
+    },
+    "2026-04-13": {
+      "alert_text": null,
+      "generated_at": "2026-04-13T23:17:10Z",
+      "input_hash": "5aacc10787796354f3342a054eb7e98acd166f50f7b5bf2227b4fb6f1aacd927",
+      "matched_patterns": [],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.09184968794787414
     }
   },
-  "updated_at": "2026-04-12T23:28:37Z",
+  "updated_at": "2026-04-13T23:17:11Z",
   "version": 1
 }
