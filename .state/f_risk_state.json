@@ -202,8 +202,20 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.3346845143781976
+    },
+    "2026-04-16": {
+      "alert_text": null,
+      "generated_at": "2026-04-16T23:17:58Z",
+      "input_hash": "34e26bc0e3fcc24d87c0e31ed22c17226883fa5e20efec28b77e6cc3d319a640",
+      "matched_patterns": [
+        "直近でストレス信号",
+        "脂質摂取が直近平均より高い"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.27052383633895655
     }
   },
-  "updated_at": "2026-04-15T22:39:09Z",
+  "updated_at": "2026-04-16T23:17:59Z",
   "version": 1
 }
