@@ -214,8 +214,19 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.27052383633895655
+    },
+    "2026-04-17": {
+      "alert_text": null,
+      "generated_at": "2026-04-18T03:37:17Z",
+      "input_hash": "f216ae355e283c2c080aa624cb6905eab1158f4b2ed880069be018660f777b1f",
+      "matched_patterns": [
+        "直近でストレス信号"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.5785226838576247
     }
   },
-  "updated_at": "2026-04-16T23:17:59Z",
+  "updated_at": "2026-04-18T03:37:17Z",
   "version": 1
 }
