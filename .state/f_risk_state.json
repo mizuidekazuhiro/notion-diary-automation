@@ -278,8 +278,20 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.4306332617352515
+    },
+    "2026-04-24": {
+      "alert_text": null,
+      "generated_at": "2026-04-25T09:55:35Z",
+      "input_hash": "7624e380f5823e4855b112e8cf3e1aa3259c3d0d0b9ef1305066d60709473ce1",
+      "matched_patterns": [
+        "睡眠短縮が連続",
+        "直近でストレス信号"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.39611194719152143
     }
   },
-  "updated_at": "2026-04-23T23:45:20Z",
+  "updated_at": "2026-04-25T09:55:35Z",
   "version": 1
 }
