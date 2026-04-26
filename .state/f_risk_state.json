@@ -303,8 +303,21 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 1.9740572849749323e-06
+    },
+    "2026-04-26": {
+      "alert_text": null,
+      "generated_at": "2026-04-26T23:35:44Z",
+      "input_hash": "543dbddc1ae6354989698e8a265b7f8fb3c0f5b99279efe2b0cdc4d2409a610c",
+      "matched_patterns": [
+        "睡眠短縮が連続",
+        "週末バイアス",
+        "タスク進捗が低下"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.0004311040097176356
     }
   },
-  "updated_at": "2026-04-26T11:02:45Z",
+  "updated_at": "2026-04-26T23:35:45Z",
   "version": 1
 }
