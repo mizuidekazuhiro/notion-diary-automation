@@ -37,4 +37,9 @@ jobs:
           OPENAI_MODEL: gpt-4.1-mini
           WEEKLY_REPORT_ENABLED: ${{ secrets.WEEKLY_REPORT_ENABLED }}
           WEEKLY_REPORT_SEND_HOUR_JST: ${{ secrets.WEEKLY_REPORT_SEND_HOUR_JST }}
-        run: python scripts/weekly_report.py
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python scripts/weekly_report.py --force
+          else
+            python scripts/weekly_report.py
+          fi
