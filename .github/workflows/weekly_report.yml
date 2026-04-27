@@ -25,6 +25,7 @@ jobs:
 
       - name: Send weekly report
         env:
+          PYTHONPATH: .
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           MAIL_CC: ${{ secrets.MAIL_CC }}

@@ -76,8 +76,30 @@ def test_default_send_hour_is_21(monkeypatch) -> None:
     assert get_weekly_send_hour_jst() == 21
 
 
-def test_weekly_disabled_skips(monkeypatch) -> None:
-    monkeypatch.delenv("WEEKLY_REPORT_ENABLED", raising=False)
+def test_empty_send_hour_is_21(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_REPORT_SEND_HOUR_JST", "")
+    assert get_weekly_send_hour_jst() == 21
+
+
+def test_weekly_disabled_skips_when_empty(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_REPORT_ENABLED", "")
     ok, reason = should_send_now(now=datetime(2026, 3, 29, 21, 0, tzinfo=ZoneInfo("Asia/Tokyo")))
     assert ok is False
     assert reason == "weekly_disabled_by_env"
+
+
+def test_weekly_send_allowed_within_send_hour(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_REPORT_ENABLED", "true")
+    monkeypatch.setenv("WEEKLY_REPORT_SEND_HOUR_JST", "21")
+    ok, reason = should_send_now(now=datetime(2026, 3, 29, 21, 35, tzinfo=ZoneInfo("Asia/Tokyo")))
+    assert ok is True
+    assert reason == "send_allowed"
+
+
+def test_invalid_send_hour_raises(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_REPORT_SEND_HOUR_JST", "24")
+    try:
+        get_weekly_send_hour_jst()
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as exc:
+        assert "0-23" in str(exc)
