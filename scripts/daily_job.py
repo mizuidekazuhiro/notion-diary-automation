@@ -22,8 +22,10 @@ from ingest.ensure_daily_log_page import ensure_daily_log_page
 from ingest.http_client import post_json
 from ingest.ingest_sources import ingest_sources
 from publish.read_daily_log import read_daily_log
+from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
+from scripts.mail_dedupe import decide_mail_send, execute_with_update_on_success
 from scripts.diary_generator import generate_diary_from_daily_log
 from scripts.expense_f_aggregator import aggregate_daily_expense_f
 from scripts.f_risk_state_store import FRiskStateStore
@@ -1558,15 +1560,8 @@ def _notify_phase_c(
     *,
     summary: "DailyLogSummary",
     run_id: str,
-) -> bool:
+) -> bool | dict[str, Any]:
     logging.info("phase_c_notify_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
-    if summary.diary_notification_sent is True:
-        logging.info(
-            "phase_c_notify_skipped_already_sent target_date(JST)=%s run_id=%s skip_reason=already_notified",
-            summary.target_date,
-            run_id,
-        )
-        return False
     page_url = (summary.page_url or "").strip()
     if not page_url:
         logging.info(
@@ -1575,12 +1570,80 @@ def _notify_phase_c(
             run_id,
         )
         return False
-    logging.info(
-        "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=email_disabled",
-        summary.target_date,
-        run_id,
+    if not config.mail_from or not config.mail_to or not config.gmail_app_password:
+        logging.info(
+            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=email_disabled",
+            summary.target_date,
+            run_id,
+        )
+        return False
+
+    diary_text = (summary.diary or "").strip()
+    if not diary_text:
+        logging.info(
+            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=empty_diary",
+            summary.target_date,
+            run_id,
+        )
+        return False
+
+    rendered = render_diary_notification_mail(
+        target_date=summary.target_date,
+        diary=diary_text,
+        page_url=page_url,
     )
-    return False
+    decision = decide_mail_send(
+        subject=rendered.subject,
+        body=rendered.plain_text,
+        previous_hash=summary.diary_notification_hash,
+        previous_version=summary.diary_notification_version,
+    )
+
+    logging.info(
+        "mail_send_decision target_date=%s previous_hash=%s new_hash=%s hash_changed=%s should_send=%s is_update_mail=%s previous_version=%s new_version=%s",
+        summary.target_date,
+        decision.previous_hash or "",
+        decision.new_hash,
+        decision.hash_changed,
+        decision.should_send,
+        decision.is_update_mail,
+        decision.previous_version,
+        decision.new_version,
+    )
+    if not decision.should_send:
+        logging.info(
+            "mail_send_skipped reason=same_content target_date=%s existing_hash=%s",
+            summary.target_date,
+            decision.previous_hash or "",
+        )
+        return False
+
+    subject = decision.apply_subject_prefix(rendered.subject)
+    mail_config = MailConfig(
+        mail_from=config.mail_from,
+        mail_to=config.mail_to,
+        gmail_app_password=config.gmail_app_password,
+        mail_cc=config.mail_cc,
+        mail_bcc=config.mail_bcc,
+    )
+    now_jst = datetime.now(JST).replace(microsecond=0).isoformat()
+
+    execute_with_update_on_success(
+        decision=decision,
+        send_action=lambda: send_mail(mail_config, subject, rendered.plain_text, rendered.html_body),
+        on_send_success=lambda: post_json(
+            config.diary_mark_notified_url,
+            {
+                "target_date": summary.target_date,
+                "diary_notification_hash": decision.new_hash,
+                "diary_notification_sent_at": now_jst,
+                "diary_notification_version": decision.new_version,
+            },
+            config.bearer_token,
+        ),
+    )
+    logging.info("mail_send_executed target_date=%s", summary.target_date)
+    return {"sent": True, "already_marked": True}
 
 
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
@@ -1630,7 +1693,7 @@ def main() -> None:
     need_publish = args.phase in ("publish", "all")
     need_notify_diary = args.phase in ("notify_diary", "all")
     config = load_config(
-        need_mail=need_publish,
+        need_mail=need_publish or need_notify_diary,
         need_tasks=need_ingest,
     )
     run_id = os.getenv("GITHUB_RUN_ID", "local")

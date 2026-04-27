@@ -156,7 +156,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - Diary は `Diary Input Hash` を使って差分判定します。
   - `diary` が既に存在していても、入力 hash が前回と異なれば再生成して上書きします。
   - `diary` が存在し、かつ入力 hash が同一なら `skip_reason=unchanged_input` でスキップします。
-- notify の重複防止は別判定です。`already_notified` でも generate 部分は先に動き、notify だけをスキップします。
+- notify の重複防止は別判定です。hash（subject + body）一致時のみ notify をスキップし、generate 部分は先に動きます。
 - Phase C の順序は固定です。Today advice 更新結果を再読込した後に Diary を生成しますが、Diary 入力は raw inputs only であり generated field（Today advice / Sleep Analysis JP / Today Condition Forecast JP）は使いません。
 
 #### sleep insights の入力ルール
@@ -169,8 +169,9 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 #### notify フラグ
 - `email_disabled` のときは `mark_diary_notified` しません。
 - 実際に通知送信が成功したときだけ notified フラグを立てる設計です。
-- `already_notified` では notify だけをスキップし、生成ロジックは先に動きます。
 - `missing_page_url` や送信失敗時も notified は更新しません。
+- Notion 更新が複数回走っても、同一メール内容（subject + body）の場合は再送しません。
+- 内容更新時のみ再送し、件名先頭に `【更新版】` を付与します。
 
 ### Phase D: publish mail
 - `publish/render_mail.py` が payload に weather / `today_advice` / F alert / sleep 系 / Diary を渡します。
@@ -207,6 +208,9 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Today Condition Forecast JP`
 - `Today advice`
 - `Diary Input Hash`
+- `Diary Notification Hash`
+- `Diary Notification Sent At`
+- `Diary Notification Version`
 - `Today Advice Input Hash`
 - `Diary Generated At`
 - `Today Advice Generated At`
@@ -236,6 +240,9 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 
 推奨型:
 - `Diary Input Hash`: `rich_text`
+- `Diary Notification Hash`: `rich_text`
+- `Diary Notification Sent At`: `date`
+- `Diary Notification Version`: `number`
 - `Today Advice Input Hash`: `rich_text`
 - `Diary Generated At`: `date` または `datetime` 互換の `date`
 - `Today Advice Generated At`: `date` または `datetime` 互換の `date`

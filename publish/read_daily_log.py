@@ -211,6 +211,9 @@ class DailyLogSummary:
     today_advice_generated_at: Optional[str] = None
     page_url: Optional[str] = None
     diary_notification_sent: Optional[bool] = None
+    diary_notification_hash: Optional[str] = None
+    diary_notification_sent_at: Optional[str] = None
+    diary_notification_version: Optional[int] = None
     weather_location: Optional[str] = None
     weather_summary: Optional[str] = None
     weather_label: Optional[str] = None
@@ -356,6 +359,9 @@ def read_daily_log(
         today_advice_generated_at=_safe_text(_get_case_insensitive_value(payload, "Today Advice Generated At", "today_advice_generated_at")),
         page_url=_safe_text(payload.get("page_url")),
         diary_notification_sent=_safe_bool(payload.get("diary_notification_sent")),
+        diary_notification_hash=_safe_text(_get_case_insensitive_value(payload, "Diary Notification Hash", "diary_notification_hash")),
+        diary_notification_sent_at=_safe_text(_get_case_insensitive_value(payload, "Diary Notification Sent At", "diary_notification_sent_at")),
+        diary_notification_version=_safe_int(_get_case_insensitive_value(payload, "Diary Notification Version", "diary_notification_version")),
         weather_location=_safe_text(_get_case_insensitive_value(payload, "Weather Location", "weather_location")),
         weather_summary=_get_weather_summary_value(payload),
         weather_label=_get_weather_label_value(payload),
