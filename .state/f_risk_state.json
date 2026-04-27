@@ -316,8 +316,20 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.0004917243432955293
+    },
+    "2026-04-27": {
+      "alert_text": null,
+      "generated_at": "2026-04-27T23:18:45Z",
+      "input_hash": "8f78e82aa96d36eab8fdf590000cab36981911f74e18c3f47b41cdf10c91744a",
+      "matched_patterns": [
+        "睡眠短縮が連続",
+        "脂質摂取が直近平均より高い"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.08554380485153645
     }
   },
-  "updated_at": "2026-04-27T00:39:49Z",
+  "updated_at": "2026-04-27T23:18:45Z",
   "version": 1
 }
