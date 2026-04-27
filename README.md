@@ -397,7 +397,8 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - 対象期間: **前週月曜 05:00 JST 〜 当週日曜 04:59:59 JST**（表示は月曜〜土曜の週次レポート）
 - 送信タイミング: 日曜夜（workflow は 21:00 JST 相当で起動、実送信可否は `WEEKLY_REPORT_SEND_HOUR_JST` で最終判定）
 - 送信有効化: `WEEKLY_REPORT_ENABLED` が true 系のときのみ
-- 送信先: 既存 `MAIL_FROM` / `MAIL_TO` を流用（`MAIL_CC` / `MAIL_BCC` は設定時のみ使用、未設定でも正常動作）
+- 送信先: 既存 `MAIL_FROM` / `MAIL_TO` を流用（現行実装は `WEEKLY_MAIL_TO` ではなく `MAIL_TO` を使用）
+- `MAIL_CC` / `MAIL_BCC` は設定時のみ使用（未設定・空でも正常動作）
 - Weight の source of truth: **Daily Log の `Weight` のみ**（Health DB 直接補完なし）
 - 欠損時挙動:
   - 中核集計失敗は送信中止
@@ -406,8 +407,21 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 
 ### 追加環境変数
 
-- `WEEKLY_REPORT_ENABLED`: true 系で週次配信を有効化
-- `WEEKLY_REPORT_SEND_HOUR_JST`: 0-23。未設定時 21
+- `WEEKLY_REPORT_ENABLED`: `true` / `1` / `yes` / `on` / `enabled` のいずれかで有効化
+- `WEEKLY_REPORT_SEND_HOUR_JST`: 0-23。未設定または空文字のときは 21（JST）
+
+### GitHub Secrets（Weekly Report 実行時に必要）
+
+- `MAIL_FROM`
+- `MAIL_TO`
+- `MAIL_CC`（任意）
+- `MAIL_BCC`（任意）
+- `GMAIL_APP_PASSWORD`
+- `DAILY_LOG_UPSERT_URL`
+- `WORKERS_BEARER_TOKEN`
+- `OPENAI_API_KEY`
+- `WEEKLY_REPORT_ENABLED`
+- `WEEKLY_REPORT_SEND_HOUR_JST`（任意。未設定時は 21）
 
 ### 週次メール本文の構成（固定順）
 

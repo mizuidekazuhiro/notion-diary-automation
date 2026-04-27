@@ -51,8 +51,8 @@ def should_send_now(*, now: Optional[datetime] = None) -> tuple[bool, str]:
     send_hour = get_weekly_send_hour_jst()
     if now.weekday() != 6:
         return False, f"not_sunday_jst:{now.strftime('%Y-%m-%d')}"
-    if now.hour != send_hour or now.minute != 0:
-        return False, f"outside_send_time_jst:expected={send_hour:02d}:00 actual={now.strftime('%H:%M')}"
+    if now.hour != send_hour:
+        return False, f"outside_send_hour_jst:expected={send_hour:02d}:xx actual={now.strftime('%H:%M')}"
     return True, "send_allowed"
 
 
