@@ -93,6 +93,9 @@ interface Env {
   TIME_BUCKET_MINUTES?: string;
   WINDOW_START_HOUR?: string;
   DAILY_LOG_DIARY_NOTIFICATION_SENT_PROPERTY_NAME?: string;
+  DAILY_LOG_DIARY_NOTIFICATION_HASH_PROPERTY_NAME?: string;
+  DAILY_LOG_DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME?: string;
+  DAILY_LOG_DIARY_NOTIFICATION_VERSION_PROPERTY_NAME?: string;
   DAILY_LOG_DIARY_GENERATED_AT_PROPERTY_NAME?: string;
   DAILY_LOG_DIARY_INPUT_HASH_PROPERTY_NAME?: string;
   DAILY_LOG_TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME?: string;
@@ -215,6 +218,10 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Activity Summary", type: "rich_text" },
     { name: "Diary", type: "rich_text" },
     { name: "Today advice", type: "rich_text" },
+    { name: DIARY_NOTIFICATION_SENT_PROPERTY_NAME, type: "checkbox" },
+    { name: DIARY_NOTIFICATION_HASH_PROPERTY_NAME, type: "rich_text" },
+    { name: DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME, type: "date" },
+    { name: DIARY_NOTIFICATION_VERSION_PROPERTY_NAME, type: "number" },
     { name: DIARY_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
     { name: TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
     { name: dailyLogExpenses.total, type: "number" },
@@ -264,6 +271,9 @@ const BODY_CHUNK_LENGTH = 1800;
 const NOTES_RICH_TEXT_LIMIT = 2000;
 const DIARY_RICH_TEXT_LIMIT = 4000;
 const DIARY_NOTIFICATION_SENT_PROPERTY_NAME = "Diary Notification Sent";
+const DIARY_NOTIFICATION_HASH_PROPERTY_NAME = "Diary Notification Hash";
+const DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME = "Diary Notification Sent At";
+const DIARY_NOTIFICATION_VERSION_PROPERTY_NAME = "Diary Notification Version";
 const DIARY_GENERATED_AT_PROPERTY_NAME = "Diary Generated At";
 const DIARY_INPUT_HASH_PROPERTY_NAME = "Diary Input Hash";
 const TODAY_ADVICE_INPUT_HASH_PROPERTY_NAME = "Today Advice Input Hash";
@@ -1510,6 +1520,27 @@ function getDiaryNotificationSentPropertyName(env: Env): string {
   return (
     env.DAILY_LOG_DIARY_NOTIFICATION_SENT_PROPERTY_NAME ||
     DIARY_NOTIFICATION_SENT_PROPERTY_NAME
+  );
+}
+
+function getDiaryNotificationHashPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_DIARY_NOTIFICATION_HASH_PROPERTY_NAME ||
+    DIARY_NOTIFICATION_HASH_PROPERTY_NAME
+  );
+}
+
+function getDiaryNotificationSentAtPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME ||
+    DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME
+  );
+}
+
+function getDiaryNotificationVersionPropertyName(env: Env): string {
+  return (
+    env.DAILY_LOG_DIARY_NOTIFICATION_VERSION_PROPERTY_NAME ||
+    DIARY_NOTIFICATION_VERSION_PROPERTY_NAME
   );
 }
 
@@ -3758,6 +3789,18 @@ async function handleDailyLogGenerateDiary(
   if (!targetDate || !isValidDateString(targetDate)) {
     return badRequest("invalid target_date format");
   }
+  const diaryNotificationHash =
+    typeof payload.diary_notification_hash === "string"
+      ? payload.diary_notification_hash.trim()
+      : "";
+  const diaryNotificationSentAt =
+    typeof payload.diary_notification_sent_at === "string"
+      ? payload.diary_notification_sent_at.trim()
+      : "";
+  const diaryNotificationVersionRaw =
+    typeof payload.diary_notification_version === "number"
+      ? payload.diary_notification_version
+      : null;
   const diary = typeof payload.diary === "string" ? payload.diary.trim() : "";
   const sleepAnalysisJp =
     typeof payload.sleep_analysis_jp === "string" ? payload.sleep_analysis_jp.trim() : "";
@@ -4141,6 +4184,18 @@ async function handleDailyLogMarkDiaryNotified(
   if (!targetDate || !isValidDateString(targetDate)) {
     return badRequest("invalid target_date format");
   }
+  const diaryNotificationHash =
+    typeof payload.diary_notification_hash === "string"
+      ? payload.diary_notification_hash.trim()
+      : "";
+  const diaryNotificationSentAt =
+    typeof payload.diary_notification_sent_at === "string"
+      ? payload.diary_notification_sent_at.trim()
+      : "";
+  const diaryNotificationVersionRaw =
+    typeof payload.diary_notification_version === "number"
+      ? payload.diary_notification_version
+      : null;
 
   const queryResponse = await notionFetch(env, `/databases/${env.DAILY_LOG_DB_ID}/query`, {
     method: "POST",
@@ -4167,6 +4222,9 @@ async function handleDailyLogMarkDiaryNotified(
   }
 
   const notificationSentPropertyName = getDiaryNotificationSentPropertyName(env);
+  const notificationHashPropertyName = getDiaryNotificationHashPropertyName(env);
+  const notificationSentAtPropertyName = getDiaryNotificationSentAtPropertyName(env);
+  const notificationVersionPropertyName = getDiaryNotificationVersionPropertyName(env);
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   if (!hasPropertyType(dailyLogProperties, notificationSentPropertyName, "checkbox")) {
     console.warn(
@@ -4185,12 +4243,38 @@ async function handleDailyLogMarkDiaryNotified(
     );
   }
 
+  const updateProperties: Record<string, unknown> = {
+    [notificationSentPropertyName]: createCheckboxProperty(true),
+  };
+  if (
+    diaryNotificationHash &&
+    hasPropertyType(dailyLogProperties, notificationHashPropertyName, "rich_text")
+  ) {
+    updateProperties[notificationHashPropertyName] = createRichTextProperty(
+      diaryNotificationHash,
+    );
+  }
+  if (
+    diaryNotificationSentAt &&
+    hasPropertyType(dailyLogProperties, notificationSentAtPropertyName, "date")
+  ) {
+    updateProperties[notificationSentAtPropertyName] = createDateProperty(
+      diaryNotificationSentAt,
+    );
+  }
+  if (
+    diaryNotificationVersionRaw !== null &&
+    hasPropertyType(dailyLogProperties, notificationVersionPropertyName, "number")
+  ) {
+    updateProperties[notificationVersionPropertyName] = createNumberProperty(
+      Math.trunc(diaryNotificationVersionRaw),
+    );
+  }
+
   const updateResponse = await notionFetch(env, `/pages/${page.id}`, {
     method: "PATCH",
     body: JSON.stringify({
-      properties: {
-        [notificationSentPropertyName]: createCheckboxProperty(true),
-      },
+      properties: updateProperties,
     }),
   });
   if (!updateResponse.ok) {
@@ -4736,11 +4820,34 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const pageUrl =
     typeof page.url === "string" && page.url ? page.url : buildNotionPageUrl(page.id);
   const diaryNotificationSentPropertyName = getDiaryNotificationSentPropertyName(env);
+  const diaryNotificationHashPropertyName = getDiaryNotificationHashPropertyName(env);
+  const diaryNotificationSentAtPropertyName = getDiaryNotificationSentAtPropertyName(env);
+  const diaryNotificationVersionPropertyName = getDiaryNotificationVersionPropertyName(env);
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   let diaryNotificationSent: boolean | null = null;
+  let diaryNotificationHash: string | null = null;
+  let diaryNotificationSentAt: string | null = null;
+  let diaryNotificationVersion: number | null = null;
   if (hasPropertyType(dailyLogProperties, diaryNotificationSentPropertyName, "checkbox")) {
     diaryNotificationSent =
       getCheckboxFromProperty(properties[diaryNotificationSentPropertyName]) ?? false;
+  }
+  if (hasPropertyType(dailyLogProperties, diaryNotificationHashPropertyName, "rich_text")) {
+    diaryNotificationHash =
+      getPlainTextFromRichText(properties[diaryNotificationHashPropertyName]) || null;
+  }
+  if (hasPropertyType(dailyLogProperties, diaryNotificationSentAtPropertyName, "date")) {
+    diaryNotificationSentAt =
+      getDateTimeFromProperty(properties[diaryNotificationSentAtPropertyName]) ||
+      getStringFromProperty(properties[diaryNotificationSentAtPropertyName]) ||
+      null;
+  }
+  if (hasPropertyType(dailyLogProperties, diaryNotificationVersionPropertyName, "number")) {
+    const notificationVersion = getNumberFromProperty(
+      properties[diaryNotificationVersionPropertyName],
+    );
+    diaryNotificationVersion =
+      typeof notificationVersion === "number" ? Math.trunc(notificationVersion) : null;
   }
   const mailId = getPlainTextFromRichText(properties["Mail ID"]);
   const source = properties.Source?.select?.name ?? null;
@@ -4867,6 +4974,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       weight,
       page_url: pageUrl,
       diary_notification_sent: diaryNotificationSent,
+      diary_notification_hash: diaryNotificationHash,
+      diary_notification_sent_at: diaryNotificationSentAt,
+      diary_notification_version: diaryNotificationVersion,
       weather: weatherLegacyText,
       weather_summary: weatherSummary,
       weather_location: weatherLocation,

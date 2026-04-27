@@ -15,7 +15,7 @@ class PhaseCDeps:
     run_f_risk: Callable[[Any], Any]
     run_today_advice: Callable[[Any], Any]
     run_diary: Callable[[Any], Any]
-    run_notify: Callable[[Any], bool]
+    run_notify: Callable[[Any], bool | dict[str, Any]]
     mark_notified: Callable[[str], None]
 
 
@@ -97,9 +97,16 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             (expense_f_alert.get("reasons") or [])[:3],
         )
 
-    sent = deps.run_notify(summary)
+    notify_result = deps.run_notify(summary)
+    sent = bool(notify_result)
+    already_marked = False
+    if isinstance(notify_result, dict):
+        sent = bool(notify_result.get("sent"))
+        already_marked = bool(notify_result.get("already_marked"))
+
     if sent:
-        deps.mark_notified(summary.target_date)
+        if not already_marked:
+            deps.mark_notified(summary.target_date)
         logging.info(
             "phase_c_notify_sent target_date(JST)=%s run_id=%s notified_updated=%s",
             summary.target_date,
