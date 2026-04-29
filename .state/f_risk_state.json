@@ -328,8 +328,19 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.08554380485153645
+    },
+    "2026-04-28": {
+      "alert_text": null,
+      "generated_at": "2026-04-29T09:59:09Z",
+      "input_hash": "ff135b92386aa2450a9f0cf6eb6b5704ead88188813d2a2d207a2128e1df2cca",
+      "matched_patterns": [
+        "タスク進捗が低下"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.10721283463878145
     }
   },
-  "updated_at": "2026-04-27T23:18:45Z",
+  "updated_at": "2026-04-29T09:59:10Z",
   "version": 1
 }
