@@ -351,16 +351,16 @@
     },
     "2026-04-30": {
       "alert_text": null,
-      "generated_at": "2026-04-30T23:16:24Z",
-      "input_hash": "af7004a2ed6964eb8b979611e75c2b3fd5d46f8c343e4b8ea173858e2e631dbc",
+      "generated_at": "2026-04-30T23:58:03Z",
+      "input_hash": "aba3eb0fdef399f1a590fe28d62faf4c86194eaae0002d69e55bc8cf5489b998",
       "matched_patterns": [
         "タスク進捗が低下"
       ],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
-      "score": 0.1694273363004591
+      "score": 0.15823483448382827
     }
   },
-  "updated_at": "2026-04-30T23:16:24Z",
+  "updated_at": "2026-04-30T23:58:04Z",
   "version": 1
 }
