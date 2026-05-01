@@ -239,11 +239,9 @@ def test_notify_diary_continues_when_f_risk_raises(monkeypatch: pytest.MonkeyPat
     )
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
-    monkeypatch.setattr(daily_job, "_notify_phase_c", lambda config, *, summary, run_id: order.append("notify") or False)
-
     daily_job.run_notify_diary(config, "2026-03-20", "run")
 
-    assert order == ["weather", "expense_f", "sleep", "advice", "diary", "notify"]
+    assert order == ["weather", "expense_f", "sleep", "advice", "diary"]
 
 
 def test_f_risk_uses_multi_domain_features_and_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

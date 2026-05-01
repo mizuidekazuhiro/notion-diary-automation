@@ -32,9 +32,6 @@ jobs:
 
       - name: Run notify_diary phase
         env:
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           INBOX_JSON_URL: ${{ secrets.INBOX_JSON_URL }}
           TASKS_JSON_URL: ${{ secrets.TASKS_JSON_URL }}
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}

@@ -1,6 +1,6 @@
 # notion-diary-automation
 
-Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/notify → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成と通知判定を担当します。既定の `target_date` は JST 前日ですが、Phase C は `--target-date` または `TODAY_ADVICE_TARGET_MODE=TODAY` で当日朝レビューにも切り替えられます。
+Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/update → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成・Notion更新のみを担当します。既定の `target_date` は JST 前日ですが、Phase C は `--target-date` または `TODAY_ADVICE_TARGET_MODE=TODAY` で当日朝レビューにも切り替えられます。
 
 ## Workflow 名と依存関係
 
@@ -9,7 +9,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 | 00 | `CI - Test & Requirements Gate` | `push` / `pull_request` | pytest + requirements/workflow contract checks（deployの前提） |
 | 01 | `Daily Diary 01 - Ingest Daily Log` | `workflow_dispatch` | Phase A: Daily Log の ensure / ingest |
 | 02 | `Daily Diary 02 - Generate Location Summary` | `workflow_run` from 01 / manual | Phase B: `Location summary (GPT)` 更新 |
-| 03 | `Daily Diary 03 - Generate Diary & Sleep Insights` | `workflow_run` from 02 / manual | Phase C: sleep insights → Today advice → Diary → notify 判定 |
+| 03 | `Daily Diary 03 - Generate Diary & Sleep Insights` | `workflow_run` from 02 / manual | Phase C: sleep insights → Today advice → Diary（生成・Notion更新のみ） |
 | 04 | `Daily Diary 04 - Publish Daily Mail` | `workflow_run` from 03 / manual | Phase D: 朝メール配信 |
 
 `workflow_run.workflows` は上記 `name:` と一致しています。README の名称・YAML の `name:`・依存先は同じです。
@@ -34,7 +34,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `apps/location_summary_writer` が `Location summary (GPT)` を更新します。
 - ここでは Today advice / sleep insights / Diary は生成しません。
 
-### Phase C: generate/notify
+### Phase C: generate/update
 `scripts/daily_job.py --phase notify_diary` は次の順番で**直列実行**します。
 
 1. weather 生成（最新 location 解決 → 天気 API）
@@ -52,7 +52,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 13. Diary 生成
 14. Diary 保存
 15. Daily Log 再読込
-16. notify 判定
+16. 生成結果の更新完了ログ（メール通知は送信しない）
 
 > Expense F 集計（3）は Workers 経由ではなく `scripts/expense_f_aggregator.py` が `NOTION_TOKEN` と `EXPENSES_DB_ID` を使って Notion API を直接参照します。
 
@@ -88,9 +88,10 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - LightGBM の寄与表示は target_date の睡眠値（`sleep_hours` / `sleep_score`）で override した `today_contribution_features` を使い、`feature_row_date_used_as_today` と `lightgbm_explanation_source_row_date` を必ず出します。
 - ログは `sleep_candidates` / `selected_sleep_candidate` / `selected_candidate_source` / `renderer_received_sleep_context` / `final_today_sleep_context` / `feature_row_date_used_as_today` を出します。
 
-#### notify 無効時の扱い
-- `email_disabled` は送信 skip 理由のみです。
-- 送信無効でも Weather / Expense F / Sleep insights / F risk / Today advice / Diary の生成保存は実行されます。
+#### Phase C のメール通知扱い
+- `notify_diary` phase では設計上メール送信を行いません。
+- Weather / Expense F / Sleep insights / F risk / Today advice / Diary の生成保存は従来どおり実行されます。
+- 本体メール送信は Phase D (`--phase publish`) のみで実施します。
 
 #### 役割分離
 - `scripts/sleep_condition_generator.py` は **`sleep_analysis_jp` / `today_condition_forecast_jp` の2項目だけ**生成します。
