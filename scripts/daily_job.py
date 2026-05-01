@@ -25,7 +25,13 @@ from publish.read_daily_log import read_daily_log
 from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
-from scripts.mail_dedupe import decide_mail_send, execute_with_update_on_success
+from scripts.mail_dedupe import (
+    build_mail_input_snapshot,
+    decide_mail_send,
+    execute_with_update_on_success,
+    sha256_hex,
+    snapshot_json,
+)
 from scripts.diary_generator import generate_diary_from_daily_log
 from scripts.expense_f_aggregator import aggregate_daily_expense_f
 from scripts.f_risk_state_store import FRiskStateStore
@@ -252,7 +258,56 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         mail_cc=config.mail_cc,
         mail_bcc=config.mail_bcc,
     )
-    send_mail(mail_config, mail.subject, mail.plain_text, mail.html_body)
+    input_snapshot = build_mail_input_snapshot(summary, expense_f_alert=expense_f_alert, f_risk_alert=f_risk_alert)
+    input_snapshot_raw = snapshot_json(input_snapshot)
+    current_input_hash = sha256_hex(input_snapshot_raw)
+    previous_input_hash = ((getattr(summary, "mail_input_hash", None) or "").strip() or None)
+    previous_version = getattr(summary, "mail_version", None)
+    normalized_previous_version = previous_version if isinstance(previous_version, int) and previous_version > 0 else 0
+    hash_changed = not previous_input_hash or previous_input_hash != current_input_hash
+    should_send = hash_changed
+    is_update_mail = bool(previous_input_hash and hash_changed)
+    new_version = (normalized_previous_version + 1) if should_send else normalized_previous_version
+    changed_fields: list[str] = []
+    previous_snapshot_raw = (getattr(summary, "mail_input_snapshot_json", None) or "").strip()
+    if previous_snapshot_raw:
+        try:
+            previous_snapshot = json.loads(previous_snapshot_raw)
+            changed_fields = sorted(
+                {
+                    *set(previous_snapshot.keys()),
+                    *set(input_snapshot.keys()),
+                }
+            )
+            changed_fields = [key for key in changed_fields if previous_snapshot.get(key) != input_snapshot.get(key)]
+        except json.JSONDecodeError:
+            changed_fields = []
+    logging.info(
+        "mail_input_hash_current=%s mail_input_hash_previous=%s mail_input_hash_changed=%s mail_send_decision=%s mail_send_skip_reason=%s mail_version_previous=%s mail_version_new=%s changed_fields=%s changed_fields_count=%s",
+        current_input_hash,
+        previous_input_hash or "",
+        hash_changed,
+        "send" if should_send else "skip",
+        "" if should_send else "input_hash_unchanged",
+        normalized_previous_version,
+        new_version,
+        ",".join(changed_fields),
+        len(changed_fields),
+    )
+    if not should_send:
+        return
+    subject = f"【更新版】{mail.subject}" if is_update_mail and not mail.subject.startswith("【更新版】") else mail.subject
+    send_mail(mail_config, subject, mail.plain_text, mail.html_body)
+    _save_daily_log_fields(
+        config,
+        target_date=summary.target_date,
+        payload={
+            "mail_input_hash": current_input_hash,
+            "mail_input_snapshot_json": input_snapshot_raw,
+            "mail_sent_at": datetime.now(JST).replace(microsecond=0).isoformat(),
+            "mail_version": new_version if new_version > 0 else 1,
+        },
+    )
 
 
 def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:
