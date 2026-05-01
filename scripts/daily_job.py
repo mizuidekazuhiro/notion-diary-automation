@@ -1647,6 +1647,7 @@ def _notify_phase_c(
 
 
 def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
+    logging.info("notify_diary_updates_only_no_mail target_date=%s run_id=%s", target_date, run_id)
     deps = PhaseCDeps(
         refresh_summary=_refresh_daily_log_summary,
         run_weather=lambda summary: _generate_and_save_weather(config, summary=summary, run_id=run_id),
@@ -1661,7 +1662,12 @@ def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
             run_id=run_id,
             reloaded_after_sleep_save=True,
         ),
-        run_notify=lambda summary: _notify_phase_c(config, summary=summary, run_id=run_id),
+        run_notify=lambda summary: logging.info(
+            "phase_c_mail_notification_skipped reason=disabled_by_design target_date=%s run_id=%s",
+            summary.target_date,
+            run_id,
+        )
+        or False,
         mark_notified=lambda target: post_json(
             config.diary_mark_notified_url,
             {"target_date": target},
@@ -1691,9 +1697,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     need_ingest = args.phase in ("ingest", "all")
     need_publish = args.phase in ("publish", "all")
-    need_notify_diary = args.phase in ("notify_diary", "all")
     config = load_config(
-        need_mail=need_publish or need_notify_diary,
+        need_mail=need_publish,
         need_tasks=need_ingest,
     )
     run_id = os.getenv("GITHUB_RUN_ID", "local")
