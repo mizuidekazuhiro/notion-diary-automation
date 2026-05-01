@@ -248,6 +248,10 @@ class DailyLogSummary:
     notes_sleep_issue_flag: Optional[bool] = None
     notes_flags_json: Optional[str] = None
     notes_tags_json: Optional[str] = None
+    mail_input_hash: Optional[str] = None
+    mail_input_snapshot_json: Optional[str] = None
+    mail_sent_at: Optional[str] = None
+    mail_version: Optional[int] = None
 
 
 def read_daily_log(
@@ -396,4 +400,8 @@ def read_daily_log(
         notes_sleep_issue_flag=_safe_bool(_get_case_insensitive_value(payload, "Notes Sleep Issue Flag", "notes_sleep_issue_flag")),
         notes_flags_json=_safe_text(_get_case_insensitive_value(payload, "Notes Flags JSON", "notes_flags_json")),
         notes_tags_json=_safe_text(_get_case_insensitive_value(payload, "Notes Tags JSON", "notes_tags_json")),
+        mail_input_hash=_safe_text(_get_case_insensitive_value(payload, "Mail Input Hash", "mail_input_hash")),
+        mail_input_snapshot_json=_safe_text(_get_case_insensitive_value(payload, "Mail Input Snapshot", "mail_input_snapshot_json", "mail_input_snapshot")),
+        mail_sent_at=_safe_text(_get_case_insensitive_value(payload, "Mail Sent At", "mail_sent_at")),
+        mail_version=_safe_int(_get_case_insensitive_value(payload, "Mail Version", "mail_version")),
     )

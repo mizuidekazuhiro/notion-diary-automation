@@ -171,12 +171,13 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `email_disabled` のときは `mark_diary_notified` しません。
 - 実際に通知送信が成功したときだけ notified フラグを立てる設計です。
 - `missing_page_url` や送信失敗時も notified は更新しません。
-- Notion 更新が複数回走っても、同一メール内容（subject + body）の場合は再送しません。
-- 内容更新時のみ再送し、件名先頭に `【更新版】` を付与します。
+- notify_diary phase ではメール通知を送りません（Daily Log 更新のみ）。
 
 ### Phase D: publish mail
 - `publish/render_mail.py` が payload に weather / `today_advice` / F alert / sleep 系 / Diary を渡します。
 - `publish/email_templates.py` は値があるセクションだけ描画します。
+- 送信判定はメール本文ではなく Notion 由来の入力データ差分（`Mail Input Hash`）で行います。
+- `Mail Input Hash` が前回と同じ場合は送信・送信メタ更新をスキップし、変化時のみ更新版（件名 `【更新版】...`）を送信します。
 - メール本文の表示順は次のとおりです。
   1. `Weather`
   2. `Today advice`
@@ -225,6 +226,10 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Weather Retrieved At`
 - `Weather Input Hash`
 - `Weather Generated At`
+- `Mail Input Hash`
+- `Mail Input Snapshot`
+- `Mail Sent At`
+- `Mail Version`
 - `Expense F Count`
 - `Expense F Total`
 - `Expense F Merchants`
