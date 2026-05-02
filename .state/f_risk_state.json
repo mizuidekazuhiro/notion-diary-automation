@@ -359,8 +359,17 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.15823483448382827
+    },
+    "2026-05-01": {
+      "alert_text": null,
+      "generated_at": "2026-05-02T01:45:37Z",
+      "input_hash": "5fb8567f9ea84f62dc53d9a345644bd6a26f6e83d10561f180b42d2ff8314fe9",
+      "matched_patterns": [],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.6784176590392883
     }
   },
-  "updated_at": "2026-04-30T23:58:04Z",
+  "updated_at": "2026-05-02T01:45:37Z",
   "version": 1
 }
