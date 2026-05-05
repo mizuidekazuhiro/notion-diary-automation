@@ -393,14 +393,14 @@
     },
     "2026-05-04": {
       "alert_text": null,
-      "generated_at": "2026-05-05T02:15:26Z",
-      "input_hash": "aa26b9f5d588218704433ed98607621602fe5ef06950a663d365af8f6b22b1df",
+      "generated_at": "2026-05-05T10:44:57Z",
+      "input_hash": "2af1e03657442defb129286d255bd0b27c7a7f18080bebac7ea8abcfd32fce65",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
-      "score": 0.5633339817827834
+      "score": 0.5399281898587719
     }
   },
-  "updated_at": "2026-05-05T02:15:26Z",
+  "updated_at": "2026-05-05T10:44:58Z",
   "version": 1
 }
