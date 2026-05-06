@@ -11,6 +11,7 @@ from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from publish.render_mail import render_mail
 from scripts.daily_job import build_diary_input_fields
+from scripts.mail_dedupe import build_mail_input_snapshot
 from scripts.note_batch_labeler import parse_note_label_json_with_meta
 from scripts.today_advice_lightgbm import run_lightgbm_low_mood
 from scripts.today_advice_renderer import render_today_advice_from_analysis
@@ -67,6 +68,9 @@ def _summary(**overrides: object) -> DailyLogSummary:
         sleep_analysis_jp=None,
         today_condition_forecast_jp=None,
         today_advice="today advice",
+        study_minutes=150.0,
+        study_sessions=4,
+        study_last_used_at="2026-03-27T23:42:00+09:00",
         diary_input_hash=None,
         today_advice_input_hash=None,
         diary_generated_at=None,
@@ -94,6 +98,9 @@ def _payload(summary: DailyLogSummary) -> dict[str, object]:
         "mood": summary.mood,
         "weight": summary.weight,
         "today_advice": summary.today_advice,
+        "study_minutes": summary.study_minutes,
+        "study_sessions": summary.study_sessions,
+        "study_last_used_at": summary.study_last_used_at,
         "sleep_start": summary.sleep_start,
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.resolved_sleep_duration_min,
@@ -141,6 +148,40 @@ def test_html_and_text_section_order_is_identical() -> None:
     for first, second in zip(text_order, text_order[1:]):
         assert text.index(first) < text.index(second)
         assert html.index(first.replace("&", "&amp;")) < html.index(second.replace("&", "&amp;"))
+
+
+def test_study_section_rendered_in_text_and_html() -> None:
+    payload = _payload(_summary(study_minutes=150.0, study_sessions=4, study_last_used_at="2026-05-05T23:42:00+09:00"))
+    text = render_daily_log_text(payload)
+    html = render_daily_log_html(payload)
+    assert "司法試験 Study" in text
+    assert "2.5時間（150分）" in text
+    assert "最終利用: 23:42" in text
+    assert "司法試験 Study" in html
+    assert "2.5時間（150分）" in html
+    assert html.count("司法試験 Study") == 1
+
+
+def test_study_section_hidden_when_study_minutes_is_none() -> None:
+    payload = _payload(_summary(study_minutes=None, study_sessions=4))
+    assert "司法試験 Study" not in render_daily_log_text(payload)
+    assert "司法試験 Study" not in render_daily_log_html(payload)
+
+
+def test_mail_snapshot_includes_study_fields() -> None:
+    summary = _summary()
+    snapshot = build_mail_input_snapshot(summary, expense_f_alert={}, f_risk_alert={})
+    assert snapshot["study_minutes"] == 150
+    assert snapshot["study_sessions"] == 4
+    assert snapshot["study_last_used_at"] == "2026-03-27T23:42:00+09:00"
+
+
+def test_diary_input_fields_include_study_fields() -> None:
+    summary = _summary()
+    used, _, _, _ = build_diary_input_fields(summary)
+    assert used["Study Minutes"] == "150.0"
+    assert used["Study Sessions"] == "4"
+    assert used["Study Last Used At"] == "2026-03-27T23:42:00+09:00"
 
 
 def test_today_advice_fallback_is_dense() -> None:

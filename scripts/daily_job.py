@@ -378,6 +378,9 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
         ("Readiness BPM", str(summary.readiness_bpm) if summary.readiness_bpm is not None else None),
         ("Baseline HRV", str(summary.baseline_hrv) if summary.baseline_hrv is not None else None),
         ("Baseline Waking BPM", str(summary.baseline_waking_bpm) if summary.baseline_waking_bpm is not None else None),
+        ("Study Minutes", str(summary.study_minutes) if summary.study_minutes is not None else None),
+        ("Study Sessions", str(summary.study_sessions) if summary.study_sessions is not None else None),
+        ("Study Last Used At", summary.study_last_used_at),
     ]
 
     used: dict[str, str] = {}
