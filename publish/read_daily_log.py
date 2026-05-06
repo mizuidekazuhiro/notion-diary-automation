@@ -205,6 +205,9 @@ class DailyLogSummary:
     sleep_analysis_jp: Optional[str]
     today_condition_forecast_jp: Optional[str]
     today_advice: Optional[str]
+    study_minutes: Optional[float] = None
+    study_sessions: Optional[int] = None
+    study_last_used_at: Optional[str] = None
     diary_input_hash: Optional[str] = None
     today_advice_input_hash: Optional[str] = None
     diary_generated_at: Optional[str] = None
@@ -357,6 +360,9 @@ def read_daily_log(
         sleep_analysis_jp=_safe_text(_get_sleep_value(payload, "sleep_analysis_jp")),
         today_condition_forecast_jp=_safe_text(_get_sleep_value(payload, "today_condition_forecast_jp")),
         today_advice=_safe_text(_get_case_insensitive_value(payload, "Today advice", "today_advice")),
+        study_minutes=_safe_float(_get_case_insensitive_value(payload, "Study Minutes", "study_minutes")),
+        study_sessions=_safe_int(_get_case_insensitive_value(payload, "Study Sessions", "study_sessions")),
+        study_last_used_at=_safe_text(_get_case_insensitive_value(payload, "Study Last Used At", "study_last_used_at")),
         diary_input_hash=_safe_text(_get_case_insensitive_value(payload, "Diary Input Hash", "diary_input_hash")),
         today_advice_input_hash=_safe_text(_get_case_insensitive_value(payload, "Today Advice Input Hash", "today_advice_input_hash")),
         diary_generated_at=_safe_text(_get_case_insensitive_value(payload, "Diary Generated At", "diary_generated_at")),

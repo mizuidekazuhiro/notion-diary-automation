@@ -174,7 +174,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - notify_diary phase ではメール通知を送りません（Daily Log 更新のみ）。
 
 ### Phase D: publish mail
-- `publish/render_mail.py` が payload に weather / `today_advice` / F alert / sleep 系 / Diary を渡します。
+- `publish/render_mail.py` が payload に weather / `today_advice` / 司法試験 Study / F alert / sleep 系 / Diary を渡します。
 - `publish/email_templates.py` は値があるセクションだけ描画します。
 - 送信判定はメール本文ではなく Notion 由来の入力データ差分（`Mail Input Hash`）で行います。
 - `Mail Input Hash` が前回と同じ場合は送信・送信メタ更新をスキップし、変化時のみ更新版（件名 `【更新版】...`）を送信します。
@@ -207,6 +207,9 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Baseline HRV`
 - `Baseline Waking BPM`
 - `Sleep Analysis JP`
+- `Study Minutes`
+- `Study Sessions`
+- `Study Last Used At`
 - `Today Condition Forecast JP`
 - `Today advice`
 - `Diary Input Hash`
@@ -254,6 +257,9 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Today Advice Generated At`: `date` または `datetime` 互換の `date`
 - `Weather Temp Max C` / `Weather Temp Min C` / `Weather Precip Probability Max`: `number`
 - `Weather Code`: `number`
+- `Study Minutes`: `number`
+- `Study Sessions`: `number`
+- `Study Last Used At`: `date`
 - `Expense F Count`: `number`
 - `Expense F Total`: `number`
 - `Expense F Merchants` / `Expense F Categories` / `F Risk Alert` / `F Risk Reason` / `F Risk Matched Patterns`: `rich_text`
@@ -393,7 +399,7 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - ただし `sleep_start/sleep_end` がある場合は差分再計算結果を優先し、`sleep_duration_min` は fallback です。
 - Today advice は固定ルールではなく 30〜60 日の探索型分析結果（exploratory/regression/LightGBM）を根拠に構成します。
 - LightGBM を正式依存として導入しています（`requirements.txt` / CI install / verify 対応）。
-- メール本文セクション順は `Today advice -> Diary -> Sleep & Condition -> Summary -> Tasks -> Meal summary` です。
+- メール本文セクション順は `Today advice -> 司法試験 Study(値がある場合のみ) -> Diary -> Sleep & Condition -> Summary -> Tasks -> Meal summary` です。
 - Drop 0 件時は `- None` / `- —` のダミー明細を表示しません（件数と本文を一致）。
 
 ## Weekly Report（新規）

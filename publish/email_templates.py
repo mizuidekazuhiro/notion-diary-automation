@@ -143,6 +143,14 @@ def _format_sleep_duration(value: object) -> Optional[str]:
     return f"{hours}時間{remain}分"
 
 
+def _format_study_duration(value: object) -> Optional[str]:
+    minutes_float = _safe_float(value)
+    if minutes_float is None:
+        return None
+    minutes = int(round(minutes_float))
+    return f"{(minutes / 60.0):g}時間（{minutes}分）"
+
+
 def _normalize_expenses(payload: Mapping[str, object]) -> Tuple[float, int, List[dict], int]:
     expenses_payload = payload.get("expenses")
     total = 0.0
@@ -321,6 +329,42 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     today_advice = _optional_text(
         payload.get("today_advice") if isinstance(payload, Mapping) else None
     )
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
     f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
     f_risk_matched = False
     f_risk_alert = None
@@ -376,6 +420,8 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     deep_duration = _format_sleep_duration(payload.get("deep_duration_min") if isinstance(payload, Mapping) else None)
     rem_duration = _format_sleep_duration(payload.get("rem_duration_min") if isinstance(payload, Mapping) else None)
     sleep_source = _optional_text(payload.get("sleep_source") if isinstance(payload, Mapping) else None)
+    study_duration = _format_study_duration(study_minutes)
+    study_duration = _format_study_duration(study_minutes)
     mood_notes_url = str(payload.get("mood_notes_url") or "")
     today_advice_html = ""
     if today_advice:
@@ -384,6 +430,25 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             "<div style=\"font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;\">Today advice</div>"
             f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(today_advice)}</div>"
             "</div>"
+        )
+    study_html = ""
+    if study_duration:
+        study_rows = [
+            ("勉強時間", study_duration),
+            ("セッション数", str(study_sessions) if study_sessions is not None else "—"),
+            ("最終利用", study_last_used_at or "—"),
+        ]
+        study_html = (
+            "<tr><td style=\"padding: 0 24px 16px 24px;\">"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">"
+            "<tr><td><h2 style=\"margin: 0 0 12px 0; font-size: 16px;\">司法試験 Study</h2>"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">"
+            + "".join(
+                f"<tr><td style=\"padding: 6px 0; font-size: 13px; color: #6b7280;\">{html.escape(label)}</td>"
+                f"<td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(value)}</td></tr>"
+                for label, value in study_rows
+            )
+            + "</table></td></tr></table></td></tr>"
         )
     weather_html = ""
     if weather_summary:
@@ -594,6 +659,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             {today_advice_html}
             {f_risk_html}
             {expense_f_alert_html}
+            {study_html}
 
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
@@ -754,6 +820,12 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     today_advice = _optional_text(
         payload.get("today_advice") if isinstance(payload, Mapping) else None
     )
+    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
+    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
+    study_last_used_at_raw = _optional_text(
+        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
+    )
+    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
     f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
     f_risk_matched = False
     f_risk_alert = None
@@ -809,6 +881,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     deep_duration = _format_sleep_duration(payload.get("deep_duration_min") if isinstance(payload, Mapping) else None)
     rem_duration = _format_sleep_duration(payload.get("rem_duration_min") if isinstance(payload, Mapping) else None)
     sleep_source = _optional_text(payload.get("sleep_source") if isinstance(payload, Mapping) else None)
+    study_duration = _format_study_duration(study_minutes)
     mood_notes_url = str(payload.get("mood_notes_url") or "")
 
     expenses_lines: List[str] = []
@@ -830,6 +903,14 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     ]
     if today_advice:
         lines += ["", "Today advice", today_advice]
+    if study_duration:
+        lines += [
+            "",
+            "司法試験 Study",
+            f"- 勉強時間: {study_duration}",
+            f"- セッション数: {study_sessions if study_sessions is not None else '—'}",
+            f"- 最終利用: {study_last_used_at or '—'}",
+        ]
     if f_risk_matched and f_risk_alert:
         lines += ["", "F Risk Alert", f_risk_alert]
         if f_risk_score != "—":
