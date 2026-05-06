@@ -159,6 +159,7 @@ def test_study_section_rendered_in_text_and_html() -> None:
     assert "最終利用: 23:42" in text
     assert "司法試験 Study" in html
     assert "2.5時間（150分）" in html
+    assert html.count("司法試験 Study") == 1
 
 
 def test_study_section_hidden_when_study_minutes_is_none() -> None:

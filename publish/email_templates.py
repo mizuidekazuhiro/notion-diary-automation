@@ -335,36 +335,6 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
         payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
     )
     study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
-    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
-    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
-    study_last_used_at_raw = _optional_text(
-        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
-    )
-    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
-    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
-    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
-    study_last_used_at_raw = _optional_text(
-        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
-    )
-    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
-    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
-    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
-    study_last_used_at_raw = _optional_text(
-        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
-    )
-    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
-    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
-    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
-    study_last_used_at_raw = _optional_text(
-        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
-    )
-    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
-    study_minutes = _safe_float(payload.get("study_minutes") if isinstance(payload, Mapping) else None)
-    study_sessions = _safe_int(payload.get("study_sessions") if isinstance(payload, Mapping) else None)
-    study_last_used_at_raw = _optional_text(
-        payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
-    )
-    study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
     f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
     f_risk_matched = False
     f_risk_alert = None
@@ -420,7 +390,6 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     deep_duration = _format_sleep_duration(payload.get("deep_duration_min") if isinstance(payload, Mapping) else None)
     rem_duration = _format_sleep_duration(payload.get("rem_duration_min") if isinstance(payload, Mapping) else None)
     sleep_source = _optional_text(payload.get("sleep_source") if isinstance(payload, Mapping) else None)
-    study_duration = _format_study_duration(study_minutes)
     study_duration = _format_study_duration(study_minutes)
     mood_notes_url = str(payload.get("mood_notes_url") or "")
     today_advice_html = ""

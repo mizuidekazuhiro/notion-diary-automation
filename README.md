@@ -399,7 +399,7 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - ただし `sleep_start/sleep_end` がある場合は差分再計算結果を優先し、`sleep_duration_min` は fallback です。
 - Today advice は固定ルールではなく 30〜60 日の探索型分析結果（exploratory/regression/LightGBM）を根拠に構成します。
 - LightGBM を正式依存として導入しています（`requirements.txt` / CI install / verify 対応）。
-- メール本文セクション順は `Today advice -> 司法試験 Study(値がある場合のみ) -> Diary -> Sleep & Condition -> Summary -> Tasks -> Meal summary` です。
+- メール本文セクション順は `Today advice -> F Risk Alert(ある日だけ) -> Expense F Alert(ある日だけ) -> 司法試験 Study(値がある場合のみ) -> Diary -> Sleep & Condition -> Summary -> Expenses / Done / Drop / Meal / Weather` です。
 - Drop 0 件時は `- None` / `- —` のダミー明細を表示しません（件数と本文を一致）。
 
 ## Weekly Report（新規）
