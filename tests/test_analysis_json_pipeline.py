@@ -8,6 +8,7 @@ import requests
 
 from scripts import f_risk_generator
 from scripts import openai_chat_utils
+from scripts import today_advice_feature_builder
 from scripts.today_advice_renderer import render_today_advice_from_analysis
 
 
@@ -94,6 +95,7 @@ def test_openai_chat_final_failure_is_not_success(monkeypatch: pytest.MonkeyPatc
 
 
 def test_f_risk_labeling_failed_sets_skip_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
     monkeypatch.setattr(
         f_risk_generator,
         "_load_histories",
@@ -103,7 +105,7 @@ def test_f_risk_labeling_failed_sets_skip_reason(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         f_risk_generator,
         "build_daily_feature_table",
-        lambda histories, labels: __import__("pandas").DataFrame(
+        lambda histories, labels: pd.DataFrame(
             {
                 "date": [h.target_date for h in histories],
                 "expense_f_count": [0] * len(histories),
@@ -136,3 +138,193 @@ def test_f_risk_insufficient_samples_does_not_emit_alert(monkeypatch: pytest.Mon
     result = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
     assert result.skip_reason == "insufficient_samples"
     assert result.alert_text is None
+
+
+def test_generate_f_risk_separates_prediction_and_training_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    captured = {}
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_load_histories",
+        lambda **kwargs: captured.update(kwargs) or [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)],
+    )
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: pd.DataFrame({"date": [h.target_date for h in histories], "expense_f_count": [0]*len(histories), "sleep_short_streak": [0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories)}),
+    )
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, prediction_date="2026-03-28", training_end_date="2026-03-27", daily_log_context_date="2026-03-27")
+    assert captured["target_date"] == "2026-03-27"
+    assert out.debug_summary["risk_json"]["prediction_date"] == "2026-03-28"
+
+
+def test_forbidden_today_features_not_used_in_prediction_features(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_load_histories",
+        lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)],
+    )
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: pd.DataFrame({"date": [h.target_date for h in histories], "expense_f_count": [0]*len(histories), "spending_total":[1000]*len(histories), "expense_f_total":[0]*len(histories), "spending_vs_7d_delta":[100]*len(histories), "sleep_short_streak": [0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories)}),
+    )
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    names = out.debug_summary["risk_json"]["prediction_feature_names"]
+    assert "spending_total" not in names
+    assert "expense_f_count" not in names
+    assert "study_minutes" not in names
+    assert "study_zero_day_streak" not in names
+    assert out.debug_summary["risk_json"]["forbidden_today_features_used"] is False
+
+
+def test_forbidden_today_features_force_no_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(f_risk_generator, "_build_xy", lambda train, today: (pd.DataFrame({"spending_total":[1]}), pd.Series([0]), pd.DataFrame({"spending_total":[1]}), ["spending_total"], []))
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "sleep_short_streak":[0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories)}))
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    assert out.debug_summary["risk_json"]["forbidden_today_features_used"] is True
+    assert out.debug_summary["risk_json"]["risk_matched"] is False
+
+
+def test_f_risk_ml_skips_when_positive_events_too_few(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "sleep_short_streak":[0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories)}))
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    assert out.debug_summary["risk_json"]["ml_skipped_reason"] == "insufficient_ml_training_data"
+    assert out.debug_summary["risk_json"]["ml_model_used"] is None
+
+
+def test_f_risk_ml_skips_when_single_class(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[1]*len(histories), "sleep_short_streak":[0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories)}))
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    assert out.debug_summary["risk_json"]["ml_skipped_reason"] == "insufficient_ml_training_data"
+
+
+def test_backtest_not_implemented_fields_are_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "sleep_short_streak":[0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories)}))
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    rj = out.debug_summary["risk_json"]
+    assert rj["f_risk_backtest_false_positive_count"] is None
+    assert rj["f_risk_backtest_missed_event_count"] is None
+    assert rj["f_risk_backtest_status"] == "not_implemented"
+
+
+def test_alert_text_starts_with_preventive_phrase() -> None:
+    text = f_risk_generator._compose_case_alert_text({"risk_matched": True, "explanation_points": ["短睡眠"]})
+    assert text is not None
+    assert text.startswith("今日はFリスクが高めです。")
+
+
+def test_build_daily_feature_table_contains_study_columns() -> None:
+    pd = pytest.importorskip("pandas")
+    histories = [
+        SimpleNamespace(
+            target_date="2026-03-01", sleep_duration_min=420, sleep_start=None, sleep_end=None, sleep_score=70,
+            deep_duration_min=None, rem_duration_min=None, readiness_bpm=None, readiness_hrv=None, baseline_hrv=None, baseline_waking_bpm=None,
+            location_summary="", meal_summary="", notes="", activity_summary="", done_count=1, drop_count=0, done_tasks_detail=[],
+            mood="★★★", kcal=None, protein=None, fat=None, carb=None, expenses_total=1000, expense_f_count=0, expense_f_total=0,
+            weather_location=None, weather_summary=None, weather_temp_max_c=None, weather_temp_min_c=None, weather_precip_probability_max=None, weather_code=None,
+            study_minutes=120, study_sessions=3, study_last_used_at="2026-03-01T21:00:00+09:00",
+        ),
+        SimpleNamespace(
+            target_date="2026-03-02", sleep_duration_min=420, sleep_start=None, sleep_end=None, sleep_score=70,
+            deep_duration_min=None, rem_duration_min=None, readiness_bpm=None, readiness_hrv=None, baseline_hrv=None, baseline_waking_bpm=None,
+            location_summary="", meal_summary="", notes="", activity_summary="", done_count=1, drop_count=0, done_tasks_detail=[],
+            mood="★★★", kcal=None, protein=None, fat=None, carb=None, expenses_total=1000, expense_f_count=0, expense_f_total=0,
+            weather_location=None, weather_summary=None, weather_temp_max_c=None, weather_temp_min_c=None, weather_precip_probability_max=None, weather_code=None,
+            study_minutes=0, study_sessions=0, study_last_used_at="",
+        ),
+    ]
+    df = today_advice_feature_builder.build_daily_feature_table(histories, note_labels={})
+    assert isinstance(df, pd.DataFrame)
+    assert "study_minutes" in df.columns
+    assert "study_sessions" in df.columns
+    assert "study_minutes_lag_1" in df.columns
+    assert "study_minutes_rolling_sum_7d" in df.columns
+    assert "study_zero_day_streak" in df.columns
+    assert "study_zero_day_streak_lag_1" in df.columns
+    assert "study_consistency_score_7d" in df.columns
+
+
+def test_missing_rate_fields_exist_in_risk_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "sleep_short_streak":[0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories), "study_minutes_lag_1":[None]*len(histories)}))
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    rj = out.debug_summary["risk_json"]
+    assert "overall_feature_missing_rate" in rj
+    assert "effective_feature_count" in rj
+    assert "study_missing_rate" in rj
+
+
+def test_generate_f_risk_does_not_crash_when_prediction_feature_names_missing_in_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "is_weekend":[0]*len(histories)}),
+    )
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_build_xy",
+        lambda train, today: (
+            pd.DataFrame({"sleep_hours_lag_1":[None], "study_consistency_score_7d":[None]}),
+            pd.Series([0]),
+            pd.DataFrame({"sleep_hours_lag_1":[None], "study_consistency_score_7d":[None]}),
+            ["sleep_hours_lag_1", "study_consistency_score_7d"],
+            [],
+        ),
+    )
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    assert "overall_feature_missing_rate" in out.debug_summary["risk_json"]
+    assert out.debug_summary["risk_json"]["study_features_used"] is False
+
+
+def test_high_ml_is_downgraded_under_high_missingness_when_no_rule_or_similarity_support(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setenv("F_RISK_ALERT_MIN_LEVEL", "high")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "is_weekend":[0]*len(histories)}),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"score": 0.8, "model": "logistic_regression", "skipped_reason": None})
+    monkeypatch.setattr(f_risk_generator, "_score_rule_based_risk", lambda *_args, **_kwargs: {"score": 0, "hits": [], "protective_hits": []})
+    monkeypatch.setattr(f_risk_generator, "compute_case_similarity", lambda **kwargs: {"score_total": 0.1, "strength": "weak", "summary": "", "matched_pre_patterns": [], "usable_f_event_count": 0, "top_case_matches": [], "top_case_match_scores": [], "matched_case_dates": [], "matched_case_types": []})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_build_xy",
+        lambda train, today: (pd.DataFrame({"a":[None], "b":[None], "c":[None], "d":[None], "e":[1], "f":[None], "g":[None], "h":[None], "i":[None], "j":[None]}), pd.Series([0]), pd.DataFrame({"a":[None]}), ["a","b","c","d","e","f","g","h","i","j"], []),
+    )
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    rj = out.debug_summary["risk_json"]
+    assert rj["overall_feature_missing_rate"] >= 0.6
+    assert rj["risk_matched"] is False

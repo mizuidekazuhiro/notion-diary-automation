@@ -215,6 +215,20 @@ def test_mail_shows_f_risk_section_when_matched(monkeypatch) -> None:
     assert "visible" in mail.plain_text
 
 
+def test_mail_hides_expense_f_section_even_when_matched(monkeypatch) -> None:
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
+    monkeypatch.setenv("MAIL_LINK_SECRET", "secret")
+    mail = render_mail(
+        _summary(),
+        expense_f_alert={"matched": True, "title": "望ましくない支出（Fプロパティ）", "summary": "昨日F支出を検知"},
+        f_risk_alert={"matched": False, "alert_text": ""},
+    )
+    assert "望ましくない支出" not in mail.plain_text
+    assert "Fプロパティ" not in mail.plain_text
+    assert "望ましくない支出" not in mail.html_body
+    assert "Fプロパティ" not in mail.html_body
+
+
 def test_mail_weather_uses_human_summary_fallback_when_raw_weather_exists(monkeypatch) -> None:
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
     monkeypatch.setenv("MAIL_LINK_SECRET", "secret")

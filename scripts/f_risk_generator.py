@@ -63,9 +63,27 @@ def _render_f_risk_alert(*, risk_json: dict[str, Any], model: str) -> tuple[Opti
         return None, True, f"gpt_failed:{type(exc).__name__}"
 
 
-def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str) -> FRiskResult:
+def generate_f_risk(
+    *,
+    daily_log_read_url: str,
+    bearer_token: Optional[str],
+    target_date: Optional[str] = None,
+    prediction_date: Optional[str] = None,
+    training_end_date: Optional[str] = None,
+    daily_log_context_date: Optional[str] = None,
+) -> FRiskResult:
+    prediction_date = (prediction_date or target_date or "").strip()
+    if not prediction_date:
+        raise ValueError("prediction_date (or target_date) is required")
+    prediction_dt = datetime.strptime(prediction_date, "%Y-%m-%d")
+    default_training_end_date = (prediction_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    training_end_date = (training_end_date or default_training_end_date).strip()
+    daily_log_context_date = (daily_log_context_date or training_end_date).strip()
     risk_json: dict[str, Any] = {
-        "target_date": target_date,
+        "target_date": prediction_date,
+        "prediction_date": prediction_date,
+        "training_end_date": training_end_date,
+        "daily_log_context_date": daily_log_context_date,
         "risk_matched": False,
         "risk_probability_recent": None,
         "risk_probability_longterm": None,
@@ -85,7 +103,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         "forbidden_inputs_used": False,
     }
     history_days = max(60, int(os.getenv("F_RISK_HISTORY_DAYS", "365") or "365"))
-    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=history_days)
+    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=training_end_date, days=history_days)
     histories = _hydrate_expense_f_from_expenses_db(histories)
     logging.info(
         "f_risk_history_source source=expenses_db_direct target_date=%s history_days=%s",
@@ -124,8 +142,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     df = build_daily_feature_table(histories, labels)
     work = df.copy().sort_values("date").reset_index(drop=True)
     work["f_event_flag"] = (work["expense_f_count"].fillna(0) > 0).astype(int)
-    train = work.iloc[:-1].copy()
-    today = work.iloc[[-1]].copy()
+    train = work.copy()
     if len(train) < 12:
         risk_json["skipped_reason"] = "insufficient_samples"
         risk_json["no_alert_reason"] = "insufficient_evidence"
@@ -134,14 +151,30 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     post_days = max(1, int(os.getenv("F_RISK_POST_DAYS", "2") or "2"))
     top_matches = max(1, int(os.getenv("F_RISK_TOP_MATCHES", "3") or "3"))
     event_cases = build_f_event_cases(train, pre_days=pre_days, post_days=post_days)
-    recent_case = build_recent_case_signature(work, pre_days=pre_days)
+    today = _build_prediction_row(train, prediction_date=prediction_date, daily_log_context_date=daily_log_context_date)
+    prediction_work = work.tail(0).copy()
+    try:
+        import pandas as pd
+        prediction_work = pd.concat([train, today], ignore_index=True)
+    except Exception:
+        prediction_work = train
+    recent_case = build_recent_case_signature(prediction_work, pre_days=pre_days)
     similarity = compute_case_similarity(recent_case=recent_case, event_cases=event_cases, top_n=top_matches)
 
     pattern_summary = _explore_patterns(train)
     recent_train = train.tail(max(45, min(90, len(train))))
     availability = _build_input_availability(work)
-    recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
-    longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
+    ml_training_days = int(len(train))
+    ml_positive_event_count = int(train["f_event_flag"].sum())
+    has_both_classes = int(train["f_event_flag"].nunique()) >= 2
+    ml_skip_reason = None
+    if ml_training_days < 30 or ml_positive_event_count < 3 or not has_both_classes:
+        ml_skip_reason = "insufficient_ml_training_data"
+        recent_model = {"score": None, "model": None, "skipped_reason": ml_skip_reason, "ml_training_days": ml_training_days, "ml_positive_event_count": ml_positive_event_count}
+        longterm_model = {"score": None, "model": None, "skipped_reason": ml_skip_reason, "ml_training_days": ml_training_days, "ml_positive_event_count": ml_positive_event_count}
+    else:
+        recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
+        longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
     fallback_used = False
     fallback_meta: dict[str, Any] = {}
     if recent_model.get("skipped_reason") and longterm_model.get("skipped_reason"):
@@ -161,19 +194,61 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     confidence = "high" if len(train) >= 60 else "medium" if len(train) >= 30 else "low"
     reliability = "high" if similarity["strength"] == "strong" else "medium" if similarity["strength"] == "medium" else "low"
 
-    rule_meta = _rule_based_fallback(today.iloc[0].to_dict(), availability=availability)
-    rule_count = len(rule_meta.get("matched_factors", []))
+    rule_meta = _score_rule_based_risk(today.iloc[0].to_dict())
+    rule_count = int(rule_meta.get("score", 0))
     high_threshold = float(os.getenv("F_RISK_SIMILARITY_HIGH_THRESHOLD", "0.72") or "0.72")
     medium_threshold = float(os.getenv("F_RISK_SIMILARITY_MEDIUM_THRESHOLD", "0.55") or "0.55")
     sim_total = float(similarity.get("score_total") or 0.0)
     sim_level = str(similarity.get("strength") or "weak")
     case_high = sim_total >= high_threshold
     case_medium_plus_rule = sim_total >= medium_threshold and rule_count >= 2
-    model_support = bool(blended is not None and blended >= 0.62)
-    risk_matched = bool(case_high or case_medium_plus_rule)
+    ml_probability = blended
+    model_support = bool(ml_probability is not None and ml_probability >= 0.62)
+    rule_score = rule_count
+    high = bool((ml_probability is not None and ml_probability >= 0.70) or sim_total >= 0.72 or (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5))
+    medium = bool((ml_probability is not None and ml_probability >= 0.40) or sim_total >= 0.55 or rule_score >= 3)
+    risk_level = "high" if high else "medium" if medium else "low"
+    min_level = str(os.getenv("F_RISK_ALERT_MIN_LEVEL", "high")).strip().lower()
+    risk_matched = high if min_level == "high" else (high or medium)
     if fallback_used:
         blended = _to_float(fallback_meta.get("blended_score"))
 
+    prediction_feature_names = _build_xy(train.copy(), today.copy())[0].columns.tolist()
+    forbidden_feature_names = [
+        "spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta",
+        "study_minutes", "study_sessions", "study_last_used_at", "study_zero_day_streak",
+        "study_heavy_day_flag", "study_under_target_flag", "study_minutes_vs_7d_delta",
+    ]
+    forbidden_used = any(name in prediction_feature_names for name in forbidden_feature_names)
+    today_for_missing = _ensure_columns(today, prediction_feature_names)
+    total_feature_count = len(prediction_feature_names)
+    effective_feature_count = int(today_for_missing[prediction_feature_names].notna().sum(axis=1).iloc[0]) if total_feature_count else 0
+    overall_missing_rate = float(1.0 - (effective_feature_count / max(total_feature_count, 1)))
+    sleep_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "sleep")
+    notes_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "notes")
+    meal_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "kcal")  # meal proxy
+    location_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "location")
+    study_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "study")
+    if overall_missing_rate >= 0.6 or effective_feature_count < 5:
+        confidence = "low"
+        if ml_probability is not None and ml_probability >= 0.70 and not (rule_score >= 3 or sim_total >= 0.55):
+            high = False
+            risk_level = "medium" if medium else "low"
+    # Recalculate final match decision after all quality/missingness corrections.
+    if forbidden_used:
+        risk_matched = False
+    elif min_level == "high":
+        risk_matched = bool(high)
+    else:
+        risk_matched = bool(high or medium)
+    study_feature_names = [
+        "study_minutes_lag_1",
+        "study_minutes_rolling_sum_7d",
+        "study_zero_day_streak",
+        "study_consistency_score_7d",
+    ]
+    available_study_cols = [c for c in study_feature_names if c in prediction_feature_names and c in train.columns]
+    study_has_values = any(train[c].notna().any() for c in available_study_cols) if available_study_cols else False
     risk_json.update(
         {
             "risk_matched": risk_matched,
@@ -233,14 +308,61 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "model_score_recent": recent_score,
             "model_score_longterm": long_score,
             "final_alert_basis": (
-                "case_similarity_high"
-                if case_high
-                else "case_similarity_medium_plus_rules"
-                if case_medium_plus_rule
-                else "no_case_match"
+                "ml_or_similarity_or_rule_threshold"
+                if risk_matched
+                else "below_threshold"
             ),
+            "final_alert_basis_detail": (
+                "forbidden_today_features_used" if forbidden_used else
+                "ml_high_probability" if (ml_probability is not None and ml_probability >= 0.70) else
+                "case_similarity_high" if sim_total >= 0.72 else
+                "ml_medium_plus_rule_high" if (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5) else
+                "rule_only_medium" if rule_score >= 3 else
+                "below_threshold"
+            ),
+            "ml_probability": ml_probability,
+            "ml_model_used": "logistic_regression" if (recent_model.get("score") is not None or longterm_model.get("score") is not None) else None,
+            "ml_skipped_reason": ml_skip_reason or (recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason")),
+            "ml_training_days": ml_training_days,
+            "ml_positive_event_count": ml_positive_event_count,
+            "f_risk_rule_score": int(rule_score),
+            "f_risk_rule_hits": rule_meta.get("hits", []),
+            "f_risk_rule_protective_hits": rule_meta.get("protective_hits", []),
+            "f_risk_level": risk_level,
+            "forbidden_today_features_used": forbidden_used,
+            "forbidden_today_features_used_detail": [name for name in forbidden_feature_names if name in prediction_feature_names],
+            "prediction_feature_names": prediction_feature_names,
+            "excluded_today_feature_names": forbidden_feature_names,
+            "f_risk_backtest_days": int(min(30, len(train))),
+            "f_risk_backtest_precision": None,
+            "f_risk_backtest_recall": None,
+            "f_risk_backtest_false_positive_count": None,
+            "f_risk_backtest_missed_event_count": None,
+            "f_risk_backtest_status": "not_implemented",
+            "f_risk_threshold_used": min_level,
+            "study_features_used": bool(available_study_cols and study_has_values),
+            "study_feature_names": study_feature_names,
+            "study_feature_missing_reason": (
+                None if (available_study_cols and study_has_values)
+                else "study_columns_missing" if not available_study_cols
+                else "study_values_all_null"
+            ),
+            "study_missing_rate": study_missing_rate,
+            "sleep_missing_rate": sleep_missing_rate,
+            "notes_missing_rate": notes_missing_rate,
+            "meal_missing_rate": meal_missing_rate,
+            "location_missing_rate": location_missing_rate,
+            "overall_feature_missing_rate": overall_missing_rate,
+            "effective_feature_count": effective_feature_count,
+            "total_feature_count": total_feature_count,
+            "study_target_minutes_per_day": int(os.getenv("F_RISK_STUDY_TARGET_MINUTES_PER_DAY", "0") or "0"),
+            "study_heavy_day_minutes_threshold": int(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180"),
         }
     )
+    if forbidden_used:
+        risk_json["risk_matched"] = False
+        risk_json["no_alert_reason"] = "forbidden_today_features_used"
+        risk_matched = False
     logging.info(
         "[FRisk][Cases] history_days_loaded=%s f_event_count=%s usable_f_event_count=%s event_case_count=%s top_case_matches=%s",
         risk_json["history_days_loaded"],
@@ -267,7 +389,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     )
     logging.info(
         "f_risk_stage_a_summary target_date=%s feature_count=%s feature_group_counts=%s available=%s unavailable=%s excluded=%s fallback_used=%s model_recent=%s model_long=%s history_count=%s class_balance=%.3f risk_recent=%s risk_long=%s risk_blended=%s matched=%s protective=%s no_alert_reason=%s forbidden_inputs_used=%s",
-        target_date,
+        prediction_date,
         risk_json["feature_count"],
         risk_json["feature_group_counts"],
         risk_json["input_groups_available"],
@@ -421,11 +543,13 @@ def _build_xy(train: Any, today_row: Any):
     features = [
         "sleep_hours_lag_1", "sleep_short_streak", "social_load_streak", "late_work_streak", "exercise_streak",
         "sleep_short_x_social_load", "stress_x_late_work", "drinking_x_low_sleep", "high_carb_x_low_sleep",
-        "spending_total_rolling_mean_7d", "spending_total_rolling_sum_14d", "weather_precip_probability_max_lag_1",
+        "weather_precip_probability_max_lag_1",
         "notes_stress_flag_lag_1", "notes_has_drinking_lag_3", "is_weekend", "place", "location_summary",
         "kcal_vs_7d_delta", "protein_vs_7d_delta", "fat_vs_7d_delta", "task_completion_ratio",
         "drop_vs_7d_delta", "done_vs_7d_delta", "weather_bad_flag", "weather_temp_range_c",
         "late_outing_flag", "multi_stop_flag", "schedule_same_day_event_count",
+        "study_minutes_lag_1", "study_sessions_lag_1", "study_minutes_rolling_sum_7d", "study_minutes_rolling_mean_7d",
+        "study_zero_day_streak_lag_1", "study_heavy_day_flag_lag_1", "study_under_target_flag_lag_1", "study_consistency_score_7d",
     ]
     for feature in features:
         if feature not in train.columns:
@@ -470,6 +594,37 @@ def _derive_protective_features(today: dict[str, Any]) -> list[str]:
     if bool(today.get("notes_has_money_saved")):
         items.append("節約シグナル")
     return items
+
+
+def _score_rule_based_risk(today: dict[str, Any]) -> dict[str, Any]:
+    score = 0
+    hits: list[str] = []
+    protective: list[str] = []
+    if (_to_float(today.get("sleep_hours_lag_1")) or 24) < 6:
+        score += 2
+        hits.append("sleep_hours_lag_1<6")
+    if (_to_float(today.get("sleep_short_streak")) or 0) >= 2:
+        score += 2
+        hits.append("sleep_short_streak>=2")
+    if bool(today.get("notes_stress_flag_lag_1")):
+        score += 2
+        hits.append("notes_stress_flag_lag_1")
+    if bool(today.get("notes_social_load_flag_lag_1")):
+        score += 2
+        hits.append("notes_social_load_flag_lag_1")
+    if bool(today.get("is_weekend")):
+        score += 1
+        hits.append("is_weekend")
+    if (_to_float(today.get("study_zero_day_streak")) or 0) >= 2:
+        score += 2
+        hits.append("study_zero_day_streak>=2")
+    if bool(today.get("notes_has_money_saved_lag_1")):
+        score -= 1
+        protective.append("notes_has_money_saved_lag_1")
+    if (_to_float(today.get("study_consistency_score_7d")) or 0) >= 0.7:
+        score -= 1
+        protective.append("study_consistency_score_7d")
+    return {"score": score, "hits": hits, "protective_hits": protective}
 
 
 def _f_day_similarity(*, train: Any, today: dict[str, Any]) -> dict[str, Any]:
@@ -707,15 +862,27 @@ def _describe_matched_patterns(recent_rows: list[dict[str, Any]]) -> list[str]:
 def _compose_case_alert_text(risk_json: dict[str, Any]) -> Optional[str]:
     if not risk_json.get("risk_matched"):
         return None
-    dates = risk_json.get("matched_case_dates") or []
-    types = risk_json.get("matched_case_types") or []
-    patterns = risk_json.get("matched_pre_patterns") or []
-    if not dates:
-        return None
-    date_text = " と ".join(str(x) for x in dates[:2])
-    pattern_text = "、".join(str(x) for x in patterns[:3]) if patterns else "複数要素"
-    type_text = str(types[0]) if types else "unknown"
-    return f"今日の状態は過去のF支出 {date_text} の前日パターンに近いです。一致要素は {pattern_text} で、類似ケースタイプは {type_text} です。衝動判断を避けるため、支出前に一度間を置くのがおすすめです。"
+    points = risk_json.get("explanation_points") or []
+    basis = "、".join(str(x) for x in points[:3]) if points else "短睡眠・ストレス・過去ケース類似"
+    return (
+        "今日はFリスクが高めです。"
+        f"根拠は、{basis}です。"
+        "今日は大きな支出判断、寄り道、夜の外出、コンビニ・外食の追加購入を避けてください。"
+    )
+
+
+def _build_prediction_row(train: Any, *, prediction_date: str, daily_log_context_date: str) -> Any:
+    # 予測対象日の当日実績を使わないため、学習末尾（日次で通常は昨日）の行を土台に
+    # prediction_date を与えた「今日予測用 row」を作る。これは事後情報リーク防止のため。
+    row = train.tail(1).copy()
+    if len(row) == 0:
+        return train.tail(0).copy()
+    row.loc[:, "date"] = prediction_date
+    row.loc[:, "is_weekend"] = 1 if datetime.strptime(prediction_date, "%Y-%m-%d").weekday() >= 5 else 0
+    for forbidden in ("spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"):
+        if forbidden in row.columns:
+            row.loc[:, forbidden] = None
+    return row
 
 
 def _build_explanation_points(*, matched: list[str], similarity: dict[str, Any], today: dict[str, Any]) -> list[str]:
@@ -749,6 +916,23 @@ def _to_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _missing_rate_for_prefix(today_row: Any, feature_names: list[str], prefix: str) -> float:
+    keys = [name for name in feature_names if name.startswith(prefix)]
+    if not keys:
+        return 1.0
+    safe = _ensure_columns(today_row, keys)
+    row = safe[keys]
+    return float(row.isna().mean(axis=1).iloc[0])
+
+
+def _ensure_columns(df: Any, columns: list[str]) -> Any:
+    out = df.copy()
+    for col in columns:
+        if col not in out.columns:
+            out[col] = None
+    return out
 
 
 def _build_input_availability(work: Any) -> dict[str, Any]:

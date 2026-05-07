@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -104,3 +105,27 @@ def test_notify_diary_phase_does_not_send_mail(monkeypatch):
     monkeypatch.setattr("scripts.daily_job.run_phase_c", lambda *_args, **kwargs: kwargs["deps"].run_notify(SimpleNamespace(target_date="2026-04-01")))
     daily_job.run_notify_diary(_cfg(), "2026-04-01", "r1")
     assert called == []
+
+
+def test_publish_uses_today_jst_for_f_risk_target_date(monkeypatch):
+    summary = _summary(target_date="2026-04-01")
+    captured = {}
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: summary)
+    monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": True, "summary": "detected"})
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **_kwargs: {"updated": True})
+    class MockDateTime:
+        @staticmethod
+        def now(_tz):
+            return dt.datetime(2026, 4, 2, 0, 30, 0, tzinfo=daily_job.JST)
+
+    monkeypatch.setattr("scripts.daily_job.datetime", MockDateTime)
+
+    def _fake_f_risk(_config, *, summary, run_id, target_date_override=None):
+        captured["target_date_override"] = target_date_override
+        return {"matched": False, "alert_text": "", "reason": "ok", "score": 0.1}
+
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", _fake_f_risk)
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    assert captured["target_date_override"] == "2026-04-02"

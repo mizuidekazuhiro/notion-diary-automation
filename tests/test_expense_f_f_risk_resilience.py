@@ -444,12 +444,23 @@ def test_f_risk_case_similarity_alert_and_debug(monkeypatch: pytest.MonkeyPatch)
         return pd.DataFrame({
             "date": dates,
             "expense_f_count": [1 if i in f_days else 0 for i in range(n)],
+            "sleep_hours_lag_1": [5.5 if i in {5, 13, n - 1} else 6.8 for i in range(n)],
             "sleep_short_streak": [2 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "social_load_streak": [2 if i in {5, 13, n - 1} else 0 for i in range(n)],
             "notes_stress_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "notes_stress_flag_lag_1": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
             "notes_social_load_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
             "notes_has_drinking": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "notes_has_drinking_lag_3": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
             "late_outing_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
-            "spending_vs_7d_delta": [3500 if i in {5, 13, n - 1} else 100 for i in range(n)],
+            "task_completion_ratio": [0.2 if i in {5, 13, n - 1} else 0.8 for i in range(n)],
+            "drop_vs_7d_delta": [1.2 if i in {5, 13, n - 1} else -0.1 for i in range(n)],
+            "done_vs_7d_delta": [-1.0 if i in {5, 13, n - 1} else 0.2 for i in range(n)],
+            "study_minutes_lag_1": [0 if i in {5, 13, n - 1} else 120 for i in range(n)],
+            "study_minutes_rolling_sum_7d": [120 if i in {5, 13, n - 1} else 700 for i in range(n)],
+            "study_zero_day_streak_lag_1": [2 if i in {5, 13, n - 1} else 0 for i in range(n)],
+            "study_consistency_score_7d": [0.2 if i in {5, 13, n - 1} else 0.8 for i in range(n)],
+            "weather_bad_flag": [1 if i in {5, 13, n - 1} else 0 for i in range(n)],
             "sleep_score": [65] * n,
             "spending_total": [3000] * n,
             "is_weekend": [0] * n,
@@ -462,7 +473,7 @@ def test_f_risk_case_similarity_alert_and_debug(monkeypatch: pytest.MonkeyPatch)
     assert risk_json["risk_matched"] is True
     assert risk_json["matched_case_dates"]
     assert risk_json["matched_pre_patterns"]
-    assert risk_json["final_alert_basis"] in {"case_similarity_high", "case_similarity_medium_plus_rules", "model_assisted_case_similarity"}
+    assert risk_json["final_alert_basis"] in {"ml_or_similarity_or_rule_threshold", "case_similarity_high", "case_similarity_medium_plus_rules", "model_assisted_case_similarity"}
 
 
 def test_f_risk_case_similarity_weak_no_alert(monkeypatch: pytest.MonkeyPatch) -> None:

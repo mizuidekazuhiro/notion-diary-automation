@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
@@ -198,6 +199,10 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "high_fat_flag": bool(_safe_float(item.fat) is not None and float(item.fat) > 75.0),
                 "high_carb_flag": bool(_safe_float(item.carb) is not None and float(item.carb) > 320.0),
                 "spending_total": _safe_float(item.expenses_total),
+                "study_minutes": _safe_float(getattr(item, "study_minutes", None)),
+                "study_sessions": _safe_float(getattr(item, "study_sessions", None)),
+                "study_last_used_at": str(getattr(item, "study_last_used_at", "") or ""),
+                "study_logged_flag": bool((_safe_float(getattr(item, "study_minutes", None)) or 0) > 0),
                 "expense_f_count": _safe_float(item.expense_f_count),
                 "expense_f_total": _safe_float(item.expense_f_total),
                 "transport_spend_like_flag": bool(re.search(r"交通|電車|タクシー|バス", notes_text + activity_text)),
@@ -313,6 +318,9 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
         "notes_has_late_work",
         "notes_has_exercise",
         "carb",
+        "study_minutes",
+        "study_sessions",
+        "study_logged_flag",
     ]
     derived_cols: dict[str, Any] = {}
     for col in lag_targets:
@@ -331,7 +339,32 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
     derived_cols["social_load_flag"] = df["notes_social_load_flag"].fillna(False).astype(int)
     derived_cols["late_work_flag"] = df["notes_has_late_work"].fillna(False).astype(int) if "notes_has_late_work" in df else 0
     derived_cols["exercise_flag"] = df["notes_has_exercise"].fillna(False).astype(int) if "notes_has_exercise" in df else 0
+    if "study_minutes" in df.columns:
+        study_series = pd.to_numeric(df["study_minutes"], errors="coerce")
+        study_baseline_7d = study_series.rolling(7, min_periods=2).mean().shift(1)
+        derived_cols["study_minutes_vs_7d_delta"] = study_series - study_baseline_7d
+        target_minutes_raw = os.getenv("F_RISK_STUDY_TARGET_MINUTES_PER_DAY", "").strip()
+        target_minutes = float(target_minutes_raw) if target_minutes_raw else None
+        heavy_threshold = float(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180")
+        derived_cols["study_under_target_flag"] = (
+            (study_series < target_minutes).astype(int) if target_minutes is not None else pd.Series([0] * len(df), index=df.index)
+        )
+        derived_cols["study_heavy_day_flag"] = ((study_series >= heavy_threshold) | (study_series >= (study_baseline_7d.fillna(0) + 90))).astype(int)
+        logged = df["study_logged_flag"].fillna(False).astype(int) if "study_logged_flag" in df else pd.Series([0] * len(df), index=df.index)
+        derived_cols["study_consistency_score_7d"] = logged.rolling(7, min_periods=1).mean().shift(1)
+        zero_streak = []
+        streak = 0
+        for value in logged.tolist():
+            if int(value) == 0:
+                streak += 1
+            else:
+                streak = 0
+            zero_streak.append(streak)
+        derived_cols["study_zero_day_streak"] = zero_streak
     df = pd.concat([df, pd.DataFrame(derived_cols, index=df.index)], axis=1).copy()
+    for col in ("study_zero_day_streak", "study_heavy_day_flag", "study_under_target_flag", "study_minutes_vs_7d_delta"):
+        if col in df.columns:
+            df[f"{col}_lag_1"] = pd.to_numeric(df[col], errors="coerce").shift(1)
 
     streak_cols: dict[str, Any] = {}
     for src, out in [
