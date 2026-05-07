@@ -151,15 +151,30 @@ def generate_f_risk(
     post_days = max(1, int(os.getenv("F_RISK_POST_DAYS", "2") or "2"))
     top_matches = max(1, int(os.getenv("F_RISK_TOP_MATCHES", "3") or "3"))
     event_cases = build_f_event_cases(train, pre_days=pre_days, post_days=post_days)
-    recent_case = build_recent_case_signature(work, pre_days=pre_days)
+    today = _build_prediction_row(train, prediction_date=prediction_date, daily_log_context_date=daily_log_context_date)
+    prediction_work = work.tail(0).copy()
+    try:
+        import pandas as pd
+        prediction_work = pd.concat([train, today], ignore_index=True)
+    except Exception:
+        prediction_work = train
+    recent_case = build_recent_case_signature(prediction_work, pre_days=pre_days)
     similarity = compute_case_similarity(recent_case=recent_case, event_cases=event_cases, top_n=top_matches)
 
     pattern_summary = _explore_patterns(train)
     recent_train = train.tail(max(45, min(90, len(train))))
     availability = _build_input_availability(work)
-    today = _build_prediction_row(train, prediction_date=prediction_date, daily_log_context_date=daily_log_context_date)
-    recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
-    longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
+    ml_training_days = int(len(train))
+    ml_positive_event_count = int(train["f_event_flag"].sum())
+    has_both_classes = int(train["f_event_flag"].nunique()) >= 2
+    ml_skip_reason = None
+    if ml_training_days < 30 or ml_positive_event_count < 3 or not has_both_classes:
+        ml_skip_reason = "insufficient_ml_training_data"
+        recent_model = {"score": None, "model": None, "skipped_reason": ml_skip_reason, "ml_training_days": ml_training_days, "ml_positive_event_count": ml_positive_event_count}
+        longterm_model = {"score": None, "model": None, "skipped_reason": ml_skip_reason, "ml_training_days": ml_training_days, "ml_positive_event_count": ml_positive_event_count}
+    else:
+        recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
+        longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
     fallback_used = False
     fallback_meta: dict[str, Any] = {}
     if recent_model.get("skipped_reason") and longterm_model.get("skipped_reason"):
@@ -188,6 +203,7 @@ def generate_f_risk(
     case_high = sim_total >= high_threshold
     case_medium_plus_rule = sim_total >= medium_threshold and rule_count >= 2
     ml_probability = blended
+    model_support = bool(ml_probability is not None and ml_probability >= 0.62)
     rule_score = rule_count
     high = bool((ml_probability is not None and ml_probability >= 0.70) or sim_total >= 0.72 or (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5))
     medium = bool((ml_probability is not None and ml_probability >= 0.40) or sim_total >= 0.55 or rule_score >= 3)
@@ -197,6 +213,9 @@ def generate_f_risk(
     if fallback_used:
         blended = _to_float(fallback_meta.get("blended_score"))
 
+    prediction_feature_names = _build_xy(train.copy(), today.copy())[0].columns.tolist()
+    forbidden_feature_names = ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"]
+    forbidden_used = any(name in prediction_feature_names for name in forbidden_feature_names)
     risk_json.update(
         {
             "risk_matched": risk_matched,
@@ -261,24 +280,28 @@ def generate_f_risk(
                 else "below_threshold"
             ),
             "ml_probability": ml_probability,
-            "ml_model_used": "logistic_regression",
-            "ml_skipped_reason": recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason"),
-            "ml_training_days": int(len(train)),
-            "ml_positive_event_count": int(train["f_event_flag"].sum()),
+            "ml_model_used": "logistic_regression" if (recent_model.get("score") is not None or longterm_model.get("score") is not None) else None,
+            "ml_skipped_reason": ml_skip_reason or (recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason")),
+            "ml_training_days": ml_training_days,
+            "ml_positive_event_count": ml_positive_event_count,
             "f_risk_rule_score": int(rule_score),
             "f_risk_level": risk_level,
-            "forbidden_today_features_used": False,
-            "forbidden_today_features_used_detail": [],
-            "prediction_feature_names": _build_xy(train.copy(), today.copy())[0].columns.tolist(),
-            "excluded_today_feature_names": ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"],
+            "forbidden_today_features_used": forbidden_used,
+            "forbidden_today_features_used_detail": [name for name in forbidden_feature_names if name in prediction_feature_names],
+            "prediction_feature_names": prediction_feature_names,
+            "excluded_today_feature_names": forbidden_feature_names,
             "f_risk_backtest_days": int(min(30, len(train))),
             "f_risk_backtest_precision": None,
             "f_risk_backtest_recall": None,
-            "f_risk_backtest_false_positive_count": 0,
-            "f_risk_backtest_missed_event_count": 0,
+            "f_risk_backtest_false_positive_count": None,
+            "f_risk_backtest_missed_event_count": None,
+            "f_risk_backtest_status": "not_implemented",
             "f_risk_threshold_used": min_level,
         }
     )
+    if forbidden_used:
+        risk_json["risk_matched"] = False
+        risk_json["no_alert_reason"] = "forbidden_today_features_used"
     logging.info(
         "[FRisk][Cases] history_days_loaded=%s f_event_count=%s usable_f_event_count=%s event_case_count=%s top_case_matches=%s",
         risk_json["history_days_loaded"],
@@ -755,6 +778,8 @@ def _compose_case_alert_text(risk_json: dict[str, Any]) -> Optional[str]:
 
 
 def _build_prediction_row(train: Any, *, prediction_date: str, daily_log_context_date: str) -> Any:
+    # 予測対象日の当日実績を使わないため、学習末尾（日次で通常は昨日）の行を土台に
+    # prediction_date を与えた「今日予測用 row」を作る。これは事後情報リーク防止のため。
     row = train.tail(1).copy()
     if len(row) == 0:
         return train.tail(0).copy()
