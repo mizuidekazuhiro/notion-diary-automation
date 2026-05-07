@@ -16,9 +16,10 @@ def _should_create_issue(status: str, threshold: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prepare GitHub issue body for daily mail quality review.")
+    parser = argparse.ArgumentParser(description="Prepare GitHub issue title/body for daily mail quality review.")
     parser.add_argument("--report", default="artifacts/daily_mail/quality_report.json")
     parser.add_argument("--issue-body", default="artifacts/daily_mail/issue_body.md")
+    parser.add_argument("--issue-title", default="artifacts/daily_mail/issue_title.txt")
     parser.add_argument("--run-url", default="")
     parser.add_argument("--threshold", default=os.getenv("DAILY_MAIL_QUALITY_CREATE_ISSUE_ON", "warning"))
     args = parser.parse_args()
@@ -35,6 +36,7 @@ def main() -> int:
         return 0
 
     target_date = str(report.get("target_date") or "unknown")
+    title = f"[Daily Mail Quality] {target_date} needs review"
     lines = [
         f"# Daily mail quality needs review - {target_date}",
         "",
@@ -71,8 +73,11 @@ def main() -> int:
     ])
 
     issue_body_path = Path(args.issue_body)
+    issue_title_path = Path(args.issue_title)
     issue_body_path.parent.mkdir(parents=True, exist_ok=True)
+    issue_title_path.parent.mkdir(parents=True, exist_ok=True)
     issue_body_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    issue_title_path.write_text(title + "\n", encoding="utf-8")
     print(f"daily_mail_quality_issue_body_prepared path={issue_body_path} target_date={target_date} status={status}")
     return 0
 
