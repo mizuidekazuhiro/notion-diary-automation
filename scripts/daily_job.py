@@ -229,12 +229,23 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     )
 
     expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
-    f_risk_alert = _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    f_risk_target_date = datetime.now(JST).date().isoformat()
+    f_risk_alert = _compute_f_risk_alert_runtime(
+        config,
+        summary=summary,
+        run_id=run_id,
+        target_date_override=f_risk_target_date,
+    )
+    expense_f_alert_for_render = {"matched": False}
+    f_risk_alert_rendered = bool(f_risk_alert.get("matched")) and bool(str(f_risk_alert.get("alert_text") or "").strip())
     logging.info(
-        "mail_render_context target_date=%s f_risk_section_rendered=%s expense_f_section_rendered=%s",
+        "mail_render_context daily_log_target_date=%s f_risk_target_date=%s f_risk_alert_rendered=%s expense_f_alert_rendered=%s f_risk_reason=%s f_risk_score=%s",
         summary.target_date,
-        bool(f_risk_alert.get("matched")),
-        bool(expense_f_alert.get("matched")),
+        f_risk_target_date,
+        f_risk_alert_rendered,
+        False,
+        str(f_risk_alert.get("reason") or ""),
+        f_risk_alert.get("score"),
     )
     weather_summary_source = "saved" if (summary.weather_summary or "").strip() else ("fallback_from_raw" if any(value is not None for value in (summary.weather_code, summary.weather_temp_max_c, summary.weather_temp_min_c, summary.weather_precip_probability_max)) else "empty")
     weather_summary_text = (summary.weather_summary or "").strip()
@@ -243,7 +254,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         weather_summary_source,
         weather_summary_text,
     )
-    mail = render_mail(summary, expense_f_alert=expense_f_alert, f_risk_alert=f_risk_alert)
+    mail = render_mail(summary, expense_f_alert=expense_f_alert_for_render, f_risk_alert=f_risk_alert)
     weather_section_rendered_html = "Weather" in mail.html_body
     weather_section_rendered_text = "Weather" in mail.plain_text
     logging.info(
@@ -258,7 +269,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         mail_cc=config.mail_cc,
         mail_bcc=config.mail_bcc,
     )
-    input_snapshot = build_mail_input_snapshot(summary, expense_f_alert=expense_f_alert, f_risk_alert=f_risk_alert)
+    input_snapshot = build_mail_input_snapshot(summary, expense_f_alert=expense_f_alert_for_render, f_risk_alert=f_risk_alert)
     input_snapshot_raw = snapshot_json(input_snapshot)
     current_input_hash = sha256_hex(input_snapshot_raw)
     previous_input_hash = ((getattr(summary, "mail_input_hash", None) or "").strip() or None)
@@ -1314,9 +1325,11 @@ def _compute_f_risk_alert_runtime(
     *,
     summary: "DailyLogSummary",
     run_id: str,
+    target_date_override: Optional[str] = None,
 ) -> dict[str, Any]:
-    logging.info("f_risk_runtime_start source=f_risk_runtime target_date(JST)=%s run_id=%s", summary.target_date, run_id)
-    expense_f_aggregate = aggregate_daily_expense_f(summary.target_date)
+    f_risk_target_date = (target_date_override or summary.target_date).strip()
+    logging.info("f_risk_runtime_start source=f_risk_runtime target_date(JST)=%s run_id=%s", f_risk_target_date, run_id)
+    expense_f_aggregate = aggregate_daily_expense_f(f_risk_target_date)
     store = FRiskStateStore()
     if store.meta.backend == "unavailable":
         logging.warning(
@@ -1329,9 +1342,9 @@ def _compute_f_risk_alert_runtime(
             store.meta.path,
             store.meta.fallback_used,
         )
-    previous_state = store.get_for_date(summary.target_date)
+    previous_state = store.get_for_date(f_risk_target_date)
     hash_payload = {
-        "target_date": summary.target_date,
+        "target_date": f_risk_target_date,
         "sleep": {
             "sleep_hours": summary.resolved_sleep_duration_hours,
             "sleep_score": summary.sleep_score,
@@ -1356,7 +1369,7 @@ def _compute_f_risk_alert_runtime(
     )
     logging.info(
         "f_risk_runtime_input_summary source=f_risk_runtime target_date(JST)=%s run_id=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s skip_recompute=%s reuse_previous_state=%s state_store_backend=%s state_read_ok=%s branch_name=%s path=%s fallback_used=%s debug_summary=%s",
-        summary.target_date,
+        f_risk_target_date,
         run_id,
         current_input_hash,
         previous_input_hash,
@@ -1383,7 +1396,7 @@ def _compute_f_risk_alert_runtime(
             matched_patterns = []
         logging.info(
             "f_risk_runtime_skip_recompute source=f_risk_runtime target_date=%s run_id=%s skip_reason=unchanged_input reuse_previous_state=true",
-            summary.target_date,
+            f_risk_target_date,
             run_id,
         )
         return {
@@ -1409,13 +1422,13 @@ def _compute_f_risk_alert_runtime(
         result = generate_f_risk(
             daily_log_read_url=config.daily_log_read_url,
             bearer_token=config.bearer_token,
-            target_date=summary.target_date,
+            target_date=f_risk_target_date,
         )
     except Exception as exc:  # noqa: BLE001
         soft_fail = str(os.getenv("F_RISK_SOFT_FAIL", "true")).strip().lower() not in {"0", "false", "no", "off"}
         logging.exception(
             "phase_c_f_risk_failed target_date(JST)=%s run_id=%s reason=%s",
-            summary.target_date,
+            f_risk_target_date,
             run_id,
             str(exc),
         )
@@ -1423,7 +1436,7 @@ def _compute_f_risk_alert_runtime(
             raise
         logging.info(
             "phase_c_f_risk_continue target_date(JST)=%s run_id=%s continue=true f_risk_soft_fail=%s",
-            summary.target_date,
+            f_risk_target_date,
             run_id,
             soft_fail,
         )
@@ -1448,7 +1461,7 @@ def _compute_f_risk_alert_runtime(
     if result.skip_reason:
         logging.info(
             "[FRisk] source=f_risk_runtime target_date=%s skip_reason=%s state_store_backend=%s risk_matched=false score=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
-            summary.target_date,
+            f_risk_target_date,
             result.skip_reason,
             store.meta.backend,
             result.score,
@@ -1464,10 +1477,10 @@ def _compute_f_risk_alert_runtime(
         "alert_text": result.alert_text,
         "no_alert_reason": (result.debug_summary.get("risk_json") or {}).get("no_alert_reason"),
     }
-    state_write_ok = store.save_for_date(summary.target_date, row)
+    state_write_ok = store.save_for_date(f_risk_target_date, row)
     logging.info(
         "f_risk_runtime_result source=f_risk_runtime target_date=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s state_store_backend=%s state_read_ok=%s state_write_ok=%s branch_name=%s path=%s fallback_used=%s risk_matched=%s score=%s skip_reason=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
-        summary.target_date,
+        f_risk_target_date,
         current_input_hash,
         previous_input_hash,
         input_changed,
