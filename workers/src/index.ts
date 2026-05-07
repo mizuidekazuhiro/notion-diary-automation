@@ -4702,6 +4702,35 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
+  const studyMinutesPropertyName = resolvePropertyName(
+    properties,
+    "Study Minutes",
+    "daily_log_read:study_minutes",
+    ["study_minutes"],
+  );
+  const studySessionsPropertyName = resolvePropertyName(
+    properties,
+    "Study Sessions",
+    "daily_log_read:study_sessions",
+    ["study_sessions"],
+  );
+  const studyLastUsedAtPropertyName = resolvePropertyName(
+    properties,
+    "Study Last Used At",
+    "daily_log_read:study_last_used_at",
+    ["study_last_used_at"],
+  );
+  const studyMinutes = studyMinutesPropertyName
+    ? getNumberFromProperty(properties[studyMinutesPropertyName])
+    : null;
+  const studySessions = studySessionsPropertyName
+    ? getNumberFromProperty(properties[studySessionsPropertyName])
+    : null;
+  const studyLastUsedAt = studyLastUsedAtPropertyName
+    ? getDateTimeFromProperty(properties[studyLastUsedAtPropertyName]) ||
+      getStringFromProperty(properties[studyLastUsedAtPropertyName]) ||
+      null
+    : null;
   const weatherPropertyName = resolveExactPropertyName(
     properties,
     getWeatherPropertyName(env),
@@ -4957,6 +4986,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       sleep_analysis_jp: sleepAnalysisJp,
       today_condition_forecast_jp: todayConditionForecastJp,
       today_advice: todayAdvice,
+      study_minutes: studyMinutes,
+      study_sessions: studySessions,
+      study_last_used_at: studyLastUsedAt,
       diary_input_hash: diaryInputHash,
       today_advice_input_hash: todayAdviceInputHash,
       diary_generated_at: diaryGeneratedAt,
