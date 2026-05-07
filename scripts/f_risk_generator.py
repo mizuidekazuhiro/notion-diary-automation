@@ -220,14 +220,15 @@ def generate_f_risk(
         "study_heavy_day_flag", "study_under_target_flag", "study_minutes_vs_7d_delta",
     ]
     forbidden_used = any(name in prediction_feature_names for name in forbidden_feature_names)
+    today_for_missing = _ensure_columns(today, prediction_feature_names)
     total_feature_count = len(prediction_feature_names)
-    effective_feature_count = int(today[prediction_feature_names].notna().sum(axis=1).iloc[0]) if total_feature_count else 0
+    effective_feature_count = int(today_for_missing[prediction_feature_names].notna().sum(axis=1).iloc[0]) if total_feature_count else 0
     overall_missing_rate = float(1.0 - (effective_feature_count / max(total_feature_count, 1)))
-    sleep_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "sleep")
-    notes_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "notes")
-    meal_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "kcal")  # meal proxy
-    location_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "location")
-    study_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "study")
+    sleep_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "sleep")
+    notes_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "notes")
+    meal_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "kcal")  # meal proxy
+    location_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "location")
+    study_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "study")
     if overall_missing_rate >= 0.6 or effective_feature_count < 5:
         confidence = "low"
         if ml_probability is not None and ml_probability >= 0.70 and not (rule_score >= 3 or sim_total >= 0.55):
@@ -239,7 +240,7 @@ def generate_f_risk(
         "study_zero_day_streak",
         "study_consistency_score_7d",
     ]
-    available_study_cols = [c for c in study_feature_names if c in prediction_feature_names]
+    available_study_cols = [c for c in study_feature_names if c in prediction_feature_names and c in train.columns]
     study_has_values = any(train[c].notna().any() for c in available_study_cols) if available_study_cols else False
     risk_json.update(
         {
@@ -913,8 +914,17 @@ def _missing_rate_for_prefix(today_row: Any, feature_names: list[str], prefix: s
     keys = [name for name in feature_names if name.startswith(prefix)]
     if not keys:
         return 1.0
-    row = today_row[keys]
+    safe = _ensure_columns(today_row, keys)
+    row = safe[keys]
     return float(row.isna().mean(axis=1).iloc[0])
+
+
+def _ensure_columns(df: Any, columns: list[str]) -> Any:
+    out = df.copy()
+    for col in columns:
+        if col not in out.columns:
+            out[col] = None
+    return out
 
 
 def _build_input_availability(work: Any) -> dict[str, Any]:

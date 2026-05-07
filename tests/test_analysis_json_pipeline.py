@@ -277,3 +277,29 @@ def test_missing_rate_fields_exist_in_risk_json(monkeypatch: pytest.MonkeyPatch)
     assert "overall_feature_missing_rate" in rj
     assert "effective_feature_count" in rj
     assert "study_missing_rate" in rj
+
+
+def test_generate_f_risk_does_not_crash_when_prediction_feature_names_missing_in_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "is_weekend":[0]*len(histories)}),
+    )
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_build_xy",
+        lambda train, today: (
+            pd.DataFrame({"sleep_hours_lag_1":[None], "study_consistency_score_7d":[None]}),
+            pd.Series([0]),
+            pd.DataFrame({"sleep_hours_lag_1":[None], "study_consistency_score_7d":[None]}),
+            ["sleep_hours_lag_1", "study_consistency_score_7d"],
+            [],
+        ),
+    )
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    assert "overall_feature_missing_rate" in out.debug_summary["risk_json"]
+    assert out.debug_summary["risk_json"]["study_features_used"] is False
