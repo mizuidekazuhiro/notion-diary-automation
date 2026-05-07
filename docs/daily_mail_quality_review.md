@@ -1,15 +1,22 @@
 # Daily mail quality review
 
-Phase D can export a privacy-conscious quality report for the rendered Daily Log mail after `python scripts/daily_job.py --phase publish` runs.
+Phase D exports a privacy-conscious quality report for the rendered Daily Log mail after `python scripts/daily_job.py --phase publish` runs.
 
-## Default behavior
+## Default artifacts
 
 The workflow writes these artifacts under `artifacts/daily_mail`:
 
 - `quality_report.json`
 - `quality_report.md`
 
-The report stores section presence, lengths, issue codes, and suggested fix areas. It does **not** store the full mail body by default because this repository may be public and the mail can include diary, sleep, health, study, and other private data.
+When review is needed, it also prepares:
+
+- `issue_title.txt`
+- `issue_body.md`
+
+The report stores section presence, lengths, issue codes, and suggested fix areas. It does **not** store the full mail body because this repository may be public and the mail can include diary, sleep, health, study, and other private data.
+
+## Issue behavior
 
 If the quality report is `warning` or `fail`, the workflow creates or comments on a GitHub Issue titled:
 
@@ -19,26 +26,7 @@ If the quality report is `warning` or `fail`, the workflow creates or comments o
 
 The issue body includes a Codex task prompt, but it does not auto-merge any changes.
 
-## Optional full-body artifacts
-
-Set this repository variable only if you explicitly accept storing the rendered mail body as a GitHub Actions artifact:
-
-```text
-DAILY_MAIL_ARTIFACT_INCLUDE_BODY=true
-```
-
-When enabled, the workflow also writes:
-
-- `mail_plain_text.redacted.txt`
-- `mail_html.redacted.html`
-
-Mail action tokens in links are redacted, but the mail content itself can still contain private information.
-
-## Issue threshold
-
-By default, GitHub Issues are created for `warning` and `fail` reports.
-
-To create Issues only for hard failures, set:
+To create Issues only for hard failures, set this repository variable:
 
 ```text
 DAILY_MAIL_QUALITY_CREATE_ISSUE_ON=fail
@@ -48,6 +36,8 @@ Valid values:
 
 - `warning`
 - `fail`
+
+The default is `warning`.
 
 ## Current checks
 
@@ -75,3 +65,15 @@ DAILY_MAIL_TODAY_ADVICE_MAX_CHARS=380
 ```
 
 Override them as repository variables or workflow environment variables if the output policy changes.
+
+## Safety boundaries
+
+This implementation intentionally does not:
+
+- send the mail again during quality export
+- auto-merge code changes
+- save full rendered mail bodies
+- include diary, sleep, health, or study details in the GitHub Issue body
+- read Gmail directly
+
+The quality export reuses the existing Daily Log read endpoint and mail renderer to check whether the rendered output includes the expected sections.
