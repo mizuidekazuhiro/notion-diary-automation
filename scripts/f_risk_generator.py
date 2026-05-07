@@ -234,6 +234,13 @@ def generate_f_risk(
         if ml_probability is not None and ml_probability >= 0.70 and not (rule_score >= 3 or sim_total >= 0.55):
             high = False
             risk_level = "medium" if medium else "low"
+    # Recalculate final match decision after all quality/missingness corrections.
+    if forbidden_used:
+        risk_matched = False
+    elif min_level == "high":
+        risk_matched = bool(high)
+    else:
+        risk_matched = bool(high or medium)
     study_feature_names = [
         "study_minutes_lag_1",
         "study_minutes_rolling_sum_7d",
@@ -306,6 +313,7 @@ def generate_f_risk(
                 else "below_threshold"
             ),
             "final_alert_basis_detail": (
+                "forbidden_today_features_used" if forbidden_used else
                 "ml_high_probability" if (ml_probability is not None and ml_probability >= 0.70) else
                 "case_similarity_high" if sim_total >= 0.72 else
                 "ml_medium_plus_rule_high" if (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5) else

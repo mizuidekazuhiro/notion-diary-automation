@@ -303,3 +303,28 @@ def test_generate_f_risk_does_not_crash_when_prediction_feature_names_missing_in
     out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
     assert "overall_feature_missing_rate" in out.debug_summary["risk_json"]
     assert out.debug_summary["risk_json"]["study_features_used"] is False
+
+
+def test_high_ml_is_downgraded_under_high_missingness_when_no_rule_or_similarity_support(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setenv("F_RISK_ALERT_MIN_LEVEL", "high")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "build_daily_feature_table",
+        lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "is_weekend":[0]*len(histories)}),
+    )
+    monkeypatch.setattr(f_risk_generator, "_fit_model", lambda *args, **kwargs: {"score": 0.8, "model": "logistic_regression", "skipped_reason": None})
+    monkeypatch.setattr(f_risk_generator, "_score_rule_based_risk", lambda *_args, **_kwargs: {"score": 0, "hits": [], "protective_hits": []})
+    monkeypatch.setattr(f_risk_generator, "compute_case_similarity", lambda **kwargs: {"score_total": 0.1, "strength": "weak", "summary": "", "matched_pre_patterns": [], "usable_f_event_count": 0, "top_case_matches": [], "top_case_match_scores": [], "matched_case_dates": [], "matched_case_types": []})
+    monkeypatch.setattr(
+        f_risk_generator,
+        "_build_xy",
+        lambda train, today: (pd.DataFrame({"a":[None], "b":[None], "c":[None], "d":[None], "e":[1], "f":[None], "g":[None], "h":[None], "i":[None], "j":[None]}), pd.Series([0]), pd.DataFrame({"a":[None]}), ["a","b","c","d","e","f","g","h","i","j"], []),
+    )
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    rj = out.debug_summary["risk_json"]
+    assert rj["overall_feature_missing_rate"] >= 0.6
+    assert rj["risk_matched"] is False
