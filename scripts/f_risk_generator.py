@@ -63,9 +63,27 @@ def _render_f_risk_alert(*, risk_json: dict[str, Any], model: str) -> tuple[Opti
         return None, True, f"gpt_failed:{type(exc).__name__}"
 
 
-def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str) -> FRiskResult:
+def generate_f_risk(
+    *,
+    daily_log_read_url: str,
+    bearer_token: Optional[str],
+    target_date: Optional[str] = None,
+    prediction_date: Optional[str] = None,
+    training_end_date: Optional[str] = None,
+    daily_log_context_date: Optional[str] = None,
+) -> FRiskResult:
+    prediction_date = (prediction_date or target_date or "").strip()
+    if not prediction_date:
+        raise ValueError("prediction_date (or target_date) is required")
+    prediction_dt = datetime.strptime(prediction_date, "%Y-%m-%d")
+    default_training_end_date = (prediction_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    training_end_date = (training_end_date or default_training_end_date).strip()
+    daily_log_context_date = (daily_log_context_date or training_end_date).strip()
     risk_json: dict[str, Any] = {
-        "target_date": target_date,
+        "target_date": prediction_date,
+        "prediction_date": prediction_date,
+        "training_end_date": training_end_date,
+        "daily_log_context_date": daily_log_context_date,
         "risk_matched": False,
         "risk_probability_recent": None,
         "risk_probability_longterm": None,
@@ -85,7 +103,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
         "forbidden_inputs_used": False,
     }
     history_days = max(60, int(os.getenv("F_RISK_HISTORY_DAYS", "365") or "365"))
-    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=history_days)
+    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=training_end_date, days=history_days)
     histories = _hydrate_expense_f_from_expenses_db(histories)
     logging.info(
         "f_risk_history_source source=expenses_db_direct target_date=%s history_days=%s",
@@ -124,8 +142,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     df = build_daily_feature_table(histories, labels)
     work = df.copy().sort_values("date").reset_index(drop=True)
     work["f_event_flag"] = (work["expense_f_count"].fillna(0) > 0).astype(int)
-    train = work.iloc[:-1].copy()
-    today = work.iloc[[-1]].copy()
+    train = work.copy()
     if len(train) < 12:
         risk_json["skipped_reason"] = "insufficient_samples"
         risk_json["no_alert_reason"] = "insufficient_evidence"
@@ -140,6 +157,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     pattern_summary = _explore_patterns(train)
     recent_train = train.tail(max(45, min(90, len(train))))
     availability = _build_input_availability(work)
+    today = _build_prediction_row(train, prediction_date=prediction_date, daily_log_context_date=daily_log_context_date)
     recent_model = _fit_model(recent_train, today, sample_weight_mode="uniform")
     longterm_model = _fit_model(train, today, sample_weight_mode="recency_decay")
     fallback_used = False
@@ -169,8 +187,13 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     sim_level = str(similarity.get("strength") or "weak")
     case_high = sim_total >= high_threshold
     case_medium_plus_rule = sim_total >= medium_threshold and rule_count >= 2
-    model_support = bool(blended is not None and blended >= 0.62)
-    risk_matched = bool(case_high or case_medium_plus_rule)
+    ml_probability = blended
+    rule_score = rule_count
+    high = bool((ml_probability is not None and ml_probability >= 0.70) or sim_total >= 0.72 or (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5))
+    medium = bool((ml_probability is not None and ml_probability >= 0.40) or sim_total >= 0.55 or rule_score >= 3)
+    risk_level = "high" if high else "medium" if medium else "low"
+    min_level = str(os.getenv("F_RISK_ALERT_MIN_LEVEL", "high")).strip().lower()
+    risk_matched = high if min_level == "high" else (high or medium)
     if fallback_used:
         blended = _to_float(fallback_meta.get("blended_score"))
 
@@ -233,12 +256,27 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
             "model_score_recent": recent_score,
             "model_score_longterm": long_score,
             "final_alert_basis": (
-                "case_similarity_high"
-                if case_high
-                else "case_similarity_medium_plus_rules"
-                if case_medium_plus_rule
-                else "no_case_match"
+                "ml_or_similarity_or_rule_threshold"
+                if risk_matched
+                else "below_threshold"
             ),
+            "ml_probability": ml_probability,
+            "ml_model_used": "logistic_regression",
+            "ml_skipped_reason": recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason"),
+            "ml_training_days": int(len(train)),
+            "ml_positive_event_count": int(train["f_event_flag"].sum()),
+            "f_risk_rule_score": int(rule_score),
+            "f_risk_level": risk_level,
+            "forbidden_today_features_used": False,
+            "forbidden_today_features_used_detail": [],
+            "prediction_feature_names": _build_xy(train.copy(), today.copy())[0].columns.tolist(),
+            "excluded_today_feature_names": ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"],
+            "f_risk_backtest_days": int(min(30, len(train))),
+            "f_risk_backtest_precision": None,
+            "f_risk_backtest_recall": None,
+            "f_risk_backtest_false_positive_count": 0,
+            "f_risk_backtest_missed_event_count": 0,
+            "f_risk_threshold_used": min_level,
         }
     )
     logging.info(
@@ -267,7 +305,7 @@ def generate_f_risk(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     )
     logging.info(
         "f_risk_stage_a_summary target_date=%s feature_count=%s feature_group_counts=%s available=%s unavailable=%s excluded=%s fallback_used=%s model_recent=%s model_long=%s history_count=%s class_balance=%.3f risk_recent=%s risk_long=%s risk_blended=%s matched=%s protective=%s no_alert_reason=%s forbidden_inputs_used=%s",
-        target_date,
+        prediction_date,
         risk_json["feature_count"],
         risk_json["feature_group_counts"],
         risk_json["input_groups_available"],
@@ -421,7 +459,7 @@ def _build_xy(train: Any, today_row: Any):
     features = [
         "sleep_hours_lag_1", "sleep_short_streak", "social_load_streak", "late_work_streak", "exercise_streak",
         "sleep_short_x_social_load", "stress_x_late_work", "drinking_x_low_sleep", "high_carb_x_low_sleep",
-        "spending_total_rolling_mean_7d", "spending_total_rolling_sum_14d", "weather_precip_probability_max_lag_1",
+        "weather_precip_probability_max_lag_1",
         "notes_stress_flag_lag_1", "notes_has_drinking_lag_3", "is_weekend", "place", "location_summary",
         "kcal_vs_7d_delta", "protein_vs_7d_delta", "fat_vs_7d_delta", "task_completion_ratio",
         "drop_vs_7d_delta", "done_vs_7d_delta", "weather_bad_flag", "weather_temp_range_c",
@@ -707,15 +745,25 @@ def _describe_matched_patterns(recent_rows: list[dict[str, Any]]) -> list[str]:
 def _compose_case_alert_text(risk_json: dict[str, Any]) -> Optional[str]:
     if not risk_json.get("risk_matched"):
         return None
-    dates = risk_json.get("matched_case_dates") or []
-    types = risk_json.get("matched_case_types") or []
-    patterns = risk_json.get("matched_pre_patterns") or []
-    if not dates:
-        return None
-    date_text = " と ".join(str(x) for x in dates[:2])
-    pattern_text = "、".join(str(x) for x in patterns[:3]) if patterns else "複数要素"
-    type_text = str(types[0]) if types else "unknown"
-    return f"今日の状態は過去のF支出 {date_text} の前日パターンに近いです。一致要素は {pattern_text} で、類似ケースタイプは {type_text} です。衝動判断を避けるため、支出前に一度間を置くのがおすすめです。"
+    points = risk_json.get("explanation_points") or []
+    basis = "、".join(str(x) for x in points[:3]) if points else "短睡眠・ストレス・過去ケース類似"
+    return (
+        "今日はFリスクが高めです。"
+        f"根拠は、{basis}です。"
+        "今日は大きな支出判断、寄り道、夜の外出、コンビニ・外食の追加購入を避けてください。"
+    )
+
+
+def _build_prediction_row(train: Any, *, prediction_date: str, daily_log_context_date: str) -> Any:
+    row = train.tail(1).copy()
+    if len(row) == 0:
+        return train.tail(0).copy()
+    row.loc[:, "date"] = prediction_date
+    row.loc[:, "is_weekend"] = 1 if datetime.strptime(prediction_date, "%Y-%m-%d").weekday() >= 5 else 0
+    for forbidden in ("spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"):
+        if forbidden in row.columns:
+            row.loc[:, forbidden] = None
+    return row
 
 
 def _build_explanation_points(*, matched: list[str], similarity: dict[str, Any], today: dict[str, Any]) -> list[str]:

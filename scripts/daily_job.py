@@ -1355,11 +1355,7 @@ def _compute_f_risk_alert_runtime(
             "weather_temp_min_c": summary.weather_temp_min_c,
             "weather_precip_probability_max": summary.weather_precip_probability_max,
         },
-        "expense_f": {
-            "count": expense_f_aggregate.count,
-            "total": expense_f_aggregate.total,
-            "data_status": expense_f_aggregate.data_status,
-        },
+        "today_expense_f_aggregate_ignored_for_prediction": True,
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(hash_payload)
     previous_input_hash = (previous_state.get("input_hash") or "").strip() or None
@@ -1422,7 +1418,9 @@ def _compute_f_risk_alert_runtime(
         result = generate_f_risk(
             daily_log_read_url=config.daily_log_read_url,
             bearer_token=config.bearer_token,
-            target_date=f_risk_target_date,
+            prediction_date=f_risk_target_date,
+            training_end_date=(datetime.strptime(f_risk_target_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d"),
+            daily_log_context_date=summary.target_date,
         )
     except Exception as exc:  # noqa: BLE001
         soft_fail = str(os.getenv("F_RISK_SOFT_FAIL", "true")).strip().lower() not in {"0", "false", "no", "off"}
