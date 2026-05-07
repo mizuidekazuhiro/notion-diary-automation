@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
-from scripts import daily_job
+from scripts import daily_job, voice_diary_notes
 from scripts.location_for_weather import ResolvedLocation
 from scripts.mood_advice_generator import MoodAdviceResult
 from scripts.sleep_condition_generator import build_sleep_insight_context, generate_sleep_insights
@@ -672,3 +672,49 @@ def test_load_config_notify_diary_does_not_require_mail_env(monkeypatch) -> None
     monkeypatch.setenv("DAILY_LOG_UPSERT_URL", "https://example.com/api/daily_log/upsert")
     monkeypatch.delenv("TASKS_CLOSED_URL", raising=False)
     daily_job.main()
+
+
+def test_sleep_insights_no_voice_notes_nameerror(monkeypatch) -> None:
+    summary = _summary()
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    monkeypatch.setattr(daily_job, "resolve_sleep_for_target_date", lambda **kwargs: ([], {"resolved_sleep_duration_min": 420, "raw_sleep_duration_min": 420, "sleep_start": summary.sleep_start, "sleep_end": summary.sleep_end, "sleep_score": summary.sleep_score, "duration_source": "resolved"}, "resolved"))
+    monkeypatch.setattr(daily_job, "load_recent_daily_logs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(daily_job, "maybe_generate_sleep_insights", lambda **kwargs: {})
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda *args, **kwargs: summary)
+    out = daily_job._generate_and_save_sleep_insights(config, summary=summary, run_id="run")
+    assert out == summary
+
+
+def test_diary_save_success_marks_voice_notes_used(monkeypatch) -> None:
+    summary = _summary(diary=None, diary_input_hash=None)
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    note = voice_diary_notes.VoiceDiaryNote(page_id="v1", recorded_at="2026-03-20T00:00:00+09:00", text="x", source="ios", note_hash="h")
+    called = {"marked": 0}
+
+    monkeypatch.setattr(daily_job, "fetch_voice_diary_notes", lambda target_date: [note])
+    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: "new diary")
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: {"updated": True, "reason": "ok"})
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda *args, **kwargs: summary)
+    monkeypatch.setattr(daily_job, "mark_voice_diary_notes_used", lambda notes, *, daily_log_page_id: called.__setitem__("marked", called["marked"] + len(list(notes))))
+
+    daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
+    assert called["marked"] == 1
+
+
+def test_diary_skip_does_not_mark_voice_notes_used(monkeypatch) -> None:
+    note = voice_diary_notes.VoiceDiaryNote(page_id="v1", recorded_at="2026-03-20T00:00:00+09:00", text="x", source="ios", note_hash="h")
+    summary = _summary(diary="existing")
+    fields, _, _, _ = daily_job.build_diary_input_fields(summary, voice_diary_notes_text="[00:00] x")
+    payload, _ = daily_job._build_diary_hash_payload(summary, fields)
+    current_hash, _, _ = daily_job._build_input_hash(payload)
+    summary = _summary(diary="existing", diary_input_hash=current_hash)
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    called = {"marked": 0}
+
+    monkeypatch.setattr(daily_job, "fetch_voice_diary_notes", lambda target_date: [note])
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda *args, **kwargs: summary)
+    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    monkeypatch.setattr(daily_job, "mark_voice_diary_notes_used", lambda *args, **kwargs: called.__setitem__("marked", 1))
+
+    daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
+    assert called["marked"] == 0

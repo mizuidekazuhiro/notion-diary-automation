@@ -779,8 +779,6 @@ def _generate_and_save_sleep_insights(
         save_result.get("reason"),
         sorted(sleep_payload.keys()),
     )
-    if voice_notes:
-        mark_voice_diary_notes_used(voice_notes, daily_log_page_id=summary.page_id)
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     return refreshed_summary or summary
 
@@ -1633,6 +1631,8 @@ def _generate_and_save_diary(
         previous_input_hash,
         input_changed,
     )
+    if voice_notes:
+        mark_voice_diary_notes_used(voice_notes, daily_log_page_id=summary.page_id)
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     return refreshed_summary or summary
 

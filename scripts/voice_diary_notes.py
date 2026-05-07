@@ -71,14 +71,18 @@ def _parse_note(page: dict[str, Any]) -> Optional[VoiceDiaryNote]:
     return VoiceDiaryNote(page_id=page_id, recorded_at=recorded_at, text=text, source=source, note_hash=note_hash)
 
 
+def _resolve_notion_token() -> str:
+    return (os.getenv("NOTION_API_KEY", "") or "").strip() or (os.getenv("NOTION_TOKEN", "") or "").strip()
+
+
 def fetch_voice_diary_notes(target_date: str) -> list[VoiceDiaryNote]:
     db_id = (os.getenv("VOICE_DIARY_NOTES_DB_ID", "") or "").strip()
     if not db_id:
         logging.info("voice_diary_notes_fetch_skipped_env_missing target_date=%s", target_date)
         return []
-    notion_token = (os.getenv("NOTION_API_KEY", "") or "").strip()
+    notion_token = _resolve_notion_token()
     if not notion_token:
-        logging.warning("voice_diary_notes_fetch_skipped_env_missing target_date=%s reason=notion_api_key_missing", target_date)
+        logging.warning("voice_diary_notes_fetch_skipped_env_missing target_date=%s reason=notion_token_missing", target_date)
         return []
 
     max_count = _env_int("VOICE_DIARY_NOTES_MAX_COUNT", DEFAULT_MAX_COUNT)
@@ -96,9 +100,16 @@ def fetch_voice_diary_notes(target_date: str) -> list[VoiceDiaryNote]:
         "sorts": [{"property": "Recorded At", "direction": "ascending"}],
         "page_size": min(100, max_count * 2),
     }
-    resp = requests.post(f"{NOTION_API_BASE}/databases/{db_id}/query", headers=_notion_headers(notion_token), json=payload, timeout=(5, 60))
-    resp.raise_for_status()
-    rows = resp.json().get("results") or []
+    try:
+        resp = requests.post(f"{NOTION_API_BASE}/databases/{db_id}/query", headers=_notion_headers(notion_token), json=payload, timeout=(5, 60))
+        resp.raise_for_status()
+        response_json = resp.json()
+        rows = response_json.get("results")
+        if not isinstance(rows, list):
+            raise ValueError("results is not list")
+    except Exception as exc:
+        logging.warning("voice_diary_notes_fetch_failed target_date=%s error=%s", target_date, exc)
+        return []
 
     parsed: list[VoiceDiaryNote] = []
     for row in rows:
@@ -146,7 +157,7 @@ def format_voice_diary_notes(notes: Iterable[VoiceDiaryNote]) -> str:
 
 
 def mark_voice_diary_notes_used(notes: Iterable[VoiceDiaryNote], *, daily_log_page_id: str) -> None:
-    notion_token = (os.getenv("NOTION_API_KEY", "") or "").strip()
+    notion_token = _resolve_notion_token()
     if not notion_token:
         return
     now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
