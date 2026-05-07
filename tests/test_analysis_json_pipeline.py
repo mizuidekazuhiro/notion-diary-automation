@@ -179,6 +179,7 @@ def test_forbidden_today_features_not_used_in_prediction_features(monkeypatch: p
     assert "spending_total" not in names
     assert "expense_f_count" not in names
     assert "study_minutes" not in names
+    assert "study_zero_day_streak" not in names
     assert out.debug_summary["risk_json"]["forbidden_today_features_used"] is False
 
 
@@ -261,4 +262,18 @@ def test_build_daily_feature_table_contains_study_columns() -> None:
     assert "study_minutes_lag_1" in df.columns
     assert "study_minutes_rolling_sum_7d" in df.columns
     assert "study_zero_day_streak" in df.columns
+    assert "study_zero_day_streak_lag_1" in df.columns
     assert "study_consistency_score_7d" in df.columns
+
+
+def test_missing_rate_fields_exist_in_risk_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    pd = pytest.importorskip("pandas")
+    monkeypatch.setattr(f_risk_generator, "_load_histories", lambda **kwargs: [SimpleNamespace(target_date=f"2026-03-{i:02d}") for i in range(1, 40)])
+    monkeypatch.setattr(f_risk_generator, "_hydrate_expense_f_from_expenses_db", lambda histories: histories)
+    monkeypatch.setattr(f_risk_generator, "label_notes_in_batches", lambda **kwargs: {})
+    monkeypatch.setattr(f_risk_generator, "build_daily_feature_table", lambda histories, labels: pd.DataFrame({"date":[h.target_date for h in histories], "expense_f_count":[0]*len(histories), "sleep_short_streak":[0]*len(histories), "notes_stress_flag":[0]*len(histories), "is_weekend":[0]*len(histories), "study_minutes_lag_1":[None]*len(histories)}))
+    out = f_risk_generator.generate_f_risk(daily_log_read_url="r", bearer_token=None, target_date="2026-03-28")
+    rj = out.debug_summary["risk_json"]
+    assert "overall_feature_missing_rate" in rj
+    assert "effective_feature_count" in rj
+    assert "study_missing_rate" in rj

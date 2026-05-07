@@ -214,15 +214,32 @@ def generate_f_risk(
         blended = _to_float(fallback_meta.get("blended_score"))
 
     prediction_feature_names = _build_xy(train.copy(), today.copy())[0].columns.tolist()
-    forbidden_feature_names = ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta", "study_minutes", "study_sessions", "study_last_used_at"]
+    forbidden_feature_names = [
+        "spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta",
+        "study_minutes", "study_sessions", "study_last_used_at", "study_zero_day_streak",
+        "study_heavy_day_flag", "study_under_target_flag", "study_minutes_vs_7d_delta",
+    ]
     forbidden_used = any(name in prediction_feature_names for name in forbidden_feature_names)
+    total_feature_count = len(prediction_feature_names)
+    effective_feature_count = int(today[prediction_feature_names].notna().sum(axis=1).iloc[0]) if total_feature_count else 0
+    overall_missing_rate = float(1.0 - (effective_feature_count / max(total_feature_count, 1)))
+    sleep_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "sleep")
+    notes_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "notes")
+    meal_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "kcal")  # meal proxy
+    location_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "location")
+    study_missing_rate = _missing_rate_for_prefix(today, prediction_feature_names, "study")
+    if overall_missing_rate >= 0.6 or effective_feature_count < 5:
+        confidence = "low"
+        if ml_probability is not None and ml_probability >= 0.70 and not (rule_score >= 3 or sim_total >= 0.55):
+            high = False
+            risk_level = "medium" if medium else "low"
     study_feature_names = [
         "study_minutes_lag_1",
         "study_minutes_rolling_sum_7d",
         "study_zero_day_streak",
         "study_consistency_score_7d",
     ]
-    available_study_cols = [c for c in study_feature_names if c in train.columns]
+    available_study_cols = [c for c in study_feature_names if c in prediction_feature_names]
     study_has_values = any(train[c].notna().any() for c in available_study_cols) if available_study_cols else False
     risk_json.update(
         {
@@ -321,6 +338,14 @@ def generate_f_risk(
                 else "study_columns_missing" if not available_study_cols
                 else "study_values_all_null"
             ),
+            "study_missing_rate": study_missing_rate,
+            "sleep_missing_rate": sleep_missing_rate,
+            "notes_missing_rate": notes_missing_rate,
+            "meal_missing_rate": meal_missing_rate,
+            "location_missing_rate": location_missing_rate,
+            "overall_feature_missing_rate": overall_missing_rate,
+            "effective_feature_count": effective_feature_count,
+            "total_feature_count": total_feature_count,
             "study_target_minutes_per_day": int(os.getenv("F_RISK_STUDY_TARGET_MINUTES_PER_DAY", "0") or "0"),
             "study_heavy_day_minutes_threshold": int(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180"),
         }
@@ -514,7 +539,8 @@ def _build_xy(train: Any, today_row: Any):
         "kcal_vs_7d_delta", "protein_vs_7d_delta", "fat_vs_7d_delta", "task_completion_ratio",
         "drop_vs_7d_delta", "done_vs_7d_delta", "weather_bad_flag", "weather_temp_range_c",
         "late_outing_flag", "multi_stop_flag", "schedule_same_day_event_count",
-        "study_minutes_lag_1", "study_minutes_rolling_sum_7d", "study_zero_day_streak", "study_consistency_score_7d",
+        "study_minutes_lag_1", "study_sessions_lag_1", "study_minutes_rolling_sum_7d", "study_minutes_rolling_mean_7d",
+        "study_zero_day_streak_lag_1", "study_heavy_day_flag_lag_1", "study_under_target_flag_lag_1", "study_consistency_score_7d",
     ]
     for feature in features:
         if feature not in train.columns:
@@ -881,6 +907,14 @@ def _to_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _missing_rate_for_prefix(today_row: Any, feature_names: list[str], prefix: str) -> float:
+    keys = [name for name in feature_names if name.startswith(prefix)]
+    if not keys:
+        return 1.0
+    row = today_row[keys]
+    return float(row.isna().mean(axis=1).iloc[0])
 
 
 def _build_input_availability(work: Any) -> dict[str, Any]:

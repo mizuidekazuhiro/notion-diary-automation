@@ -362,6 +362,9 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
             zero_streak.append(streak)
         derived_cols["study_zero_day_streak"] = zero_streak
     df = pd.concat([df, pd.DataFrame(derived_cols, index=df.index)], axis=1).copy()
+    for col in ("study_zero_day_streak", "study_heavy_day_flag", "study_under_target_flag", "study_minutes_vs_7d_delta"):
+        if col in df.columns:
+            df[f"{col}_lag_1"] = pd.to_numeric(df[col], errors="coerce").shift(1)
 
     streak_cols: dict[str, Any] = {}
     for src, out in [
