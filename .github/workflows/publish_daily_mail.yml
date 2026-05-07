@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -52,3 +53,62 @@ jobs:
           EXPENSE_CATEGORY_PROP: ${{ secrets.EXPENSE_CATEGORY_PROP }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/daily_job.py --phase publish
+
+      - name: Export daily mail quality artifacts
+        if: always()
+        continue-on-error: true
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
+          WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+          MAIL_LINK_SECRET: ${{ secrets.MAIL_LINK_SECRET }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DAILY_MAIL_ARTIFACT_DIR: artifacts/daily_mail
+          DAILY_MAIL_TODAY_ADVICE_MIN_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MIN_CHARS }}
+          DAILY_MAIL_TODAY_ADVICE_MAX_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MAX_CHARS }}
+        run: python scripts/export_daily_mail_artifacts.py
+
+      - name: Upload daily mail quality artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-mail-quality-${{ github.run_id }}
+          path: artifacts/daily_mail
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Create issue when daily mail quality needs review
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAILY_MAIL_QUALITY_CREATE_ISSUE_ON: ${{ vars.DAILY_MAIL_QUALITY_CREATE_ISSUE_ON }}
+        run: |
+          set -euo pipefail
+          python scripts/create_daily_mail_quality_issue.py \
+            --report artifacts/daily_mail/quality_report.json \
+            --issue-body artifacts/daily_mail/issue_body.md \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ ! -f artifacts/daily_mail/issue_body.md ]; then
+            echo "daily_mail_quality_issue_skip reason=no_issue_body"
+            exit 0
+          fi
+          title="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('artifacts/daily_mail/quality_report.json').read_text(encoding='utf-8'))
+          print(f"[Daily Mail Quality] {report.get('target_date') or 'unknown'} needs review")
+          PY
+          )"
+          existing_issue="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_issue" ]; then
+            gh issue comment "$existing_issue" --body-file artifacts/daily_mail/issue_body.md
+            echo "daily_mail_quality_issue_commented issue=$existing_issue"
+          else
+            gh issue create --title "$title" --body-file artifacts/daily_mail/issue_body.md
+            echo "daily_mail_quality_issue_created title=$title"
+          fi
