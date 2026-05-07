@@ -16,6 +16,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         ("Target Date", input_fields.get("Target Date", "")),
         ("Mood", input_fields.get("Mood", "")),
         ("Notes", input_fields.get("Notes", "")),
+        ("Voice Diary Notes", input_fields.get("Voice Diary Notes", "")),
         ("Place", input_fields.get("Place", "")),
         ("Done Count", input_fields.get("Done Count", "")),
         ("Done Tasks", input_fields.get("Done Tasks", "")),
@@ -107,6 +108,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         f"Target Date: {input_fields.get('Target Date', target_date)}\n"
         f"Mood: {input_fields.get('Mood', '')}\n"
         f"Notes: {input_fields.get('Notes', '')}\n"
+        f"Voice Diary Notes: {input_fields.get('Voice Diary Notes', '')}\n"
         f"Place: {input_fields.get('Place', '')}\n"
         f"Done Count: {input_fields.get('Done Count', '')}\n"
         f"Done Tasks: {input_fields.get('Done Tasks', '')}\n"
