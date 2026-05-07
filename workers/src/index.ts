@@ -4702,6 +4702,12 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
+  const studyMinutes = getNumberFromProperty(properties["Study Minutes"]);
+  const studySessions = getNumberFromProperty(properties["Study Sessions"]);
+  const studyLastUsedAt =
+    getDateTimeFromProperty(properties["Study Last Used At"]) ||
+    getStringFromProperty(properties["Study Last Used At"]) ||
+    null;
   const weatherPropertyName = resolveExactPropertyName(
     properties,
     getWeatherPropertyName(env),
@@ -4957,6 +4963,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       sleep_analysis_jp: sleepAnalysisJp,
       today_condition_forecast_jp: todayConditionForecastJp,
       today_advice: todayAdvice,
+      study_minutes: studyMinutes,
+      study_sessions: studySessions,
+      study_last_used_at: studyLastUsedAt,
       diary_input_hash: diaryInputHash,
       today_advice_input_hash: todayAdviceInputHash,
       diary_generated_at: diaryGeneratedAt,
