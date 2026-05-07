@@ -49,6 +49,11 @@ from scripts.sleep_utils import resolve_sleep_for_target_date
 from scripts.weather_client import fetch_weather_for_date
 from scripts.openai_chat_utils import chat_completion
 from scripts.daily_job_phase_c import PhaseCDeps, run_phase_c
+from scripts.voice_diary_notes import (
+    fetch_voice_diary_notes,
+    format_voice_diary_notes,
+    mark_voice_diary_notes_used,
+)
 from scripts.note_batch_labeler import (
     build_notes_label_persistence_payload,
     build_notes_label_input_hash,
@@ -333,7 +338,7 @@ def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:
     return "\n".join(parts)
 
 
-def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str], list[str], str, dict[str, str]]:
+def build_diary_input_fields(summary: "DailyLogSummary", *, voice_diary_notes_text: str = "") -> tuple[dict[str, str], list[str], str, dict[str, str]]:
     expenses_details = ""
     if summary.expenses.top:
         parts: list[str] = []
@@ -349,6 +354,7 @@ def build_diary_input_fields(summary: "DailyLogSummary") -> tuple[dict[str, str]
     canonical_sleep_duration_min = summary.resolved_sleep_duration_min
     canonical_sleep_duration_text = summary.resolved_sleep_duration_text
     candidates = [
+        ("Voice Diary Notes", voice_diary_notes_text),
         ("Date", summary.date),
         ("Target Date", summary.target_date_value),
         ("Title", summary.title),
@@ -1533,7 +1539,11 @@ def _generate_and_save_diary(
     reloaded_after_sleep_save: bool = False,
 ) -> "DailyLogSummary":
     logging.info("phase_c_diary_start target_date(JST)=%s run_id=%s", summary.target_date, run_id)
-    diary_input_fields, skipped_fields, input_overview, skipped_reason_by_field = build_diary_input_fields(summary)
+    voice_notes = fetch_voice_diary_notes(summary.target_date)
+    voice_notes_text = format_voice_diary_notes(voice_notes)
+    if voice_notes_text:
+        logging.info("voice_diary_notes_added_to_diary_inputs target_date=%s count=%s chars=%s", summary.target_date, len(voice_notes), len(voice_notes_text))
+    diary_input_fields, skipped_fields, input_overview, skipped_reason_by_field = build_diary_input_fields(summary, voice_diary_notes_text=voice_notes_text)
     _assert_diary_input_consistency(diary_input_fields)
     diary_hash_payload, diary_hash_summary = _build_diary_hash_payload(summary, diary_input_fields)
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(diary_hash_payload)
@@ -1621,6 +1631,8 @@ def _generate_and_save_diary(
         previous_input_hash,
         input_changed,
     )
+    if voice_notes:
+        mark_voice_diary_notes_used(voice_notes, daily_log_page_id=summary.page_id)
     refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     return refreshed_summary or summary
 

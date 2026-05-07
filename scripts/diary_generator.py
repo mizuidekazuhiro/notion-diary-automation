@@ -16,6 +16,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         ("Target Date", input_fields.get("Target Date", "")),
         ("Mood", input_fields.get("Mood", "")),
         ("Notes", input_fields.get("Notes", "")),
+        ("Voice Diary Notes", input_fields.get("Voice Diary Notes", "")),
         ("Place", input_fields.get("Place", "")),
         ("Done Count", input_fields.get("Done Count", "")),
         ("Done Tasks", input_fields.get("Done Tasks", "")),
@@ -59,7 +60,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         "- 入力にない情報を推測で補ってはいけません\n"
         "- 未入力の項目は無視してよいですが、存在する他項目は積極的に使ってください\n"
         "- 単なる項目の羅列ではなく、自然な日記文にしてください\n"
-        "- Notes がある場合は本人の所感として活かしてよいですが、Notes の言い換えだけで終わってはいけません\n"
+        "- Notes がある場合は本人の所感として活かしてよいですが、Notes の言い換えだけで終わってはいけません\n- Voice Diary Notes は本人がその時点で残した一次メモとして扱ってください\n- ただし事実として断定しすぎず、「本人メモでは〜」という扱いにしてください\n- 睡眠、食事、勉強時間、タスク、場所などの構造化データと矛盾する場合は、構造化データを優先し、Voice Diary Notesは主観情報として補助的に扱ってください\n- Diary本文には重要なメモだけ自然に反映し、Voice Diary Notesを単純に全列挙しないでください\n"
         "- 支出情報は `Expenses Total` と `Expenses` の両方を参照してください\n"
         "- 睡眠情報がある場合は、活動・食事・タスク・場所とバランスよく自然に織り込んでください\n"
         "- 睡眠だけを過剰に主題化せず、軽いコンディション整理に留めてください\n"
@@ -107,6 +108,7 @@ def _build_prompts(input_fields: Mapping[str, str], target_date: str) -> tuple[s
         f"Target Date: {input_fields.get('Target Date', target_date)}\n"
         f"Mood: {input_fields.get('Mood', '')}\n"
         f"Notes: {input_fields.get('Notes', '')}\n"
+        f"Voice Diary Notes: {input_fields.get('Voice Diary Notes', '')}\n"
         f"Place: {input_fields.get('Place', '')}\n"
         f"Done Count: {input_fields.get('Done Count', '')}\n"
         f"Done Tasks: {input_fields.get('Done Tasks', '')}\n"

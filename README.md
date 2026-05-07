@@ -424,6 +424,10 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - `WEEKLY_REPORT_ENABLED`: `true` / `1` / `yes` / `on` / `enabled` のいずれかで有効化
 - `WEEKLY_REPORT_SEND_HOUR_JST`: 0-23。未設定または空文字のときは 21（JST）
 
+- `VOICE_DIARY_NOTES_DB_ID`: Voice Diary Notes連携を有効化するNotion DB ID（未設定時は連携スキップ）
+- `VOICE_DIARY_NOTES_MAX_COUNT`: 1日あたり取得するVoice Notes件数上限（既定: 50）
+- `VOICE_DIARY_NOTES_MAX_CHARS`: Diary入力に含めるVoice Notes文字数上限（既定: 6000）
+
 ### GitHub Secrets（Weekly Report 実行時に必要）
 
 - `MAIL_FROM`
