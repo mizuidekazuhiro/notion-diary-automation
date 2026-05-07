@@ -92,18 +92,13 @@ jobs:
           python scripts/create_daily_mail_quality_issue.py \
             --report artifacts/daily_mail/quality_report.json \
             --issue-body artifacts/daily_mail/issue_body.md \
+            --issue-title artifacts/daily_mail/issue_title.txt \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          if [ ! -f artifacts/daily_mail/issue_body.md ]; then
+          if [ ! -f artifacts/daily_mail/issue_body.md ] || [ ! -f artifacts/daily_mail/issue_title.txt ]; then
             echo "daily_mail_quality_issue_skip reason=no_issue_body"
             exit 0
           fi
-          title="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          report = json.loads(Path('artifacts/daily_mail/quality_report.json').read_text(encoding='utf-8'))
-          print(f"[Daily Mail Quality] {report.get('target_date') or 'unknown'} needs review")
-          PY
-          )"
+          title="$(cat artifacts/daily_mail/issue_title.txt)"
           existing_issue="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
           if [ -n "$existing_issue" ]; then
             gh issue comment "$existing_issue" --body-file artifacts/daily_mail/issue_body.md
