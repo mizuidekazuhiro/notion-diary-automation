@@ -194,8 +194,8 @@ def generate_f_risk(
     confidence = "high" if len(train) >= 60 else "medium" if len(train) >= 30 else "low"
     reliability = "high" if similarity["strength"] == "strong" else "medium" if similarity["strength"] == "medium" else "low"
 
-    rule_meta = _rule_based_fallback(today.iloc[0].to_dict(), availability=availability)
-    rule_count = len(rule_meta.get("matched_factors", []))
+    rule_meta = _score_rule_based_risk(today.iloc[0].to_dict())
+    rule_count = int(rule_meta.get("score", 0))
     high_threshold = float(os.getenv("F_RISK_SIMILARITY_HIGH_THRESHOLD", "0.72") or "0.72")
     medium_threshold = float(os.getenv("F_RISK_SIMILARITY_MEDIUM_THRESHOLD", "0.55") or "0.55")
     sim_total = float(similarity.get("score_total") or 0.0)
@@ -214,7 +214,7 @@ def generate_f_risk(
         blended = _to_float(fallback_meta.get("blended_score"))
 
     prediction_feature_names = _build_xy(train.copy(), today.copy())[0].columns.tolist()
-    forbidden_feature_names = ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"]
+    forbidden_feature_names = ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta", "study_minutes", "study_sessions", "study_last_used_at"]
     forbidden_used = any(name in prediction_feature_names for name in forbidden_feature_names)
     risk_json.update(
         {
@@ -279,12 +279,21 @@ def generate_f_risk(
                 if risk_matched
                 else "below_threshold"
             ),
+            "final_alert_basis_detail": (
+                "ml_high_probability" if (ml_probability is not None and ml_probability >= 0.70) else
+                "case_similarity_high" if sim_total >= 0.72 else
+                "ml_medium_plus_rule_high" if (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5) else
+                "rule_only_medium" if rule_score >= 3 else
+                "below_threshold"
+            ),
             "ml_probability": ml_probability,
             "ml_model_used": "logistic_regression" if (recent_model.get("score") is not None or longterm_model.get("score") is not None) else None,
             "ml_skipped_reason": ml_skip_reason or (recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason")),
             "ml_training_days": ml_training_days,
             "ml_positive_event_count": ml_positive_event_count,
             "f_risk_rule_score": int(rule_score),
+            "f_risk_rule_hits": rule_meta.get("hits", []),
+            "f_risk_rule_protective_hits": rule_meta.get("protective_hits", []),
             "f_risk_level": risk_level,
             "forbidden_today_features_used": forbidden_used,
             "forbidden_today_features_used_detail": [name for name in forbidden_feature_names if name in prediction_feature_names],
@@ -297,6 +306,16 @@ def generate_f_risk(
             "f_risk_backtest_missed_event_count": None,
             "f_risk_backtest_status": "not_implemented",
             "f_risk_threshold_used": min_level,
+            "study_features_used": True,
+            "study_feature_names": [
+                "study_minutes_lag_1",
+                "study_minutes_rolling_sum_7d",
+                "study_zero_day_streak",
+                "study_consistency_score_7d",
+            ],
+            "study_feature_missing_reason": None,
+            "study_target_minutes_per_day": int(os.getenv("F_RISK_STUDY_TARGET_MINUTES_PER_DAY", "0") or "0"),
+            "study_heavy_day_minutes_threshold": int(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180"),
         }
     )
     if forbidden_used:
@@ -487,6 +506,7 @@ def _build_xy(train: Any, today_row: Any):
         "kcal_vs_7d_delta", "protein_vs_7d_delta", "fat_vs_7d_delta", "task_completion_ratio",
         "drop_vs_7d_delta", "done_vs_7d_delta", "weather_bad_flag", "weather_temp_range_c",
         "late_outing_flag", "multi_stop_flag", "schedule_same_day_event_count",
+        "study_minutes_lag_1", "study_minutes_rolling_sum_7d", "study_zero_day_streak", "study_consistency_score_7d",
     ]
     for feature in features:
         if feature not in train.columns:
@@ -531,6 +551,37 @@ def _derive_protective_features(today: dict[str, Any]) -> list[str]:
     if bool(today.get("notes_has_money_saved")):
         items.append("節約シグナル")
     return items
+
+
+def _score_rule_based_risk(today: dict[str, Any]) -> dict[str, Any]:
+    score = 0
+    hits: list[str] = []
+    protective: list[str] = []
+    if (_to_float(today.get("sleep_hours_lag_1")) or 24) < 6:
+        score += 2
+        hits.append("sleep_hours_lag_1<6")
+    if (_to_float(today.get("sleep_short_streak")) or 0) >= 2:
+        score += 2
+        hits.append("sleep_short_streak>=2")
+    if bool(today.get("notes_stress_flag_lag_1")):
+        score += 2
+        hits.append("notes_stress_flag_lag_1")
+    if bool(today.get("notes_social_load_flag_lag_1")):
+        score += 2
+        hits.append("notes_social_load_flag_lag_1")
+    if bool(today.get("is_weekend")):
+        score += 1
+        hits.append("is_weekend")
+    if (_to_float(today.get("study_zero_day_streak")) or 0) >= 2:
+        score += 2
+        hits.append("study_zero_day_streak>=2")
+    if bool(today.get("notes_has_money_saved_lag_1")):
+        score -= 1
+        protective.append("notes_has_money_saved_lag_1")
+    if (_to_float(today.get("study_consistency_score_7d")) or 0) >= 0.7:
+        score -= 1
+        protective.append("study_consistency_score_7d")
+    return {"score": score, "hits": hits, "protective_hits": protective}
 
 
 def _f_day_similarity(*, train: Any, today: dict[str, Any]) -> dict[str, Any]:

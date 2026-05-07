@@ -1329,7 +1329,8 @@ def _compute_f_risk_alert_runtime(
 ) -> dict[str, Any]:
     f_risk_target_date = (target_date_override or summary.target_date).strip()
     logging.info("f_risk_runtime_start source=f_risk_runtime target_date(JST)=%s run_id=%s", f_risk_target_date, run_id)
-    expense_f_aggregate = aggregate_daily_expense_f(f_risk_target_date)
+    # 今日のF支出実績は予測入力に使わない（リーク防止）。必要時のデバッグ確認のみ。
+    _ignored_today_expense_f_aggregate = aggregate_daily_expense_f(f_risk_target_date)
     store = FRiskStateStore()
     if store.meta.backend == "unavailable":
         logging.warning(
