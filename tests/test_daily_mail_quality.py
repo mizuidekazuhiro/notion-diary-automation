@@ -5,10 +5,18 @@ from types import SimpleNamespace
 from scripts.daily_mail_quality import build_quality_report
 
 
+VALID_TODAY_ADVICE = (
+    "直近7日の記録傾向と睡眠状態を踏まえると、今日は学習とタスクを午前に寄せるのがよいです。"
+    "過去の高評価日は短い着手を早めに置いた日と重なり、低評価日は着手が遅れたまま記録が薄くなる傾向があります。"
+    "睡眠スコアが一定程度ある日は判断を前倒ししやすいので、まず司法試験の一問だけ解き、次に重要タスクを一つ閉じる形に絞ってください。"
+    "食事や支出の当日値は評価せず、過去の行動パターンだけを補助材料にして進めます。"
+)
+
+
 def _summary(**overrides: object) -> SimpleNamespace:
     base = {
         "target_date": "2026-05-08",
-        "today_advice": "直近7日の記録傾向と睡眠状態を踏まえると、今日は学習とタスクを午前に寄せるのがよいです。過去の高評価日は短い着手を早めに置いた日と重なります。まず一問だけ解き、次に重要タスクを一つ閉じる形に絞ってください。",
+        "today_advice": VALID_TODAY_ADVICE,
         "study_minutes": None,
         "study_sessions": None,
         "study_last_used_at": "",
