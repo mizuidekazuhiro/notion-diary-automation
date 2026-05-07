@@ -575,18 +575,21 @@ def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fa
 def test_workers_daily_log_read_includes_study_fields_in_response() -> None:
     source = Path("workers/src/index.ts").read_text(encoding="utf-8")
 
-    assert """resolveExactPropertyName(
+    assert """resolvePropertyName(
     properties,
     \"Study Minutes\",
-    \"daily_log_read:study_minutes\",""" in source
-    assert """resolveExactPropertyName(
+    \"daily_log_read:study_minutes\",
+    [\"study_minutes\"],""" in source
+    assert """resolvePropertyName(
     properties,
     \"Study Sessions\",
-    \"daily_log_read:study_sessions\",""" in source
-    assert """resolveExactPropertyName(
+    \"daily_log_read:study_sessions\",
+    [\"study_sessions\"],""" in source
+    assert """resolvePropertyName(
     properties,
     \"Study Last Used At\",
-    \"daily_log_read:study_last_used_at\",""" in source
+    \"daily_log_read:study_last_used_at\",
+    [\"study_last_used_at\"],""" in source
     assert "study_minutes: studyMinutes," in source
     assert "study_sessions: studySessions," in source
     assert "study_last_used_at: studyLastUsedAt," in source

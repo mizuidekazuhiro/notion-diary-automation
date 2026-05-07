@@ -4702,19 +4702,19 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
-  const studyMinutesPropertyName = resolveExactPropertyName(
+  const studyMinutesPropertyName = resolvePropertyName(
     properties,
     "Study Minutes",
     "daily_log_read:study_minutes",
     ["study_minutes"],
   );
-  const studySessionsPropertyName = resolveExactPropertyName(
+  const studySessionsPropertyName = resolvePropertyName(
     properties,
     "Study Sessions",
     "daily_log_read:study_sessions",
     ["study_sessions"],
   );
-  const studyLastUsedAtPropertyName = resolveExactPropertyName(
+  const studyLastUsedAtPropertyName = resolvePropertyName(
     properties,
     "Study Last Used At",
     "daily_log_read:study_last_used_at",
