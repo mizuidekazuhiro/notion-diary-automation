@@ -8,6 +8,7 @@ import requests
 
 from scripts import f_risk_generator
 from scripts import openai_chat_utils
+from scripts import today_advice_feature_builder
 from scripts.today_advice_renderer import render_today_advice_from_analysis
 
 
@@ -231,3 +232,33 @@ def test_alert_text_starts_with_preventive_phrase() -> None:
     text = f_risk_generator._compose_case_alert_text({"risk_matched": True, "explanation_points": ["短睡眠"]})
     assert text is not None
     assert text.startswith("今日はFリスクが高めです。")
+
+
+def test_build_daily_feature_table_contains_study_columns() -> None:
+    pd = pytest.importorskip("pandas")
+    histories = [
+        SimpleNamespace(
+            target_date="2026-03-01", sleep_duration_min=420, sleep_start=None, sleep_end=None, sleep_score=70,
+            deep_duration_min=None, rem_duration_min=None, readiness_bpm=None, readiness_hrv=None, baseline_hrv=None, baseline_waking_bpm=None,
+            location_summary="", meal_summary="", notes="", activity_summary="", done_count=1, drop_count=0, done_tasks_detail=[],
+            mood="★★★", kcal=None, protein=None, fat=None, carb=None, expenses_total=1000, expense_f_count=0, expense_f_total=0,
+            weather_location=None, weather_summary=None, weather_temp_max_c=None, weather_temp_min_c=None, weather_precip_probability_max=None, weather_code=None,
+            study_minutes=120, study_sessions=3, study_last_used_at="2026-03-01T21:00:00+09:00",
+        ),
+        SimpleNamespace(
+            target_date="2026-03-02", sleep_duration_min=420, sleep_start=None, sleep_end=None, sleep_score=70,
+            deep_duration_min=None, rem_duration_min=None, readiness_bpm=None, readiness_hrv=None, baseline_hrv=None, baseline_waking_bpm=None,
+            location_summary="", meal_summary="", notes="", activity_summary="", done_count=1, drop_count=0, done_tasks_detail=[],
+            mood="★★★", kcal=None, protein=None, fat=None, carb=None, expenses_total=1000, expense_f_count=0, expense_f_total=0,
+            weather_location=None, weather_summary=None, weather_temp_max_c=None, weather_temp_min_c=None, weather_precip_probability_max=None, weather_code=None,
+            study_minutes=0, study_sessions=0, study_last_used_at="",
+        ),
+    ]
+    df = today_advice_feature_builder.build_daily_feature_table(histories, note_labels={})
+    assert isinstance(df, pd.DataFrame)
+    assert "study_minutes" in df.columns
+    assert "study_sessions" in df.columns
+    assert "study_minutes_lag_1" in df.columns
+    assert "study_minutes_rolling_sum_7d" in df.columns
+    assert "study_zero_day_streak" in df.columns
+    assert "study_consistency_score_7d" in df.columns

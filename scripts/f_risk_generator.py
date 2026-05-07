@@ -216,6 +216,14 @@ def generate_f_risk(
     prediction_feature_names = _build_xy(train.copy(), today.copy())[0].columns.tolist()
     forbidden_feature_names = ["spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta", "study_minutes", "study_sessions", "study_last_used_at"]
     forbidden_used = any(name in prediction_feature_names for name in forbidden_feature_names)
+    study_feature_names = [
+        "study_minutes_lag_1",
+        "study_minutes_rolling_sum_7d",
+        "study_zero_day_streak",
+        "study_consistency_score_7d",
+    ]
+    available_study_cols = [c for c in study_feature_names if c in train.columns]
+    study_has_values = any(train[c].notna().any() for c in available_study_cols) if available_study_cols else False
     risk_json.update(
         {
             "risk_matched": risk_matched,
@@ -306,14 +314,13 @@ def generate_f_risk(
             "f_risk_backtest_missed_event_count": None,
             "f_risk_backtest_status": "not_implemented",
             "f_risk_threshold_used": min_level,
-            "study_features_used": True,
-            "study_feature_names": [
-                "study_minutes_lag_1",
-                "study_minutes_rolling_sum_7d",
-                "study_zero_day_streak",
-                "study_consistency_score_7d",
-            ],
-            "study_feature_missing_reason": None,
+            "study_features_used": bool(available_study_cols and study_has_values),
+            "study_feature_names": study_feature_names,
+            "study_feature_missing_reason": (
+                None if (available_study_cols and study_has_values)
+                else "study_columns_missing" if not available_study_cols
+                else "study_values_all_null"
+            ),
             "study_target_minutes_per_day": int(os.getenv("F_RISK_STUDY_TARGET_MINUTES_PER_DAY", "0") or "0"),
             "study_heavy_day_minutes_threshold": int(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180"),
         }
@@ -321,6 +328,7 @@ def generate_f_risk(
     if forbidden_used:
         risk_json["risk_matched"] = False
         risk_json["no_alert_reason"] = "forbidden_today_features_used"
+        risk_matched = False
     logging.info(
         "[FRisk][Cases] history_days_loaded=%s f_event_count=%s usable_f_event_count=%s event_case_count=%s top_case_matches=%s",
         risk_json["history_days_loaded"],
