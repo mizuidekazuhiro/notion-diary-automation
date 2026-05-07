@@ -4702,12 +4702,35 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       ),
     ) || null;
   const todayAdvice = getPlainTextFromRichText(properties["Today advice"]) || null;
-  const studyMinutes = getNumberFromProperty(properties["Study Minutes"]);
-  const studySessions = getNumberFromProperty(properties["Study Sessions"]);
-  const studyLastUsedAt =
-    getDateTimeFromProperty(properties["Study Last Used At"]) ||
-    getStringFromProperty(properties["Study Last Used At"]) ||
-    null;
+  const studyMinutesPropertyName = resolveExactPropertyName(
+    properties,
+    "Study Minutes",
+    "daily_log_read:study_minutes",
+    ["study_minutes"],
+  );
+  const studySessionsPropertyName = resolveExactPropertyName(
+    properties,
+    "Study Sessions",
+    "daily_log_read:study_sessions",
+    ["study_sessions"],
+  );
+  const studyLastUsedAtPropertyName = resolveExactPropertyName(
+    properties,
+    "Study Last Used At",
+    "daily_log_read:study_last_used_at",
+    ["study_last_used_at"],
+  );
+  const studyMinutes = studyMinutesPropertyName
+    ? getNumberFromProperty(properties[studyMinutesPropertyName])
+    : null;
+  const studySessions = studySessionsPropertyName
+    ? getNumberFromProperty(properties[studySessionsPropertyName])
+    : null;
+  const studyLastUsedAt = studyLastUsedAtPropertyName
+    ? getDateTimeFromProperty(properties[studyLastUsedAtPropertyName]) ||
+      getStringFromProperty(properties[studyLastUsedAtPropertyName]) ||
+      null
+    : null;
   const weatherPropertyName = resolveExactPropertyName(
     properties,
     getWeatherPropertyName(env),
