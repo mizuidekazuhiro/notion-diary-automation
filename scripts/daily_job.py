@@ -26,6 +26,7 @@ from publish.render_diary_notification_mail import render_diary_notification_mai
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
 from scripts.mail_dedupe import (
+    MAIL_INPUT_HASH_FIELDS,
     build_mail_input_snapshot,
     decide_mail_send,
     execute_with_update_on_success,
@@ -185,6 +186,27 @@ def resolve_target_date(*, explicit_target_date: Optional[str], now: Optional[da
     return get_target_date(now)
 
 
+
+
+def _classify_meal_photo_url(url: str) -> str:
+    lowered = (url or "").strip().lower()
+    if lowered.startswith("https://"):
+        if "dropbox.com" in lowered:
+            return "dropbox"
+        return "https"
+    if lowered.startswith("file://"):
+        return "notion_file"
+    if "notion" in lowered:
+        return "notion_file"
+    return "invalid"
+
+
+def _resolve_location_summary_source(summary: "DailyLogSummary") -> str:
+    value = (summary.location_summary or "").strip()
+    if not value:
+        return "empty"
+    return "location_summary_gpt" if "(gpt" in value.lower() else "location_summary"
+
 def run_ingest(config: Config, target_date: str, run_id: str) -> None:
     title = f"Daily Log｜{target_date}"
     logging.info(
@@ -227,10 +249,14 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         )
         return
 
+    meal_photo_url_types = sorted({_classify_meal_photo_url(url) for url in summary.meal_photos})
+    location_source = _resolve_location_summary_source(summary)
     logging.info(
-        "Meal section: summary=%s photos=%d",
-        "yes" if summary.meal_summary else "no",
+        "publish_inputs location_summary_present=%s location_summary_source=%s meal_photos_count=%s meal_photo_url_types=%s",
+        bool((summary.location_summary or "").strip()),
+        location_source,
         len(summary.meal_photos),
+        ",".join(meal_photo_url_types) if meal_photo_url_types else "empty",
     )
 
     expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
@@ -310,6 +336,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         ",".join(changed_fields),
         len(changed_fields),
     )
+    logging.info("mail_input_hash_fields_include_meal_photos=%s", "meal_photos" in MAIL_INPUT_HASH_FIELDS)
     if not should_send:
         return
     subject = f"【更新版】{mail.subject}" if is_update_mail and not mail.subject.startswith("【更新版】") else mail.subject
