@@ -145,6 +145,40 @@ def build_quality_report(
     if _text(_get(summary, "meal_summary")) and not sections["meal"]:
         _add_issue(issues, "meal_not_rendered", "warning", "Meal summary exists but the rendered mail does not appear to include the meal section.")
 
+    location_summary = _text(_get(summary, "location_summary"))
+    location_summary_source = _text(_get(summary, "location_summary_source")) or "empty"
+    location_rendered = ("Location summary" in (mail_plain_text or "")) and (location_summary in (mail_plain_text or "") if location_summary else True)
+    if location_summary and not location_rendered:
+        _add_issue(issues, "location_summary_not_rendered", "error", "Location summary exists but is not present in rendered mail text.")
+    if location_summary and location_summary_source == "location_summary_gpt" and not location_rendered:
+        _add_issue(issues, "location_summary_gpt_not_rendered", "error", "Location summary (GPT) exists but is not present in rendered mail text.")
+
+    meal_photos = _get(summary, "meal_photos") if isinstance(_get(summary, "meal_photos"), list) else []
+    meal_photos_count = len(meal_photos)
+    meal_photos_rendered = meal_photos_count == 0 or any(url in (mail_plain_text or "") for url in meal_photos) or ("<img " in (mail_html or "") and "Meal photo" in (mail_html or ""))
+    if meal_photos_count > 0 and not meal_photos_rendered:
+        _add_issue(issues, "meal_photos_not_rendered", "error", "Meal photos exist but are not rendered in HTML or text mail.")
+
+    invalid_img_src_count = len(re.findall(r'<img[^>]+src="[^"]*(?:file://|permissionrecord=|notion\\.so/image/)[^"]*"', mail_html or "", re.IGNORECASE))
+    if invalid_img_src_count > 0:
+        _add_issue(issues, "meal_photo_invalid_img_src", "error", "Mail HTML contains invalid meal photo image source URL(s).")
+
+    snapshot_raw = _text(_get(summary, "mail_input_snapshot_json"))
+    snapshot_has_meal_photos = False
+    snapshot_has_location_summary = False
+    if snapshot_raw:
+        try:
+            snapshot = json.loads(snapshot_raw)
+            if isinstance(snapshot, Mapping):
+                snapshot_has_meal_photos = "meal_photos" in snapshot
+                snapshot_has_location_summary = "location_summary" in snapshot
+        except json.JSONDecodeError:
+            pass
+    if not snapshot_has_meal_photos:
+        _add_issue(issues, "mail_snapshot_missing_meal_photos", "error", "mail_input_snapshot_json does not include meal_photos.")
+    if not snapshot_has_location_summary:
+        _add_issue(issues, "mail_snapshot_missing_location_summary", "error", "mail_input_snapshot_json does not include location_summary.")
+
     metrics = {
         "today_advice_chars_compact": today_advice_chars,
         "today_advice_min_chars": min_chars,
@@ -154,6 +188,14 @@ def build_quality_report(
         "study_present": study_present,
         "sleep_present": sleep_present,
         "weather_present": weather_present,
+        "location_summary_present": bool(location_summary),
+        "location_summary_source": location_summary_source,
+        "location_rendered": location_rendered,
+        "meal_photos_count": meal_photos_count,
+        "meal_photos_rendered": meal_photos_rendered,
+        "meal_photo_invalid_img_src_count": invalid_img_src_count,
+        "mail_snapshot_has_meal_photos": snapshot_has_meal_photos,
+        "mail_snapshot_has_location_summary": snapshot_has_location_summary,
     }
     return _finalize(target_date, run_id, run_url, issues, metrics, sections)
 

@@ -69,8 +69,12 @@ def _classify_meal_photo_url(url: str) -> str:
 
 def _is_renderable_image_url(url: str) -> bool:
     url_type = _classify_meal_photo_url(url)
-    if url_type in {"https", "dropbox"}:
-        return True
+    lowered = url.lower()
+    if url_type == "dropbox":
+        return "raw=1" in lowered
+    if url_type == "https":
+        path = lowered.split("?", 1)[0]
+        return path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
     return False
 def _normalize_photo_urls(value: object) -> List[str]:
     if not isinstance(value, list):

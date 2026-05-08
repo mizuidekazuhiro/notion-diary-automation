@@ -191,9 +191,7 @@ def resolve_target_date(*, explicit_target_date: Optional[str], now: Optional[da
 def _classify_meal_photo_url(url: str) -> str:
     lowered = (url or "").strip().lower()
     if lowered.startswith("https://"):
-        if "dropbox.com" in lowered:
-            return "dropbox"
-        return "https"
+        return "dropbox" if "dropbox.com" in lowered else "https"
     if lowered.startswith("file://"):
         return "notion_file"
     if "notion" in lowered:
@@ -201,11 +199,13 @@ def _classify_meal_photo_url(url: str) -> str:
     return "invalid"
 
 
-def _resolve_location_summary_source(summary: "DailyLogSummary") -> str:
-    value = (summary.location_summary or "").strip()
-    if not value:
-        return "empty"
-    return "location_summary_gpt" if "(gpt" in value.lower() else "location_summary"
+def _is_renderable_photo_url(url: str) -> bool:
+    lowered = (url or "").strip().lower()
+    if not lowered.startswith("https://"):
+        return False
+    if "dropbox.com" in lowered:
+        return "raw=1" in lowered
+    return any(lowered.split("?", 1)[0].endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"))
 
 def run_ingest(config: Config, target_date: str, run_id: str) -> None:
     title = f"Daily Log｜{target_date}"
@@ -250,13 +250,16 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         return
 
     meal_photo_url_types = sorted({_classify_meal_photo_url(url) for url in summary.meal_photos})
-    location_source = _resolve_location_summary_source(summary)
+    location_source = str(getattr(summary, "location_summary_source", "empty") or "empty").strip() or "empty"
+    meal_photo_renderable_count = sum(1 for url in summary.meal_photos if _is_renderable_photo_url(url))
     logging.info(
-        "publish_inputs location_summary_present=%s location_summary_source=%s meal_photos_count=%s meal_photo_url_types=%s",
+        "publish_inputs location_summary_present=%s location_summary_source=%s meal_photos_count=%s meal_photo_url_types=%s meal_photo_renderable_count=%s meal_photo_source_extraction_failed_count=%s",
         bool((summary.location_summary or "").strip()),
         location_source,
         len(summary.meal_photos),
         ",".join(meal_photo_url_types) if meal_photo_url_types else "empty",
+        meal_photo_renderable_count,
+        getattr(summary, "meal_photo_source_extraction_failed_count", 0),
     )
 
     expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)

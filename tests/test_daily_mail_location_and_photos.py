@@ -48,13 +48,13 @@ def test_meal_photos_render_as_image_or_link_and_text_urls():
         "target_date": "2026-05-07",
         "meal_summary": "ok",
         "location_summary": "loc",
-        "meal_photos": ["https://www.dropbox.com/s/abc/photo1.jpg?dl=0", "http://invalid.local/photo2.jpg"],
+        "meal_photos": ["https://www.dropbox.com/s/abc/photo1.jpg?raw=1", "http://invalid.local/photo2.jpg"],
     }
     html = render_daily_log_html(payload)
     text = render_daily_log_text(payload)
-    assert '<img src="https://www.dropbox.com/s/abc/photo1.jpg?dl=0"' in html
+    assert '<img src="https://www.dropbox.com/s/abc/photo1.jpg?raw=1"' in html
     assert '<a href="http://invalid.local/photo2.jpg">' in html
-    assert "- https://www.dropbox.com/s/abc/photo1.jpg?dl=0" in text
+    assert "- https://www.dropbox.com/s/abc/photo1.jpg?raw=1" in text
 
 
 def test_mail_input_hash_changes_when_meal_photos_change():
@@ -92,3 +92,65 @@ def test_read_daily_log_filters_file_and_notion_internal_urls(monkeypatch):
     summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
     assert summary is not None
     assert summary.meal_photos == ["https://www.dropbox.com/s/abc/photo.jpg?raw=1"]
+
+
+def test_file_encoded_json_extracts_dropbox_source(monkeypatch):
+    payload = {
+        "found": True,
+        "target_date": "2026-05-07",
+        "page_id": "p1",
+        "title": "Daily Log",
+        "summary_text": "",
+        "summary_html": "",
+        "mail_id": "m1",
+        "Meal Photos": ["file://%7B%22source%22%3A%22https%3A%2F%2Fwww.dropbox.com%2Fscl%2Ffi%2Fabc%2Fphoto.jpeg%3Frlkey%3Dxxx%26raw%3D1%22%7D"],
+    }
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", lambda *_args, **_kwargs: payload)
+    summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
+    assert summary is not None
+    assert summary.meal_photos == ["https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xxx&raw=1"]
+    assert all(not url.startswith("file://") for url in summary.meal_photos)
+
+
+def test_dropbox_rlkey_is_preserved_and_dl_converted(monkeypatch):
+    payload = {
+        "found": True,
+        "target_date": "2026-05-07",
+        "page_id": "p1",
+        "title": "Daily Log",
+        "summary_text": "",
+        "summary_html": "",
+        "mail_id": "m1",
+        "Meal Photos": [
+            "https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&dl=0",
+            "https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&raw=1",
+        ],
+    }
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", lambda *_args, **_kwargs: payload)
+    summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
+    assert summary is not None
+    assert summary.meal_photos[0] == "https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&raw=1"
+    assert summary.meal_photos[1] == "https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&raw=1"
+
+
+def test_location_summary_source_variants(monkeypatch):
+    cases = [
+        ({"Location summary (GPT)": "g"}, "location_summary_gpt"),
+        ({"Location summary": "l"}, "location_summary_legacy"),
+        ({"location_summary": "p"}, "location_summary_payload"),
+        ({}, "empty"),
+    ]
+    for extra, expected in cases:
+        payload = {"found": True, "target_date": "2026-05-07", "page_id": "p1", "title": "Daily Log", "summary_text": "", "summary_html": "", "mail_id": "m1", **extra}
+        monkeypatch.setattr("publish.read_daily_log.fetch_json", lambda *_args, _payload=payload, **_kwargs: _payload)
+        summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
+        assert summary is not None
+        assert summary.location_summary_source == expected
+
+
+def test_renderable_image_rules():
+    html = render_daily_log_html({"meal_photos": ["https://example.com/page", "https://example.com/photo.jpg", "https://www.dropbox.com/scl/fi/a/b.png?rlkey=x&raw=1", "file://abc"]})
+    assert '<a href="https://example.com/page">' in html
+    assert '<img src="https://example.com/photo.jpg"' in html
+    assert '<img src="https://www.dropbox.com/scl/fi/a/b.png?rlkey=x&amp;raw=1"' in html
+    assert 'img src="file://abc"' not in html
