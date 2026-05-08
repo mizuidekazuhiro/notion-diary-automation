@@ -2006,18 +2006,26 @@ function resolveLocationSummaryFields(
 } {
   const configuredGptProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
   const gptPropName = resolvePropertyName(properties, configuredGptProp, "daily_log_read:location_summary_gpt");
+
   const exactLegacyPropName = Object.prototype.hasOwnProperty.call(properties, "Location summary")
     ? "Location summary"
     : null;
   const exactPayloadPropName = Object.prototype.hasOwnProperty.call(properties, "location_summary")
     ? "location_summary"
     : null;
-  const legacyPropName =
-    exactLegacyPropName ||
-    resolvePropertyName(properties, "Location summary", "daily_log_read:location_summary_legacy");
-  const payloadPropName =
-    exactPayloadPropName ||
-    resolvePropertyName(properties, "location_summary", "daily_log_read:location_summary_payload");
+
+  let legacyPropName = exactLegacyPropName;
+  let payloadPropName = exactPayloadPropName;
+
+  // Only fall back to normalized matching when neither exact property exists.
+  // This avoids incorrectly resolving "location_summary" as legacy.
+  if (!legacyPropName && !payloadPropName) {
+    legacyPropName = resolvePropertyName(properties, "Location summary", "daily_log_read:location_summary_legacy");
+  }
+  if (!payloadPropName && !legacyPropName) {
+    payloadPropName = resolvePropertyName(properties, "location_summary", "daily_log_read:location_summary_payload");
+  }
+
   const locationSummaryGpt = (gptPropName ? getPlainTextFromRichText(properties[gptPropName]) : "").trim() || null;
   const locationSummaryLegacy = (legacyPropName ? getPlainTextFromRichText(properties[legacyPropName]) : "").trim() || null;
   const locationSummaryPayload = (payloadPropName ? getPlainTextFromRichText(properties[payloadPropName]) : "").trim() || null;

@@ -32,6 +32,8 @@ const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFro
   const resolved = resolveLocationSummaryFields(props, {} as any);
   assert.equal(resolved.locationSummary, "payload要約");
   assert.equal(resolved.locationSummarySource, "location_summary_payload");
+  assert.equal(resolved.locationSummaryLegacy, null);
+  assert.equal(resolved.locationSummaryPayload, "payload要約");
 })();
 
 (() => {
