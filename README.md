@@ -453,3 +453,44 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 8. 日別ログ要約
 
 体重グラフは Daily Log `Weight` のみを描画し、欠損補完しません。
+
+## Codex 自動修正ループ（GitHub Actions）
+
+### 概要
+- `.github/workflows/codex-auto-fix.yml` は CI失敗 / PRラベル `codex:auto-fix` / コメント `/codex fix` `@codex fix` / 手動実行で起動します。
+- 失敗コンテキスト（workflow名, run_id, PR番号, ブランチ, 差分, テスト構成, README要約）を収集し、Codex修正用データを `.codex/failure_context.json` に保存します。
+- 自動再修正は `scripts/codex_autofix_guard.py` で同一runまたは同一PRに対して最大2回までに制限します。
+- 上限超過時は `scripts/create_autofix_issue.py` でIssueを作成し、PRへ停止コメントします。
+- 自動マージは実施しません。最終判断は必ず人間が行います。
+
+### レビュー自動化
+- `.github/workflows/codex-review.yml` は PR作成/更新 と `/codex review` コメントで起動します。
+- 差分をレビューし、Notion API / Cloudflare Workers / GitHub Actions / メール送信 / 日付処理 / タイムゾーン / 環境変数を重点チェックする方針コメントを投稿します。
+- この workflow は修正pushを行いません（レビューコメントのみ）。
+
+### 手動コメントコマンド
+- `/codex fix`: 失敗や差分を見て自動修正を実行。
+- `/codex review`: 差分レビューを実行（コメントのみ）。
+- `/codex explain`: 現在の失敗原因説明を日本語でコメント。
+- `/codex plan`: 修正計画のみ日本語でコメント。
+
+### 必要な GitHub Secrets
+- `GITHUB_TOKEN`（Actions が自動提供）
+- 必要に応じて実際の修正処理で利用する追加トークン（例: Codex CLI/API 用トークン）
+
+### 必要 permissions（最小）
+- `codex-auto-fix.yml`: `contents: write`, `pull-requests: write`, `issues: write`, `actions: read`, `checks: read`
+- `codex-review.yml`: `contents: read`, `pull-requests: write`
+
+### 上限と停止条件
+- 自動修正上限は同一run_id/PRごとに最大2回。
+- 3回目以降は修正を停止し、Issue作成 + PRコメントで人間確認へエスカレーション。
+
+### 外部副作用を避ける方針
+- CI中に本番deploy、Notion書き込み、メール送信など外部副作用処理を勝手に実行しません。
+- 本番系失敗（deploy失敗など）はコードで無理に握りつぶさず、設定差分（Secrets/Vars/外部API）確認を優先します。
+
+### Notion / Cloudflare / Secrets 側の確認が必要なケース
+- Notion `validation_error`, `xxx is not a property that exists`, `expected to be rich_text`, `valid ISO 8601` 系エラー。
+- Cloudflare Workers の認証・Secrets・Vars不足。
+- GitHub Secrets 未設定/名称不一致/権限不足。

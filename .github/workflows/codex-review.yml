@@ -1,0 +1,36 @@
+name: Codex Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/codex review') || contains(github.event.comment.body, '@codex review')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Generate focused review comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = context.eventName === 'pull_request' ? context.payload.pull_request.number : context.payload.issue.number;
+            const body = [
+              '## Codexレビュー（自動）',
+              '- 既存仕様破壊の有無を確認対象: Notion API / Cloudflare Workers / GitHub Actions / メール送信 / 日付処理 / タイムゾーン / 環境変数。',
+              '- 差分の重点確認観点:',
+              '  1. Notionプロパティ名・型不一致の混入',
+              '  2. UTC/JST変換の破綻',
+              '  3. Secrets名変更や必須env追加漏れ',
+              '  4. 本番deployやメール送信など外部副作用がPR時に実行されないか',
+              '- 問題がある場合は `/codex fix` をコメントしてください（このworkflowはpushしません）。'
+            ].join('\n');
+            await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body});
