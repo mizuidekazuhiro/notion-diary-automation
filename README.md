@@ -453,3 +453,13 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 8. 日別ログ要約
 
 体重グラフは Daily Log `Weight` のみを描画し、欠損補完しません。
+
+## Daily Log canonical resolution (duplicate-safe)
+
+- `Date` is treated as the canonical key for Daily Log resolution.
+- `Target Date` is retained for backward compatibility and should be aligned with `Date`.
+- `title` is display-only and is used only as fallback matching (`Daily Log｜YYYY-MM-DD` variants).
+- Duplicate Daily Log pages are **not auto-deleted**.
+- When duplicates are detected, the worker fills only **empty canonical fields** from duplicates.
+- The `2026-05-07` duplicate case is covered by automatic canonical merge logic.
+- Manual recovery should be used only as a last resort.

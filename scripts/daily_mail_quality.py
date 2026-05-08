@@ -197,10 +197,15 @@ def build_quality_report(
         _add_issue(issues, "daily_log_duplicate_pages_detected", "warning", "Duplicate daily log pages were detected.")
     if duplicate_detected and duplicate_merge_completed:
         _add_issue(issues, "daily_log_duplicate_merge_completed", "warning", "Duplicate merge completed for canonical page.")
-    if duplicate_detected and (not duplicate_merge_completed) and (not location_summary):
-        _add_issue(issues, "daily_log_canonical_missing_location_summary_but_duplicate_has_it", "error", "Canonical page is missing location summary while duplicates exist.")
-    if duplicate_detected and (not duplicate_merge_completed) and meal_photos_count == 0:
-        _add_issue(issues, "daily_log_canonical_missing_meal_photos_but_duplicate_has_it", "error", "Canonical page is missing meal photos while duplicates exist.")
+    duplicate_fields_present = duplicate_info.get("duplicate_fields_present") if isinstance(duplicate_info.get("duplicate_fields_present"), Mapping) else {}
+    duplicate_has_location_summary = bool(duplicate_fields_present.get("location_summary"))
+    duplicate_has_meal_photos = bool(duplicate_fields_present.get("meal_photos"))
+    if duplicate_detected and (not duplicate_merge_completed):
+        _add_issue(issues, "daily_log_duplicate_merge_failed", "error", "Duplicate merge did not complete.")
+    if duplicate_detected and duplicate_has_location_summary and (not location_summary):
+        _add_issue(issues, "daily_log_canonical_missing_location_summary_but_duplicate_has_it", "error", "Canonical page is missing location summary while duplicates have it.")
+    if duplicate_detected and duplicate_has_meal_photos and meal_photos_count == 0:
+        _add_issue(issues, "daily_log_canonical_missing_meal_photos_but_duplicate_has_it", "error", "Canonical page is missing meal photos while duplicates have them.")
 
     metrics = {
         "today_advice_chars_compact": today_advice_chars,
@@ -229,6 +234,8 @@ def build_quality_report(
         "daily_log_duplicate_page_ids_count": len(duplicate_info.get("duplicate_page_ids") or []),
         "daily_log_duplicate_merged_fields": duplicate_merged_fields,
         "daily_log_duplicate_merge_completed": duplicate_merge_completed,
+        "daily_log_duplicate_has_location_summary": duplicate_has_location_summary,
+        "daily_log_duplicate_has_meal_photos": duplicate_has_meal_photos,
     }
     return _finalize(target_date, run_id, run_url, issues, metrics, sections)
 

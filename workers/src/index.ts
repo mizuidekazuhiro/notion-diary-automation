@@ -33,7 +33,7 @@ import {
 } from "./config/task_property_names";
 import { TITLE_PROPERTIES } from "./config/title_properties";
 import { dispatchRoute } from "./http/router";
-import { chooseCanonicalDailyLogPage, isPageMatchedByDateOrTitle } from "./domain/daily_log_resolver";
+import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle } from "./domain/daily_log_resolver";
 import { ROUTES } from "./http/routes";
 
 interface Env {
@@ -2229,14 +2229,6 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
         : null;
       return {
         page_id: page.id,
-      duplicate_info: {
-        detected: duplicatePages.length > 0,
-        duplicate_count: duplicatePages.length,
-        canonical_page_id: page.id,
-        duplicate_page_ids: duplicatePages.map((item: any) => item.id),
-        merged_fields: [],
-        merge_completed: false,
-      },
         title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
         priority: page.properties?.Priority?.select?.name ?? null,
         done_date: doneDateRaw,
@@ -2770,23 +2762,8 @@ async function handleDailyLogHealthIngest(
     );
   }
 
-  const dailyLogQuery = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 50,
-      }),
-    },
-  );
-
-  if (!dailyLogQuery.ok) {
-    return notionErrorResponse(dailyLogQuery, "handleDailyLogHealthIngest.queryDaily");
-  }
-
-  const dailyLogData = await dailyLogQuery.json();
-  const existingPage = (dailyLogData.results ?? [])[0] ?? null;
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingPage = resolvedDailyLog.canonicalPage;
 
   let resultResponse: Response;
   if (existingPage) {
@@ -2845,25 +2822,8 @@ async function upsertDailyLogByTargetDate(
   updateProperties: Record<string, any>,
   logContext: string,
 ): Promise<{ pageId: string } | { error: Response }> {
-  const dailyLogQuery = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 50,
-      }),
-    },
-  );
-
-  if (!dailyLogQuery.ok) {
-    return {
-      error: await notionErrorResponse(dailyLogQuery, `${logContext}.queryDaily`),
-    };
-  }
-
-  const dailyLogData = await dailyLogQuery.json();
-  const existingPage = (dailyLogData.results ?? [])[0] ?? null;
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingPage = resolvedDailyLog.canonicalPage;
 
   let resultResponse: Response;
   if (existingPage) {
@@ -3678,23 +3638,8 @@ async function handleDailyLogExpensesIngest(
     );
   }
 
-  const dailyLogQuery = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 50,
-      }),
-    },
-  );
-
-  if (!dailyLogQuery.ok) {
-    return notionErrorResponse(dailyLogQuery, "handleDailyLogExpensesIngest.queryDaily");
-  }
-
-  const dailyLogData = await dailyLogQuery.json();
-  const existingPage = (dailyLogData.results ?? [])[0] ?? null;
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingPage = resolvedDailyLog.canonicalPage;
 
   let resultResponse: Response;
   if (existingPage) {
@@ -4534,23 +4479,8 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
 
   const { targetDate, title, source, mailId } = data;
 
-  const queryResponse = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 50,
-      }),
-    },
-  );
-
-  if (!queryResponse.ok) {
-    return notionErrorResponse(queryResponse, "handleDailyLogEnsure.query");
-  }
-
-  const queryData = await queryResponse.json();
-  const existingPage = (queryData.results ?? [])[0];
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingPage = resolvedDailyLog.canonicalPage;
   if (existingPage) {
     return new Response(JSON.stringify({ ok: true, page_id: existingPage.id }), {
       headers: jsonHeaders,
@@ -4608,6 +4538,47 @@ function isOptionalLocationSummaryValidationError(error: unknown): boolean {
   return missingProperties.length === 1 && missingProperties[0] === "Location summary (GPT)";
 }
 
+
+async function queryDailyLogCandidatesForDate(env: Env, targetDate: string): Promise<any[]> {
+  const [byDate, byTargetDate] = await Promise.all([
+    queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: "Date", date: { equals: targetDate } }),
+    queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: "Target Date", date: { equals: targetDate } }),
+  ]);
+  const merged = [...byDate, ...byTargetDate];
+  const byId = new Map<string, any>();
+  for (const page of merged) byId.set(page.id, page);
+  const needsTitleFallback = Array.from(byId.values()).some((p) => !isPageMatchedByDateOrTitle(p, targetDate)) || byId.size === 0;
+  if (needsTitleFallback) {
+    const titleCandidates = await queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: TITLE_PROPERTIES.dailyLog, title: { contains: targetDate } });
+    for (const page of titleCandidates) {
+      if (extractDailyLogDateFromTitle(getPageTitleFromProperty(page, TITLE_PROPERTIES.dailyLog)) === targetDate) {
+        byId.set(page.id, page);
+      }
+    }
+  }
+  return Array.from(byId.values()).filter((p) => isPageMatchedByDateOrTitle(p, targetDate));
+}
+
+async function resolveDailyLogPageForDate(env: Env, targetDate: string): Promise<{ canonicalPage: any | null; duplicatePages: any[]; mergedFields: string[]; mergeCompleted: boolean; duplicateFieldsPresent: Record<string, boolean> }> {
+  const candidates = await queryDailyLogCandidatesForDate(env, targetDate);
+  const canonicalPage = chooseCanonicalDailyLogPage(candidates, targetDate);
+  if (!canonicalPage) return { canonicalPage: null, duplicatePages: [], mergedFields: [], mergeCompleted: false, duplicateFieldsPresent: { location_summary: false, meal_photos: false, mood: false, notes: false } };
+  const duplicatePages = candidates.filter((p) => p.id !== canonicalPage.id);
+  if (!duplicatePages.length) return { canonicalPage, duplicatePages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: { location_summary: false, meal_photos: false, mood: false, notes: false } };
+  const patch = buildDuplicateMergePatch(canonicalPage, duplicatePages);
+  if (!patch.hasChanges) {
+    return { canonicalPage, duplicatePages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
+  }
+  const updateResponse = await notionFetch(env, `/pages/${canonicalPage.id}`, { method: "PATCH", body: JSON.stringify({ properties: patch.properties }) });
+  if (!updateResponse.ok) {
+    console.warn(`[daily_log.resolver] duplicate merge failed target_date=${targetDate} canonical_page_id=${canonicalPage.id}`);
+    return { canonicalPage, duplicatePages, mergedFields: patch.mergedFields, mergeCompleted: false, duplicateFieldsPresent: patch.duplicateFieldsPresent };
+  }
+  const refreshed = await notionFetch(env, `/pages/${canonicalPage.id}`);
+  const refreshedPage = refreshed.ok ? await refreshed.json() : canonicalPage;
+  return { canonicalPage: refreshedPage, duplicatePages, mergedFields: patch.mergedFields, mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
+}
+
 async function handleDailyLogRead(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") {
     return methodNotAllowed();
@@ -4647,25 +4618,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     return badRequest("invalid date format");
   }
 
-  const queryResponse = await notionFetch(
-    env,
-    `/databases/${env.DAILY_LOG_DB_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 50,
-      }),
-    },
-  );
-
-  if (!queryResponse.ok) {
-    return notionErrorResponse(queryResponse, "handleDailyLogRead.query");
-  }
-
-  const queryData = await queryResponse.json();
-  const candidatePages = (queryData.results ?? []).filter((item: any) => isPageMatchedByDateOrTitle(item, targetDate));
-  const page = chooseCanonicalDailyLogPage(candidatePages, targetDate);
-  const duplicatePages = candidatePages.filter((item: any) => item.id !== page?.id);
+  const resolved = await resolveDailyLogPageForDate(env, targetDate);
+  const page = resolved.canonicalPage;
+  const duplicatePages = resolved.duplicatePages;
   if (!page) {
     return new Response(JSON.stringify({ found: false, target_date: targetDate }), {
       headers: jsonHeaders,

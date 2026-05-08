@@ -1,76 +1,20 @@
-export type NotionPage = {
-  id: string;
-  created_time?: string;
-  last_edited_time?: string;
-  properties?: Record<string, any>;
-  url?: string;
-};
-
+export type NotionFileEntry = Record<string, any>;
+export type NotionPage = { id: string; created_time?: string; last_edited_time?: string; properties?: Record<string, any>; url?: string };
 const TITLE_REGEX = /^Daily\s*Log\s*(?:｜|\|)?\s*(\d{4}-\d{2}-\d{2})$/i;
-
-export function extractDailyLogDateFromTitle(title: string | null | undefined): string | null {
-  if (!title) return null;
-  const m = title.trim().match(TITLE_REGEX);
-  return m ? m[1] : null;
-}
-
-export function getTitleFromPage(page: NotionPage): string {
-  const p = page.properties ?? {};
-  const titleProp = p["名前"] ?? p["Name"] ?? p["title"];
-  const arr = titleProp?.title;
-  if (Array.isArray(arr) && arr.length > 0) {
-    return (arr[0]?.plain_text ?? arr[0]?.text?.content ?? "").trim();
-  }
-  return "";
-}
-
-function getDateProp(page: NotionPage, key: string): string | null {
-  const start = page.properties?.[key]?.date?.start;
-  return typeof start === "string" && start ? start.slice(0, 10) : null;
-}
-
-function hasText(page: NotionPage, key: string): boolean {
-  const rich = page.properties?.[key]?.rich_text;
-  return Array.isArray(rich) && rich.some((v: any) => (v?.plain_text ?? "").trim());
-}
-function hasFiles(page: NotionPage, key: string): boolean {
-  const files = page.properties?.[key]?.files;
-  return Array.isArray(files) && files.length > 0;
-}
-function hasSelect(page: NotionPage, key: string): boolean {
-  return !!page.properties?.[key]?.select?.name;
-}
-
-export function chooseCanonicalDailyLogPage(pages: NotionPage[], targetDate: string): NotionPage | null {
-  if (!pages.length) return null;
-  const scored = pages.map((p) => {
-    const date = getDateProp(p, "Date");
-    const target = getDateProp(p, "Target Date");
-    const hasCore = ["Diary", "Today advice", "Weather", "Mail ID"].some((k) => hasText(p, k));
-    const hasAux = hasText(p, "Location summary (GPT)") || hasFiles(p, "Meal Photos") || hasSelect(p, "Mood") || hasText(p, "Notes");
-    return {
-      p,
-      score: [date === targetDate && target === targetDate ? 1 : 0, hasCore ? 1 : 0, hasAux ? 1 : 0],
-    };
-  });
-  scored.sort((a, b) => {
-    for (let i = 0; i < a.score.length; i += 1) {
-      if (a.score[i] !== b.score[i]) return b.score[i] - a.score[i];
-    }
-    const aEdit = new Date(a.p.last_edited_time ?? 0).getTime();
-    const bEdit = new Date(b.p.last_edited_time ?? 0).getTime();
-    if (aEdit !== bEdit) return bEdit - aEdit;
-    const aCreated = new Date(a.p.created_time ?? 0).getTime();
-    const bCreated = new Date(b.p.created_time ?? 0).getTime();
-    return aCreated - bCreated;
-  });
-  return scored[0].p;
-}
-
-export function isPageMatchedByDateOrTitle(page: NotionPage, targetDate: string): boolean {
-  const date = getDateProp(page, "Date");
-  if (date === targetDate) return true;
-  const target = getDateProp(page, "Target Date");
-  if (target === targetDate) return true;
-  return extractDailyLogDateFromTitle(getTitleFromPage(page)) === targetDate;
-}
+export const DUPLICATE_MERGE_FIELDS = ["Location summary (GPT)","Meal Photos","Meal summary","Mood","Notes","Activity Summary","Weather","Weather Summary","Weather Location","Weather Temp Max C","Weather Temp Min C","Weather Code","Sleep Analysis JP","Today Condition Forecast JP","Sleep Start","Sleep End","Sleep Duration","Study Minutes","Study Sessions","Study Last Used At"];
+export function extractDailyLogDateFromTitle(title?: string|null){const m=(title??"").trim().match(TITLE_REGEX);return m?m[1]:null;}
+export function getTitleFromPage(page:NotionPage){const p=page.properties??{};const t=(p["名前"]??p["Name"]??p["title"])?.title;return Array.isArray(t)&&t.length?((t[0]?.plain_text??t[0]?.text?.content??"").trim()):"";}
+const getDate=(p:NotionPage,k:string)=>{const s=p.properties?.[k]?.date?.start;return typeof s==="string"&&s?s.slice(0,10):null};
+const richText=(v:any)=>Array.isArray(v?.rich_text)?v.rich_text:[];
+const empty=(v:any)=>v==null||v===""||v==="—"||(Array.isArray(v)&&v.length===0);
+export function isPropertyEmpty(prop:any){if(!prop)return true; if(Array.isArray(prop.rich_text)) return prop.rich_text.length===0||!prop.rich_text.some((x:any)=>(x?.plain_text??"").trim()); if(Array.isArray(prop.files)) return prop.files.length===0; if(prop.select!==undefined) return !prop.select?.name; if(prop.number!==undefined) return prop.number==null; if(prop.date!==undefined) return !prop.date?.start; return empty(prop);}
+function hasText(page:NotionPage,k:string){return richText(page.properties?.[k]).some((x:any)=>(x?.plain_text??"").trim());}
+function hasFiles(page:NotionPage,k:string){const f=page.properties?.[k]?.files;return Array.isArray(f)&&f.length>0;}
+function hasSelect(page:NotionPage,k:string){return !!page.properties?.[k]?.select?.name;}
+export function isPageMatchedByDateOrTitle(page:NotionPage,targetDate:string){return getDate(page,"Date")===targetDate||getDate(page,"Target Date")===targetDate||extractDailyLogDateFromTitle(getTitleFromPage(page))===targetDate;}
+export function chooseCanonicalDailyLogPage(pages:NotionPage[],targetDate:string){if(!pages.length)return null;return [...pages].sort((a,b)=>{const sa=[getDate(a,"Date")===targetDate&&getDate(a,"Target Date")===targetDate?1:0,["Diary","Today advice","Weather","Mail ID"].some(k=>hasText(a,k))?1:0,(hasText(a,"Location summary (GPT)")||hasFiles(a,"Meal Photos")||hasSelect(a,"Mood")||hasText(a,"Notes"))?1:0];const sb=[getDate(b,"Date")===targetDate&&getDate(b,"Target Date")===targetDate?1:0,["Diary","Today advice","Weather","Mail ID"].some(k=>hasText(b,k))?1:0,(hasText(b,"Location summary (GPT)")||hasFiles(b,"Meal Photos")||hasSelect(b,"Mood")||hasText(b,"Notes"))?1:0];for(let i=0;i<3;i++){if(sa[i]!==sb[i])return sb[i]-sa[i];}const ae=new Date(a.last_edited_time??0).getTime(),be=new Date(b.last_edited_time??0).getTime();if(ae!==be)return be-ae;return new Date(a.created_time??0).getTime()-new Date(b.created_time??0).getTime();})[0];}
+function normalizeDropbox(url:string){if(!/dropbox\.com/i.test(url)) return url; const u=new URL(url);u.searchParams.delete("dl");u.searchParams.delete("raw");u.searchParams.set("raw","1");return u.toString();}
+function extract(entry:any):string|null{if(typeof entry==="string"){if(entry.startsWith("file://")){try{const dec=decodeURIComponent(entry.slice(7));const obj=JSON.parse(dec);return extract(obj);}catch{return null;}}if(/^https?:\/\//.test(entry)) return normalizeDropbox(entry);return null;}if(!entry||typeof entry!=="object")return null;return extract(entry?.external?.url)||extract(entry?.file?.url)||extract(entry?.source)||extract(entry?.url)||extract(entry?.source_url)||null;}
+export function mergeNotionFilesDedup(a:any[]=[],b:any[]=[]){const out:any[]=[];const seen=new Set<string>();for(const item of [...a,...b]){const k=extract(item);const key=k?`u:${k}`:`j:${JSON.stringify(item)}`;if(seen.has(key))continue;seen.add(key);out.push(item);}return out;}
+export function buildDuplicateMergePatch(canonical:NotionPage,dups:NotionPage[]){const properties:Record<string,any>={};const mergedFields:string[]=[];for(const field of DUPLICATE_MERGE_FIELDS){const c=canonical.properties?.[field];if(field==="Meal Photos"){const cFiles=Array.isArray(c?.files)?c.files:[];const dFiles=dups.flatMap(d=>Array.isArray(d.properties?.[field]?.files)?d.properties?.[field]?.files:[]);const merged=mergeNotionFilesDedup(cFiles,dFiles);if(merged.length!==cFiles.length){properties[field]={files:merged};mergedFields.push(field);}continue;}if(!isPropertyEmpty(c)) continue;const src=dups.map(d=>d.properties?.[field]).find(p=>!isPropertyEmpty(p));if(src){properties[field]=src;mergedFields.push(field);}}
+return {properties,mergedFields,hasChanges:Object.keys(properties).length>0,duplicateFieldsPresent:{location_summary:dups.some(d=>!isPropertyEmpty(d.properties?.["Location summary (GPT)"])),meal_photos:dups.some(d=>!isPropertyEmpty(d.properties?.["Meal Photos"])),mood:dups.some(d=>!isPropertyEmpty(d.properties?.["Mood"])),notes:dups.some(d=>!isPropertyEmpty(d.properties?.["Notes"]))}};}
