@@ -469,7 +469,7 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - この workflow は修正pushを行いません（レビューコメントのみ）。
 
 ### 手動コメントコマンド
-- `/codex fix`: 失敗や差分を見て自動修正を実行。
+- `/codex fix`: 失敗コンテキスト収集とScaffoldブランチ更新を実行（Codex本体の自動コード修正は未実装）。
 - `/codex review`: 差分レビューを実行（コメントのみ）。
 - `/codex explain`: 現在の失敗原因説明を日本語でコメント。
 - `/codex plan`: 修正計画のみ日本語でコメント。
@@ -496,7 +496,8 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - GitHub Secrets 未設定/名称不一致/権限不足。
 
 ### Codex連携の現状（2026-05-08時点）
-- 現在のworkflowは **Scaffold（段階導入）** です。Codex本体（`openai/codex-action` や Codex CLI 非対話実行）による自動コード修正は未実装です。
+- 現在のworkflowは **Scaffold（段階導入）** です。Codex本体（`openai/codex-action` や Codex CLI 非対話実行）によるコード自動修正は未実装です。
+- `/codex fix` は現時点で「失敗コンテキスト収集 + Scaffoldブランチ更新」までを行います。
 - 現時点でできること:
   - 失敗トリガー検知
   - 対象PR/head_sha の解決

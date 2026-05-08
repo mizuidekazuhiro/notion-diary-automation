@@ -70,8 +70,16 @@ jobs:
             } else {
               pr = core.getInput('pr_number') || '';
               runId = core.getInput('run_id') || '';
-              branch = core.getInput('target_branch') || context.ref.replace('refs/heads/','');
-              headSha = core.getInput('head_sha') || '';
+              const inputBranch = core.getInput('target_branch') || '';
+              const inputSha = core.getInput('head_sha') || '';
+              if (pr) {
+                const pull = await github.rest.pulls.get({owner: context.repo.owner, repo: context.repo.repo, pull_number: Number(pr)});
+                branch = inputBranch || pull.data.head.ref;
+                headSha = inputSha || pull.data.head.sha;
+              } else {
+                branch = inputBranch || context.ref.replace('refs/heads/','');
+                headSha = inputSha || '';
+              }
               wf = 'workflow_dispatch';
             }
             core.setOutput('pr', pr);
