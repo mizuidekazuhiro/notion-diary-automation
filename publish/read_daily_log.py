@@ -427,14 +427,22 @@ def read_daily_log(
         print("WARNING read_daily_log location_summary_mapping_missing")
     if not meal_photos:
         print("WARNING read_daily_log meal_photos_mapping_missing")
-    if strict_optional_sections and (
-        (not payload_has_location_summary_gpt)
-        or (not payload_has_meal_photos_raw)
-        or (not location_summary)
-        or (not meal_photos)
-        or location_summary_source == "empty"
-    ):
-        print("ERROR read_daily_log strict_optional_sections_violation=true")
+    strict_violations: list[str] = []
+    if not payload_has_location_summary_gpt:
+        strict_violations.append("payload_has_location_summary_gpt=false")
+    if not payload_has_meal_photos_raw:
+        strict_violations.append("payload_has_meal_photos_raw=false")
+    if not location_summary:
+        strict_violations.append("location_summary=empty")
+    if not meal_photos:
+        strict_violations.append("meal_photos=empty")
+    if location_summary_source == "empty":
+        strict_violations.append("location_summary_source=empty")
+    if strict_optional_sections and strict_violations:
+        raise RuntimeError(
+            "Daily mail strict optional sections violation: "
+            + ", ".join(strict_violations)
+        )
     sleep_start = _safe_text(_get_sleep_value(payload, "sleep_start"))
     sleep_end = _safe_text(_get_sleep_value(payload, "sleep_end"))
     raw_sleep_duration_min = _safe_float(_get_sleep_value(payload, "sleep_duration_min"))

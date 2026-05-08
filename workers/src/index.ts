@@ -4859,9 +4859,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
   const mealPhotosRaw = normalizeFilesFromProperty(properties["Meal Photos"]);
-  const mealPhotos = mealPhotosRaw.map((item) =>
-    item.type === "external" ? item.external.url : item.file.url,
-  );
+  const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
   const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
   const expensesTotalRaw =
@@ -5266,4 +5264,10 @@ export default {
       );
     }
   },
+};
+
+export const __test__ = {
+  normalizeFilesFromProperty,
+  getFileUrlsFromProperty,
+  resolveLocationSummaryFields,
 };
