@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Any, Iterable, List, Mapping, Optional
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
@@ -362,6 +363,9 @@ class DailyLogSummary:
     mail_input_snapshot_json: Optional[str] = None
     mail_sent_at: Optional[str] = None
     mail_version: Optional[int] = None
+    raw_payload_keys: List[str] = field(default_factory=list)
+    payload_has_location_summary_gpt: bool = False
+    payload_has_meal_photos_raw: bool = False
 
 
 def read_daily_log(
@@ -411,6 +415,26 @@ def read_daily_log(
 
     location_summary, location_summary_source = _resolve_location_summary(payload)
     meal_photos, meal_photo_source_extraction_failed_count = _resolve_meal_photos(payload)
+    strict_optional_sections = (os.getenv("DAILY_MAIL_STRICT_OPTIONAL_SECTIONS", "false").strip().lower() == "true")
+    payload_keys = sorted([str(key) for key in payload.keys() if isinstance(key, str)])
+    payload_has_location_summary_gpt = bool(_safe_text(_get_case_insensitive_value(payload, "Location summary (GPT)")))
+    payload_has_meal_photos_raw = isinstance(_get_case_insensitive_value(payload, "Meal Photos", "meal_photos"), list)
+    if not payload_has_location_summary_gpt:
+        print("WARNING read_daily_log payload_missing_location_summary_gpt")
+    if not payload_has_meal_photos_raw:
+        print("WARNING read_daily_log payload_missing_meal_photos")
+    if not location_summary:
+        print("WARNING read_daily_log location_summary_mapping_missing")
+    if not meal_photos:
+        print("WARNING read_daily_log meal_photos_mapping_missing")
+    if strict_optional_sections and (
+        (not payload_has_location_summary_gpt)
+        or (not payload_has_meal_photos_raw)
+        or (not location_summary)
+        or (not meal_photos)
+        or location_summary_source == "empty"
+    ):
+        print("ERROR read_daily_log strict_optional_sections_violation=true")
     sleep_start = _safe_text(_get_sleep_value(payload, "sleep_start"))
     sleep_end = _safe_text(_get_sleep_value(payload, "sleep_end"))
     raw_sleep_duration_min = _safe_float(_get_sleep_value(payload, "sleep_duration_min"))
@@ -521,4 +545,7 @@ def read_daily_log(
         mail_input_snapshot_json=_safe_text(_get_case_insensitive_value(payload, "Mail Input Snapshot", "mail_input_snapshot_json", "mail_input_snapshot")),
         mail_sent_at=_safe_text(_get_case_insensitive_value(payload, "Mail Sent At", "mail_sent_at")),
         mail_version=_safe_int(_get_case_insensitive_value(payload, "Mail Version", "mail_version")),
+        raw_payload_keys=payload_keys,
+        payload_has_location_summary_gpt=payload_has_location_summary_gpt,
+        payload_has_meal_photos_raw=payload_has_meal_photos_raw,
     )

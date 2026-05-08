@@ -248,6 +248,33 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             run_id,
         )
         return
+    target_date_matches = summary.target_date == target_date
+    logging.info(
+        "phase04_daily_log_diagnostics target_date=%s page_id=%s location_summary_present=%s location_summary_source=%s location_summary_chars=%s meal_photos_count=%s meal_photo_source_extraction_failed_count=%s mail_id_present=%s diary_notification_sent=%s today_advice_present=%s diary_present=%s mail_input_hash_present=%s mail_input_snapshot_present=%s",
+        target_date,
+        summary.page_id,
+        bool((summary.location_summary or "").strip()),
+        str(getattr(summary, "location_summary_source", "empty") or "empty"),
+        len((summary.location_summary or "").strip()),
+        len(summary.meal_photos),
+        getattr(summary, "meal_photo_source_extraction_failed_count", 0),
+        bool((summary.mail_id or "").strip()),
+        summary.diary_notification_sent,
+        bool((summary.today_advice or "").strip()),
+        bool((summary.diary or "").strip()),
+        bool((summary.mail_input_hash or "").strip()),
+        bool((summary.mail_input_snapshot_json or "").strip()),
+    )
+    if not target_date_matches:
+        raise RuntimeError(f"Phase04 fail: target_date mismatch expected={target_date} actual={summary.target_date}")
+    if not (summary.today_advice or "").strip():
+        raise RuntimeError("Phase04 fail: Today advice is empty.")
+    if not (summary.diary or "").strip():
+        logging.warning("Phase04 warning: Diary is empty.")
+    if not (summary.mail_id or "").strip():
+        logging.warning("Phase04 warning: Mail ID is empty.")
+    if summary.diary_notification_sent is False:
+        logging.warning("Phase04 warning: Diary Notification Sent is false before publish.")
 
     meal_photo_url_types = sorted({_classify_meal_photo_url(url) for url in summary.meal_photos})
     location_source = str(getattr(summary, "location_summary_source", "empty") or "empty").strip() or "empty"

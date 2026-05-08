@@ -1981,10 +1981,7 @@ function normalizeFilesFromProperty(
 function getFileUrlsFromProperty(
   property: Record<string, any> | undefined,
 ): string[] {
-  if (!property || !Array.isArray(property.files)) {
-    return [];
-  }
-  return property.files
+  return normalizeFilesFromProperty(property)
     .map((file: Record<string, any>) => {
       if (file.type === "external" && file.external?.url) {
         return String(file.external.url);
@@ -1995,6 +1992,35 @@ function getFileUrlsFromProperty(
       return null;
     })
     .filter((item): item is string => Boolean(item));
+}
+
+function resolveLocationSummaryFields(
+  properties: Record<string, any>,
+  env: Env,
+): {
+  locationSummaryGpt: string | null;
+  locationSummaryLegacy: string | null;
+  locationSummaryPayload: string | null;
+  locationSummary: string | null;
+  locationSummarySource: "location_summary_gpt" | "location_summary_legacy" | "location_summary_payload" | "empty";
+} {
+  const configuredGptProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
+  const gptPropName = resolvePropertyName(properties, configuredGptProp, "daily_log_read:location_summary_gpt");
+  const legacyPropName = resolvePropertyName(properties, "Location summary", "daily_log_read:location_summary_legacy");
+  const payloadPropName = resolvePropertyName(properties, "location_summary", "daily_log_read:location_summary_payload");
+  const locationSummaryGpt = (gptPropName ? getPlainTextFromRichText(properties[gptPropName]) : "").trim() || null;
+  const locationSummaryLegacy = (legacyPropName ? getPlainTextFromRichText(properties[legacyPropName]) : "").trim() || null;
+  const locationSummaryPayload = (payloadPropName ? getPlainTextFromRichText(properties[payloadPropName]) : "").trim() || null;
+  if (locationSummaryGpt) {
+    return { locationSummaryGpt, locationSummaryLegacy, locationSummaryPayload, locationSummary: locationSummaryGpt, locationSummarySource: "location_summary_gpt" };
+  }
+  if (locationSummaryLegacy) {
+    return { locationSummaryGpt, locationSummaryLegacy, locationSummaryPayload, locationSummary: locationSummaryLegacy, locationSummarySource: "location_summary_legacy" };
+  }
+  if (locationSummaryPayload) {
+    return { locationSummaryGpt, locationSummaryLegacy, locationSummaryPayload, locationSummary: locationSummaryPayload, locationSummarySource: "location_summary_payload" };
+  }
+  return { locationSummaryGpt, locationSummaryLegacy, locationSummaryPayload, locationSummary: null, locationSummarySource: "empty" };
 }
 
 function getRelationIdsFromProperty(
@@ -4832,15 +4858,17 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     getStringFromProperty(properties[getTodayAdviceGeneratedAtPropertyName(env)]) ||
     null;
   const mealSummary = getPlainTextFromRichText(properties["Meal summary"]) || null;
-  const mealPhotos = getFileUrlsFromProperty(properties["Meal Photos"]);
+  const mealPhotosRaw = normalizeFilesFromProperty(properties["Meal Photos"]);
+  const mealPhotos = mealPhotosRaw.map((item) =>
+    item.type === "external" ? item.external.url : item.file.url,
+  );
   const activitySummary = getPlainTextFromRichText(properties["Activity Summary"]) || null;
   const dailyLogExpensesPropertyNames = getDailyLogExpensesPropertyNames(env);
   const expensesTotalRaw =
     typeof properties[dailyLogExpensesPropertyNames.total]?.number === "number"
       ? properties[dailyLogExpensesPropertyNames.total].number
       : null;
-  const locationSummaryProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
-  const locationSummary = getPlainTextFromRichText(properties[locationSummaryProp]) || null;
+  const locationSummaryFields = resolveLocationSummaryFields(properties, env);
   const mood = properties.Mood?.select?.name ?? null;
   const notesPropertyName = getDailyLogNotesPropertyName(env);
   const notes = getPlainTextFromRichText(properties[notesPropertyName]) || null;
@@ -4958,6 +4986,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       source,
       diary,
       meal_summary: mealSummary,
+      "Meal Photos": mealPhotosRaw,
       meal_photos: mealPhotos,
       place,
       activity_summary: activitySummary,
@@ -5000,7 +5029,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
         top: expensesTop,
         remaining: expensesRemaining,
       },
-      location_summary: locationSummary,
+      "Location summary (GPT)": locationSummaryFields.locationSummaryGpt,
+      "Location summary": locationSummaryFields.locationSummaryLegacy,
+      location_summary: locationSummaryFields.locationSummary,
+      location_summary_source: locationSummaryFields.locationSummarySource,
       mood,
       notes,
       weight,
