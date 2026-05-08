@@ -453,3 +453,16 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 8. 日別ログ要約
 
 体重グラフは Daily Log `Weight` のみを描画し、欠損補完しません。
+
+## Daily Log duplicate recovery (2026-05-07)
+
+- Source page: `359dec27-c9aa-8157-af19-cb259a0a1b4e`
+- Canonical destination page: `359dec27-c9aa-819d-adf0-eb09fa03f36d`
+- Copy fields:
+  - `Location summary (GPT)`
+  - `Meal Photos`
+  - `Mood`
+  - `Notes`
+- After copy, run `Daily Diary 04 - Publish Daily Mail` again.
+- Do **not** delete duplicate pages automatically.
+- Mark duplicate by adding `[DUPLICATE]` to title or append `canonical=<page_id>` to `Notes`.
