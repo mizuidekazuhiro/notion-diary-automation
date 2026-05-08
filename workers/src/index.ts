@@ -2821,7 +2821,7 @@ async function upsertDailyLogByTargetDate(
   targetDate: string,
   updateProperties: Record<string, any>,
   logContext: string,
-): Promise<{ pageId: string } | { error: Response }> {
+): Promise<{ pageId: string; duplicateInfo: any } | { error: Response }> {
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
   const existingPage = resolvedDailyLog.canonicalPage;
 
@@ -2863,7 +2863,7 @@ async function upsertDailyLogByTargetDate(
   }
 
   const pageId = existingPage ? existingPage.id : (await resultResponse.json()).id;
-  return { pageId };
+  return { pageId, duplicateInfo: buildDuplicateInfo(resolvedDailyLog, pageId) };
 }
 
 async function handleDailyLogPhotosIngest(
@@ -4482,7 +4482,7 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
   const existingPage = resolvedDailyLog.canonicalPage;
   if (existingPage) {
-    return new Response(JSON.stringify({ ok: true, page_id: existingPage.id }), {
+    return new Response(JSON.stringify({ ok: true, page_id: existingPage.id, duplicate_info: buildDuplicateInfo(resolvedDailyLog, existingPage.id) }), {
       headers: jsonHeaders,
     });
   }
@@ -4510,7 +4510,7 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
   }
 
   const pageId = (await resultResponse.json()).id;
-  return new Response(JSON.stringify({ ok: true, page_id: pageId }), {
+  return new Response(JSON.stringify({ ok: true, page_id: pageId, duplicate_info: { detected: false, duplicate_count: 0, canonical_page_id: pageId, duplicate_page_ids: [], merged_fields: [], merge_completed: true, duplicate_fields_present: { location_summary: false, meal_photos: false, mood: false, notes: false } } }), {
     headers: jsonHeaders,
   });
 }
@@ -4540,23 +4540,16 @@ function isOptionalLocationSummaryValidationError(error: unknown): boolean {
 
 
 async function queryDailyLogCandidatesForDate(env: Env, targetDate: string): Promise<any[]> {
-  const [byDate, byTargetDate] = await Promise.all([
+  const [byDate, byTargetDate, byTitle] = await Promise.all([
     queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: "Date", date: { equals: targetDate } }),
     queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: "Target Date", date: { equals: targetDate } }),
+    queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: TITLE_PROPERTIES.dailyLog, title: { contains: targetDate } }),
   ]);
-  const merged = [...byDate, ...byTargetDate];
   const byId = new Map<string, any>();
-  for (const page of merged) byId.set(page.id, page);
-  const needsTitleFallback = Array.from(byId.values()).some((p) => !isPageMatchedByDateOrTitle(p, targetDate)) || byId.size === 0;
-  if (needsTitleFallback) {
-    const titleCandidates = await queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: TITLE_PROPERTIES.dailyLog, title: { contains: targetDate } });
-    for (const page of titleCandidates) {
-      if (extractDailyLogDateFromTitle(getPageTitleFromProperty(page, TITLE_PROPERTIES.dailyLog)) === targetDate) {
-        byId.set(page.id, page);
-      }
-    }
+  for (const page of [...byDate, ...byTargetDate, ...byTitle] as any[]) {
+    if (isPageMatchedByDateOrTitle(page as any, targetDate)) byId.set(page.id, page);
   }
-  return Array.from(byId.values()).filter((p) => isPageMatchedByDateOrTitle(p, targetDate));
+  return Array.from(byId.values());
 }
 
 async function resolveDailyLogPageForDate(env: Env, targetDate: string): Promise<{ canonicalPage: any | null; duplicatePages: any[]; mergedFields: string[]; mergeCompleted: boolean; duplicateFieldsPresent: Record<string, boolean> }> {
@@ -4577,6 +4570,19 @@ async function resolveDailyLogPageForDate(env: Env, targetDate: string): Promise
   const refreshed = await notionFetch(env, `/pages/${canonicalPage.id}`);
   const refreshedPage = refreshed.ok ? await refreshed.json() : canonicalPage;
   return { canonicalPage: refreshedPage, duplicatePages, mergedFields: patch.mergedFields, mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
+}
+
+
+function buildDuplicateInfo(resolved: { duplicatePages: any[]; mergedFields: string[]; mergeCompleted: boolean; duplicateFieldsPresent: Record<string, boolean> }, canonicalPageId: string) {
+  return {
+    detected: resolved.duplicatePages.length > 0,
+    duplicate_count: resolved.duplicatePages.length,
+    canonical_page_id: canonicalPageId,
+    duplicate_page_ids: resolved.duplicatePages.map((item: any) => item.id),
+    merged_fields: resolved.mergedFields,
+    merge_completed: resolved.mergeCompleted,
+    duplicate_fields_present: resolved.duplicateFieldsPresent,
+  };
 }
 
 async function handleDailyLogRead(request: Request, env: Env): Promise<Response> {

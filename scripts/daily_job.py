@@ -258,19 +258,29 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     summary_diary = (getattr(summary, "diary", "") or "").strip()
     summary_mail_input_hash = (getattr(summary, "mail_input_hash", "") or "").strip()
     summary_mail_input_snapshot_json = (getattr(summary, "mail_input_snapshot_json", "") or "").strip()
+    duplicate_info = getattr(summary, "duplicate_info", {}) or {}
+    duplicate_fields_present = duplicate_info.get("duplicate_fields_present", {}) if isinstance(duplicate_info, dict) else {}
     logging.info(
-        "phase04_daily_log_diagnostics target_date=%s page_id=%s location_summary_present=%s location_summary_source=%s location_summary_chars=%s meal_photos_count=%s meal_photo_source_extraction_failed_count=%s mail_id_present=%s diary_notification_sent=%s today_advice_present=%s diary_present=%s mail_input_hash_present=%s mail_input_snapshot_present=%s",
+        "phase04_daily_log_diagnostics target_date=%s canonical_page_id=%s daily_log_duplicate_detected=%s duplicate_count=%s duplicate_page_ids_count=%s duplicate_merge_completed=%s duplicate_merged_fields=%s duplicate_has_location_summary=%s duplicate_has_meal_photos=%s location_summary_present=%s location_summary_source=%s location_summary_chars=%s meal_photos_count=%s meal_photo_source_extraction_failed_count=%s today_advice_present=%s diary_present=%s weather_present=%s mail_id_present=%s diary_notification_sent=%s mail_input_hash_present=%s mail_input_snapshot_present=%s",
         target_date,
-        summary_page_id,
+        duplicate_info.get("canonical_page_id") or summary_page_id,
+        bool(duplicate_info.get("detected")),
+        int(duplicate_info.get("duplicate_count") or 0),
+        len(duplicate_info.get("duplicate_page_ids") or []),
+        bool(duplicate_info.get("merge_completed")),
+        ",".join(duplicate_info.get("merged_fields") or []),
+        bool(duplicate_fields_present.get("location_summary")),
+        bool(duplicate_fields_present.get("meal_photos")),
         bool(summary_location_summary),
         str(getattr(summary, "location_summary_source", "empty") or "empty"),
         len(summary_location_summary),
         len(summary_meal_photos),
         getattr(summary, "meal_photo_source_extraction_failed_count", 0),
-        bool(summary_mail_id),
-        summary_diary_notification_sent,
         bool(summary_today_advice),
         bool(summary_diary),
+        bool((getattr(summary, "weather_summary", "") or "").strip() or getattr(summary, "weather_code", None) is not None),
+        bool(summary_mail_id),
+        summary_diary_notification_sent,
         bool(summary_mail_input_hash),
         bool(summary_mail_input_snapshot_json),
     )

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle } from "./daily_log_resolver";
+import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, toNotionUpdateProperty } from "./daily_log_resolver";
 
 assert.equal(extractDailyLogDateFromTitle("Daily Log｜2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log | 2026-05-07"), "2026-05-07");
@@ -19,3 +19,7 @@ assert.ok(patch.mergedFields.includes("Notes"));
 assert.equal((patch.properties["Meal Photos"].files ?? []).length, 1);
 assert.equal(pageA.properties.Diary.rich_text[0].plain_text, "diary");
 console.log("daily_log_resolver.test.ts: ok");
+
+assert.deepEqual(toNotionUpdateProperty({ id:"x", type:"rich_text", rich_text:[{plain_text:"a"}] }), { rich_text:[{plain_text:"a"}] });
+assert.deepEqual(toNotionUpdateProperty({ id:"x", type:"select", select:{name:"Good"} }), { select:{name:"Good"} });
+assert.equal(toNotionUpdateProperty({ id:"x", type:"formula", formula:{} }), null);
