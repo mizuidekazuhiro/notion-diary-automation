@@ -154,3 +154,37 @@ def test_renderable_image_rules():
     assert '<img src="https://example.com/photo.jpg"' in html
     assert '<img src="https://www.dropbox.com/scl/fi/a/b.png?rlkey=x&amp;raw=1"' in html
     assert 'img src="file://abc"' not in html
+
+
+def test_extract_from_mapping_external_url(monkeypatch):
+    payload = {
+        "found": True,
+        "target_date": "2026-05-07",
+        "page_id": "p1",
+        "title": "Daily Log",
+        "summary_text": "",
+        "summary_html": "",
+        "mail_id": "m1",
+        "Meal Photos": [{"external": {"url": "https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&dl=0"}}],
+    }
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", lambda *_args, **_kwargs: payload)
+    summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
+    assert summary is not None
+    assert summary.meal_photos == ["https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&raw=1"]
+
+
+def test_exclude_mapping_file_url_with_permission_record(monkeypatch):
+    payload = {
+        "found": True,
+        "target_date": "2026-05-07",
+        "page_id": "p1",
+        "title": "Daily Log",
+        "summary_text": "",
+        "summary_html": "",
+        "mail_id": "m1",
+        "Meal Photos": [{"file": {"url": "https://www.notion.so/image/abc?permissionRecord=1"}}],
+    }
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", lambda *_args, **_kwargs: payload)
+    summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
+    assert summary is not None
+    assert summary.meal_photos == []

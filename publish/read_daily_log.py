@@ -202,7 +202,11 @@ def _extract_photo_url(entry: object) -> Optional[str]:
         return None
     if not isinstance(entry, Mapping):
         return None
+    nested_external = entry.get("external")
+    nested_file = entry.get("file")
     candidates = [
+        nested_external.get("url") if isinstance(nested_external, Mapping) else None,
+        nested_file.get("url") if isinstance(nested_file, Mapping) else None,
         entry.get("external_url"),
         entry.get("url"),
         entry.get("external"),
