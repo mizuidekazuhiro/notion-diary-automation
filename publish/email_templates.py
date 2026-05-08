@@ -52,6 +52,30 @@ def _format_yen(value: Optional[float]) -> str:
     return f"¥{value:g}"
 
 
+
+
+def _classify_meal_photo_url(url: str) -> str:
+    lowered = url.lower()
+    if lowered.startswith("file://"):
+        return "notion_file"
+    if "dropbox.com" in lowered:
+        return "dropbox"
+    if lowered.startswith("https://"):
+        return "https"
+    if lowered.startswith("http://"):
+        return "http"
+    return "invalid"
+
+
+def _is_renderable_image_url(url: str) -> bool:
+    url_type = _classify_meal_photo_url(url)
+    lowered = url.lower()
+    if url_type == "dropbox":
+        return "raw=1" in lowered
+    if url_type == "https":
+        path = lowered.split("?", 1)[0]
+        return path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
+    return False
 def _normalize_photo_urls(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -527,20 +551,25 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     meal_photo_html = ""
     if meal_photos:
         images = []
+        links = []
         for url in meal_photos:
             safe_url = html.escape(url, quote=True)
-            images.append(
-                "<div style=\"margin: 0 8px 8px 0;\">"
-                f"<img src=\"{safe_url}\" alt=\"Meal photo\" "
-                "style=\"width: 160px; height: auto; border-radius: 8px; "
-                "border: 1px solid #e5e7eb; display: block;\" />"
-                "</div>"
-            )
-        meal_photo_html = (
-            "<div style=\"display: flex; flex-wrap: wrap; margin-top: 8px;\">"
-            f"{''.join(images)}"
-            "</div>"
-        )
+            if _is_renderable_image_url(url):
+                images.append(
+                    "<div style=\"margin: 0 8px 8px 0;\">"
+                    f"<img src=\"{safe_url}\" alt=\"Meal photo\" "
+                    "style=\"width: 160px; height: auto; border-radius: 8px; "
+                    "border: 1px solid #e5e7eb; display: block;\" />"
+                    "</div>"
+                )
+            else:
+                links.append(f'<li style=\"margin:6px 0;\"><a href=\"{safe_url}\">{safe_url}</a></li>')
+        blocks = []
+        if images:
+            blocks.append("<div style=\"display: flex; flex-wrap: wrap; margin-top: 8px;\">" + ''.join(images) + "</div>")
+        if links:
+            blocks.append("<ul style=\"margin: 8px 0 0 16px; padding: 0;\">" + ''.join(links) + "</ul>")
+        meal_photo_html = ''.join(blocks)
     else:
         meal_photo_html = (
             "<p style=\"margin: 8px 0 0 0; font-size: 14px; color: #9ca3af;\">—</p>"

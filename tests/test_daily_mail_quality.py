@@ -35,6 +35,10 @@ def _summary(**overrides: object) -> SimpleNamespace:
         "weather_temp_min_c": None,
         "diary": "今日はテスト用の日記です。",
         "meal_summary": "",
+        "meal_photos": [],
+        "location_summary": "",
+        "location_summary_source": "empty",
+        "mail_input_snapshot_json": "{\"meal_photos\":[],\"location_summary\":\"\"}",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -79,3 +83,49 @@ def test_passes_when_required_sections_are_present() -> None:
 
     assert report["status"] == "pass"
     assert _codes(report) == set()
+
+
+def test_fail_when_location_summary_gpt_not_rendered() -> None:
+    summary = _summary(location_summary="渋谷", location_summary_source="location_summary_gpt")
+    report = build_quality_report(summary, mail_plain_text="Daily Log\nDiary", mail_html="<html></html>")
+    assert "location_summary_not_rendered" in _codes(report)
+    assert "location_summary_gpt_not_rendered" in _codes(report)
+
+
+def test_fail_when_meal_photos_not_rendered() -> None:
+    summary = _summary(meal_photos=["https://example.com/a.jpg"])
+    report = build_quality_report(summary, mail_plain_text="Daily Log\nDiary", mail_html="<html></html>")
+    assert "meal_photos_not_rendered" in _codes(report)
+
+
+def test_fail_when_invalid_img_src_exists() -> None:
+    summary = _summary(meal_photos=["https://example.com/a.jpg"])
+    report = build_quality_report(summary, mail_plain_text="https://example.com/a.jpg", mail_html='<img src="file://abc" /><img src="https://www.notion.so/image/abc?permissionRecord=1" />')
+    assert "meal_photo_invalid_img_src" in _codes(report)
+
+
+def test_fail_when_notion_image_url_exists_in_img_src() -> None:
+    summary = _summary(meal_photos=["https://example.com/a.jpg"])
+    report = build_quality_report(
+        summary,
+        mail_plain_text="https://example.com/a.jpg",
+        mail_html='<img src="https://www.notion.so/image/abc" />',
+    )
+    assert "meal_photo_invalid_img_src" in _codes(report)
+
+
+def test_fail_when_notion_image_url_with_permission_record_exists_in_img_src() -> None:
+    summary = _summary(meal_photos=["https://example.com/a.jpg"])
+    report = build_quality_report(
+        summary,
+        mail_plain_text="https://example.com/a.jpg",
+        mail_html='<img src="https://www.notion.so/image/abc?permissionRecord=1" />',
+    )
+    assert "meal_photo_invalid_img_src" in _codes(report)
+
+
+def test_snapshot_fields_present_pass() -> None:
+    summary = _summary(location_summary="loc", meal_photos=["https://example.com/a.jpg"], mail_input_snapshot_json='{"meal_photos":["https://example.com/a.jpg"],"location_summary":"loc"}')
+    report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary\nLocation summary: loc\n- https://example.com/a.jpg", mail_html='<img src="https://example.com/a.jpg" />')
+    assert "mail_snapshot_missing_meal_photos" not in _codes(report)
+    assert "mail_snapshot_missing_location_summary" not in _codes(report)

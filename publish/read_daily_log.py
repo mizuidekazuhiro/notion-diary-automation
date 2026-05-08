@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Mapping, Optional
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from ingest.http_client import fetch_json
 from scripts.sleep_utils import format_sleep_duration_text, resolve_sleep_duration_minutes
@@ -132,6 +133,110 @@ def _get_weather_label_value(payload: Mapping[str, Any]) -> Optional[str]:
     return _safe_text(_get_case_insensitive_value(payload, "Weather", "weather"))
 
 
+def _resolve_location_summary(payload: Mapping[str, Any]) -> tuple[Optional[str], str]:
+    gpt_value = _safe_text(payload.get("Location summary (GPT)")) or _safe_text(
+        _get_case_insensitive_value(payload, "Location summary (GPT)")
+    )
+    if gpt_value:
+        return gpt_value, "location_summary_gpt"
+    legacy_value = _safe_text(payload.get("Location summary"))
+    if legacy_value:
+        return legacy_value, "location_summary_legacy"
+    snake_value = _safe_text(payload.get("location_summary"))
+    if snake_value:
+        return snake_value, "location_summary_payload"
+    return None, "empty"
+
+
+def _normalize_dropbox_raw_url(url: str) -> str:
+    if "dropbox.com" not in url:
+        return url
+    parts = urlsplit(url)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    filtered = [(k, v) for k, v in pairs if k.lower() not in {"dl", "raw"}]
+    filtered.append(("raw", "1"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(filtered, doseq=True), parts.fragment))
+
+
+def _is_notion_internal_photo_url(url: str) -> bool:
+    lowered = url.lower()
+    return "notion" in lowered and ("permissionrecord" in lowered or "signed" in lowered)
+
+
+def _extract_photo_url(entry: object) -> Optional[str]:
+    def _decode_file_payload(file_url: str) -> Optional[str]:
+        encoded_payload = file_url[len("file://"):].strip()
+        if not encoded_payload:
+            return None
+        decoded = unquote(encoded_payload)
+        try:
+            payload = json.loads(decoded)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        nested_external = payload.get("external")
+        if isinstance(nested_external, Mapping):
+            external_url = nested_external.get("url")
+            if isinstance(external_url, str):
+                return external_url
+        for key in ("source", "url", "external_url", "source_url"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+        return None
+
+    if isinstance(entry, str):
+        raw = entry.strip()
+        if not raw:
+            return None
+        if raw.startswith("file://"):
+            decoded_candidate = _decode_file_payload(raw)
+            if not decoded_candidate:
+                return None
+            raw = decoded_candidate.strip()
+        if _is_notion_internal_photo_url(raw):
+            return None
+        if raw.startswith("http://") or raw.startswith("https://"):
+            return _normalize_dropbox_raw_url(raw)
+        return None
+    if not isinstance(entry, Mapping):
+        return None
+    nested_external = entry.get("external")
+    nested_file = entry.get("file")
+    candidates = [
+        nested_external.get("url") if isinstance(nested_external, Mapping) else None,
+        nested_file.get("url") if isinstance(nested_file, Mapping) else None,
+        entry.get("external_url"),
+        entry.get("url"),
+        entry.get("external"),
+        entry.get("source_url"),
+        entry.get("name"),
+    ]
+    for item in candidates:
+        if not isinstance(item, str):
+            continue
+        resolved = _extract_photo_url(item)
+        if resolved:
+            return resolved
+    return None
+
+
+def _resolve_meal_photos(payload: Mapping[str, Any]) -> tuple[List[str], int]:
+    raw_value = _get_case_insensitive_value(payload, "meal_photos", "Meal Photos")
+    if not isinstance(raw_value, list):
+        return [], 0
+    resolved: List[str] = []
+    failed_count = 0
+    for item in raw_value:
+        url = _extract_photo_url(item)
+        if url:
+            resolved.append(url)
+        else:
+            failed_count += 1
+    return resolved, failed_count
+
+
 @dataclass(frozen=True)
 class ExpenseItem:
     title: str
@@ -205,6 +310,8 @@ class DailyLogSummary:
     sleep_analysis_jp: Optional[str]
     today_condition_forecast_jp: Optional[str]
     today_advice: Optional[str]
+    meal_photo_source_extraction_failed_count: Optional[int] = None
+    location_summary_source: Optional[str] = None
     study_minutes: Optional[float] = None
     study_sessions: Optional[int] = None
     study_last_used_at: Optional[str] = None
@@ -302,6 +409,8 @@ def read_daily_log(
         remaining=int(expenses_payload.get("remaining") or 0),
     )
 
+    location_summary, location_summary_source = _resolve_location_summary(payload)
+    meal_photos, meal_photo_source_extraction_failed_count = _resolve_meal_photos(payload)
     sleep_start = _safe_text(_get_sleep_value(payload, "sleep_start"))
     sleep_end = _safe_text(_get_sleep_value(payload, "sleep_end"))
     raw_sleep_duration_min = _safe_float(_get_sleep_value(payload, "sleep_duration_min"))
@@ -322,7 +431,8 @@ def read_daily_log(
         source=_safe_text(payload.get("source")),
         diary=_safe_text(payload.get("diary")),
         meal_summary=_safe_text(payload.get("meal_summary")),
-        meal_photos=_safe_string_list(payload.get("meal_photos")),
+        meal_photos=meal_photos,
+        meal_photo_source_extraction_failed_count=meal_photo_source_extraction_failed_count,
         place=_safe_text(payload.get("place")),
         activity_summary=_safe_text(payload.get("activity_summary")),
         done_count=_safe_int(payload.get("done_count")),
@@ -336,7 +446,8 @@ def read_daily_log(
         carb=_safe_float(payload.get("carb")),
         expenses_total=_safe_float(payload.get("expenses_total")),
         expenses=expenses_summary,
-        location_summary=_safe_text(payload.get("location_summary")),
+        location_summary=location_summary,
+        location_summary_source=location_summary_source,
         mood=_safe_text(payload.get("mood")),
         notes=_safe_text(payload.get("notes")),
         weight=_safe_float(payload.get("weight")),
