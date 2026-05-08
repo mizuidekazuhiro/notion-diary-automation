@@ -366,6 +366,7 @@ class DailyLogSummary:
     raw_payload_keys: List[str] = field(default_factory=list)
     payload_has_location_summary_gpt: bool = False
     payload_has_meal_photos_raw: bool = False
+    duplicate_info: Mapping[str, Any] = field(default_factory=dict)
 
 
 def read_daily_log(
@@ -556,4 +557,5 @@ def read_daily_log(
         raw_payload_keys=payload_keys,
         payload_has_location_summary_gpt=payload_has_location_summary_gpt,
         payload_has_meal_photos_raw=payload_has_meal_photos_raw,
+        duplicate_info=_safe_mapping(payload.get("duplicate_info")),
     )
