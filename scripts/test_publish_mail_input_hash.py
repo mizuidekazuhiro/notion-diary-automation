@@ -27,8 +27,10 @@ def _summary(**kwargs):
         today_condition_forecast_jp="forecast",
         activity_summary="walk",
         location_summary="office",
+        location_summary_source="empty",
         meal_summary="meal",
         meal_photos=[],
+        meal_photo_source_extraction_failed_count=0,
         expenses_total=1000.0,
         expenses=SimpleNamespace(count=1, top=[SimpleNamespace(title="Coffee", amount=500.0, url="")]),
         done_count=1,
@@ -55,6 +57,9 @@ def _summary(**kwargs):
         mail_input_hash=None,
         mail_input_snapshot_json=None,
         mail_version=None,
+        page_id="test-page-id",
+        diary_notification_sent=False,
+        mail_id="",
     )
     base.update(kwargs)
     return SimpleNamespace(**base)
