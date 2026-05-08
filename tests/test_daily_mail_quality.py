@@ -39,6 +39,8 @@ def _summary(**overrides: object) -> SimpleNamespace:
         "location_summary": "",
         "location_summary_source": "empty",
         "mail_input_snapshot_json": "{\"meal_photos\":[],\"location_summary\":\"\"}",
+        "payload_has_location_summary_gpt": False,
+        "payload_has_meal_photos_raw": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -74,11 +76,20 @@ def test_flags_missing_today_advice() -> None:
 
 
 def test_passes_when_required_sections_are_present() -> None:
-    summary = _summary(study_minutes=30, sleep_score=80, weather_summary="晴れ")
+    summary = _summary(
+        study_minutes=30,
+        sleep_score=80,
+        weather_summary="晴れ",
+        payload_has_location_summary_gpt=True,
+        payload_has_meal_photos_raw=True,
+        location_summary="渋谷",
+        meal_photos=["https://example.com/a.jpg"],
+        mail_input_snapshot_json='{"meal_photos":["https://example.com/a.jpg"],"location_summary":"渋谷"}',
+    )
     report = build_quality_report(
         summary,
-        mail_plain_text="Daily Log | 2026-05-08\nToday advice\n司法試験 Study\nSleep & Condition\nWeather\nDiary",
-        mail_html="<html></html>",
+        mail_plain_text="Daily Log | 2026-05-08\nToday advice\n司法試験 Study\nSleep & Condition\nWeather\nDiary\nLocation summary: 渋谷\n- https://example.com/a.jpg",
+        mail_html='<img src="https://example.com/a.jpg" />',
     )
 
     assert report["status"] == "pass"
@@ -129,3 +140,11 @@ def test_snapshot_fields_present_pass() -> None:
     report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary\nLocation summary: loc\n- https://example.com/a.jpg", mail_html='<img src="https://example.com/a.jpg" />')
     assert "mail_snapshot_missing_meal_photos" not in _codes(report)
     assert "mail_snapshot_missing_location_summary" not in _codes(report)
+
+
+def test_quality_detects_missing_payload_optional_keys() -> None:
+    summary = _summary(payload_has_location_summary_gpt=False, payload_has_meal_photos_raw=False)
+    report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary", mail_html="<html></html>")
+    codes = _codes(report)
+    assert "payload_missing_location_summary_gpt" in codes
+    assert "payload_missing_meal_photos" in codes

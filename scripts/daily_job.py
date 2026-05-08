@@ -248,15 +248,51 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             run_id,
         )
         return
+    target_date_matches = summary.target_date == target_date
+    summary_page_id = getattr(summary, "page_id", "") or ""
+    summary_location_summary = (getattr(summary, "location_summary", "") or "").strip()
+    summary_meal_photos = getattr(summary, "meal_photos", []) or []
+    summary_mail_id = (getattr(summary, "mail_id", "") or "").strip()
+    summary_diary_notification_sent = getattr(summary, "diary_notification_sent", None)
+    summary_today_advice = (getattr(summary, "today_advice", "") or "").strip()
+    summary_diary = (getattr(summary, "diary", "") or "").strip()
+    summary_mail_input_hash = (getattr(summary, "mail_input_hash", "") or "").strip()
+    summary_mail_input_snapshot_json = (getattr(summary, "mail_input_snapshot_json", "") or "").strip()
+    logging.info(
+        "phase04_daily_log_diagnostics target_date=%s page_id=%s location_summary_present=%s location_summary_source=%s location_summary_chars=%s meal_photos_count=%s meal_photo_source_extraction_failed_count=%s mail_id_present=%s diary_notification_sent=%s today_advice_present=%s diary_present=%s mail_input_hash_present=%s mail_input_snapshot_present=%s",
+        target_date,
+        summary_page_id,
+        bool(summary_location_summary),
+        str(getattr(summary, "location_summary_source", "empty") or "empty"),
+        len(summary_location_summary),
+        len(summary_meal_photos),
+        getattr(summary, "meal_photo_source_extraction_failed_count", 0),
+        bool(summary_mail_id),
+        summary_diary_notification_sent,
+        bool(summary_today_advice),
+        bool(summary_diary),
+        bool(summary_mail_input_hash),
+        bool(summary_mail_input_snapshot_json),
+    )
+    if not target_date_matches:
+        raise RuntimeError(f"Phase04 fail: target_date mismatch expected={target_date} actual={summary.target_date}")
+    if not summary_today_advice:
+        raise RuntimeError("Phase04 fail: Today advice is empty.")
+    if not summary_diary:
+        logging.warning("Phase04 warning: Diary is empty.")
+    if not summary_mail_id:
+        logging.warning("Phase04 warning: Mail ID is empty.")
+    if summary_diary_notification_sent is False:
+        logging.warning("Phase04 warning: Diary Notification Sent is false before publish.")
 
-    meal_photo_url_types = sorted({_classify_meal_photo_url(url) for url in summary.meal_photos})
+    meal_photo_url_types = sorted({_classify_meal_photo_url(url) for url in summary_meal_photos})
     location_source = str(getattr(summary, "location_summary_source", "empty") or "empty").strip() or "empty"
-    meal_photo_renderable_count = sum(1 for url in summary.meal_photos if _is_renderable_photo_url(url))
+    meal_photo_renderable_count = sum(1 for url in summary_meal_photos if _is_renderable_photo_url(url))
     logging.info(
         "publish_inputs location_summary_present=%s location_summary_source=%s meal_photos_count=%s meal_photo_url_types=%s meal_photo_renderable_count=%s meal_photo_source_extraction_failed_count=%s",
-        bool((summary.location_summary or "").strip()),
+        bool(summary_location_summary),
         location_source,
-        len(summary.meal_photos),
+        len(summary_meal_photos),
         ",".join(meal_photo_url_types) if meal_photo_url_types else "empty",
         meal_photo_renderable_count,
         getattr(summary, "meal_photo_source_extraction_failed_count", 0),

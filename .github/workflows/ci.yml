@@ -27,6 +27,18 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      - name: Install worker dependencies
+        working-directory: workers
+        run: npm install
+
+      - name: Run worker tests
+        working-directory: workers
+        run: npm test
+
+      - name: Typecheck worker
+        working-directory: workers
+        run: npx tsc --noEmit
+
       - name: Verify repository requirements (strict)
         env:
           CI_STRICT: "1"

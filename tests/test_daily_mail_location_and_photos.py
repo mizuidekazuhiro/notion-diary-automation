@@ -22,6 +22,7 @@ def test_location_summary_gpt_only_used(monkeypatch):
     summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
     assert summary is not None
     assert summary.location_summary == "渋谷と恵比寿で過ごした"
+    assert summary.payload_has_location_summary_gpt is True
 
 
 def test_location_summary_gpt_preferred_over_legacy(monkeypatch):
@@ -171,6 +172,7 @@ def test_extract_from_mapping_external_url(monkeypatch):
     summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
     assert summary is not None
     assert summary.meal_photos == ["https://www.dropbox.com/scl/fi/abc/photo.jpeg?rlkey=xyz&raw=1"]
+    assert summary.payload_has_meal_photos_raw is True
 
 
 def test_exclude_mapping_file_url_with_permission_record(monkeypatch):

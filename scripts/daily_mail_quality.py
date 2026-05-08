@@ -178,6 +178,16 @@ def build_quality_report(
         _add_issue(issues, "mail_snapshot_missing_meal_photos", "error", "mail_input_snapshot_json does not include meal_photos.")
     if not snapshot_has_location_summary:
         _add_issue(issues, "mail_snapshot_missing_location_summary", "error", "mail_input_snapshot_json does not include location_summary.")
+    payload_has_location_summary_gpt = bool(_get(summary, "payload_has_location_summary_gpt", False))
+    payload_has_meal_photos_raw = bool(_get(summary, "payload_has_meal_photos_raw", False))
+    if not payload_has_location_summary_gpt:
+        _add_issue(issues, "payload_missing_location_summary_gpt", "error", "Raw /api/daily_log payload does not include Location summary (GPT).")
+    if not payload_has_meal_photos_raw:
+        _add_issue(issues, "payload_missing_meal_photos", "error", "Raw /api/daily_log payload does not include Meal Photos/meal_photos.")
+    if payload_has_location_summary_gpt and not location_summary:
+        _add_issue(issues, "location_summary_mapping_missing", "error", "Location summary exists in payload but failed to map to summary.location_summary.")
+    if payload_has_meal_photos_raw and meal_photos_count == 0:
+        _add_issue(issues, "meal_photos_mapping_missing", "error", "Meal photos exist in payload but failed to map to summary.meal_photos.")
 
     metrics = {
         "today_advice_chars_compact": today_advice_chars,
@@ -196,6 +206,10 @@ def build_quality_report(
         "meal_photo_invalid_img_src_count": invalid_img_src_count,
         "mail_snapshot_has_meal_photos": snapshot_has_meal_photos,
         "mail_snapshot_has_location_summary": snapshot_has_location_summary,
+        "payload_has_location_summary_gpt": payload_has_location_summary_gpt,
+        "payload_has_meal_photos_raw": payload_has_meal_photos_raw,
+        "summary_location_summary_present": bool(location_summary),
+        "summary_meal_photos_count": meal_photos_count,
     }
     return _finalize(target_date, run_id, run_url, issues, metrics, sections)
 
