@@ -33,6 +33,7 @@ import {
 } from "./config/task_property_names";
 import { TITLE_PROPERTIES } from "./config/title_properties";
 import { dispatchRoute } from "./http/router";
+import { chooseCanonicalDailyLogPage, isPageMatchedByDateOrTitle } from "./domain/daily_log_resolver";
 import { ROUTES } from "./http/routes";
 
 interface Env {
@@ -2228,6 +2229,14 @@ async function handleTasksClosed(request: Request, env: Env): Promise<Response> 
         : null;
       return {
         page_id: page.id,
+      duplicate_info: {
+        detected: duplicatePages.length > 0,
+        duplicate_count: duplicatePages.length,
+        canonical_page_id: page.id,
+        duplicate_page_ids: duplicatePages.map((item: any) => item.id),
+        merged_fields: [],
+        merge_completed: false,
+      },
         title: getPageTitleFromProperty(page, TITLE_PROPERTIES.tasks),
         priority: page.properties?.Priority?.select?.name ?? null,
         done_date: doneDateRaw,
@@ -2767,11 +2776,7 @@ async function handleDailyLogHealthIngest(
     {
       method: "POST",
       body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Target Date",
-          date: { equals: targetDate },
-        },
+        page_size: 50,
       }),
     },
   );
@@ -2846,11 +2851,7 @@ async function upsertDailyLogByTargetDate(
     {
       method: "POST",
       body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Target Date",
-          date: { equals: targetDate },
-        },
+        page_size: 50,
       }),
     },
   );
@@ -3683,11 +3684,7 @@ async function handleDailyLogExpensesIngest(
     {
       method: "POST",
       body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Target Date",
-          date: { equals: targetDate },
-        },
+        page_size: 50,
       }),
     },
   );
@@ -4543,11 +4540,7 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
     {
       method: "POST",
       body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Target Date",
-          date: { equals: targetDate },
-        },
+        page_size: 50,
       }),
     },
   );
@@ -4660,11 +4653,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     {
       method: "POST",
       body: JSON.stringify({
-        page_size: 1,
-        filter: {
-          property: "Target Date",
-          date: { equals: targetDate },
-        },
+        page_size: 50,
       }),
     },
   );
@@ -4674,7 +4663,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   }
 
   const queryData = await queryResponse.json();
-  const page = (queryData.results ?? [])[0];
+  const candidatePages = (queryData.results ?? []).filter((item: any) => isPageMatchedByDateOrTitle(item, targetDate));
+  const page = chooseCanonicalDailyLogPage(candidatePages, targetDate);
+  const duplicatePages = candidatePages.filter((item: any) => item.id !== page?.id);
   if (!page) {
     return new Response(JSON.stringify({ found: false, target_date: targetDate }), {
       headers: jsonHeaders,
