@@ -1,0 +1,174 @@
+name: Codex Auto Fix Scaffold
+
+on:
+  workflow_run:
+    workflows: ["CI - Test & Requirements Gate"]
+    types: [completed]
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: false
+        type: string
+      run_id:
+        required: false
+        type: string
+      target_branch:
+        required: false
+        type: string
+      head_sha:
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  checks: read
+
+jobs:
+  autofix-scaffold:
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'codex:auto-fix') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/codex fix') || contains(github.event.comment.body, '@codex fix') || contains(github.event.comment.body, '/codex explain') || contains(github.event.comment.body, '/codex plan'))) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target metadata
+        id: meta
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const ev = context.eventName;
+            let pr = '', runId = '', branch = '', headSha = '', wf = '', mode = 'fix';
+            if (ev === 'workflow_run') {
+              runId = String(context.payload.workflow_run.id || '');
+              wf = context.payload.workflow_run.name || 'workflow_run';
+              branch = context.payload.workflow_run.head_branch || '';
+              headSha = context.payload.workflow_run.head_sha || '';
+              pr = context.payload.workflow_run.pull_requests?.[0]?.number?.toString() || '';
+            } else if (ev === 'pull_request') {
+              pr = String(context.payload.pull_request.number);
+              branch = context.payload.pull_request.head.ref;
+              headSha = context.payload.pull_request.head.sha;
+              wf = 'manual-label';
+            } else if (ev === 'issue_comment') {
+              const body = context.payload.comment.body || '';
+              if (body.includes('/codex explain')) mode = 'explain';
+              else if (body.includes('/codex plan')) mode = 'plan';
+              else mode = 'fix';
+              pr = String(context.payload.issue.number);
+              const pull = await github.rest.pulls.get({owner: context.repo.owner, repo: context.repo.repo, pull_number: Number(pr)});
+              branch = pull.data.head.ref;
+              headSha = pull.data.head.sha;
+              wf = 'manual-comment';
+            } else {
+              pr = core.getInput('pr_number') || '';
+              runId = core.getInput('run_id') || '';
+              const inputBranch = core.getInput('target_branch') || '';
+              const inputSha = core.getInput('head_sha') || '';
+              if (pr) {
+                const pull = await github.rest.pulls.get({owner: context.repo.owner, repo: context.repo.repo, pull_number: Number(pr)});
+                branch = inputBranch || pull.data.head.ref;
+                headSha = inputSha || pull.data.head.sha;
+              } else {
+                branch = inputBranch || context.ref.replace('refs/heads/','');
+                headSha = inputSha || '';
+              }
+              wf = 'workflow_dispatch';
+            }
+            core.setOutput('pr', pr);
+            core.setOutput('run_id', runId);
+            core.setOutput('branch', branch);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('workflow', wf);
+            core.setOutput('mode', mode);
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.meta.outputs.head_sha != '' && steps.meta.outputs.head_sha || steps.meta.outputs.branch }}
+
+      - name: Guard retry count (max=2)
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_PR_NUMBER: ${{ steps.meta.outputs.pr }}
+          TARGET_RUN_ID: ${{ steps.meta.outputs.run_id }}
+          AUTOFIX_KEY: ${{ steps.meta.outputs.run_id != '' && format('run-{0}', steps.meta.outputs.run_id) || format('pr-{0}', steps.meta.outputs.pr) }}
+        run: python scripts/codex_autofix_guard.py
+
+      - name: Stop and escalate when max exceeded
+        if: steps.guard.outputs.can_fix == 'false' && steps.meta.outputs.mode == 'fix'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_WORKFLOW_NAME: ${{ steps.meta.outputs.workflow }}
+          TARGET_RUN_ID: ${{ steps.meta.outputs.run_id }}
+          TARGET_PR_NUMBER: ${{ steps.meta.outputs.pr }}
+          TARGET_BRANCH: ${{ steps.meta.outputs.branch }}
+          FAILURE_SUMMARY: 上限到達時点のため、追加修正は未実施。
+          FIX_HISTORY: .codex/autofix_state.json と過去コメントを参照してください。
+        run: |
+          python scripts/create_autofix_issue.py
+          if [ -n "${{ steps.meta.outputs.pr }}" ]; then
+            gh pr comment "${{ steps.meta.outputs.pr }}" --body "自動修正は上限（2回）に到達したため停止しました。以降の修正ステップは実行していません。"
+          else
+            echo "PR番号がないためPRコメントはスキップしました。"
+          fi
+
+      - name: Collect failure context
+        if: steps.guard.outputs.can_fix == 'true'
+        env:
+          TARGET_RUN_ID: ${{ steps.meta.outputs.run_id }}
+          TARGET_PR_NUMBER: ${{ steps.meta.outputs.pr }}
+          TARGET_BRANCH: ${{ steps.meta.outputs.branch }}
+          TARGET_WORKFLOW_NAME: ${{ steps.meta.outputs.workflow }}
+        run: python scripts/collect_ci_failure_context.py
+
+      - name: /codex explain
+        if: steps.guard.outputs.can_fix == 'true' && steps.meta.outputs.mode == 'explain' && steps.meta.outputs.pr != ''
+        env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+        run: gh pr comment "${{ steps.meta.outputs.pr }}" --body "失敗原因の推定: 収集した .codex/failure_context.json をもとに、CIログと外部設定（Notion/Cloudflare/Secrets）を優先確認してください。"
+
+      - name: /codex plan
+        if: steps.guard.outputs.can_fix == 'true' && steps.meta.outputs.mode == 'plan' && steps.meta.outputs.pr != ''
+        env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+        run: gh pr comment "${{ steps.meta.outputs.pr }}" --body "修正計画: 1) 失敗ジョブ特定 2) 最小修正案 3) テスト実行 4) PR更新。/codex fix が来るまでpushしません。"
+
+      - name: Scaffold context PR update (/codex fix)
+        if: steps.guard.outputs.can_fix == 'true' && steps.meta.outputs.mode == 'fix'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.meta.outputs.pr != '' && format('codex/autofix-pr-{0}', steps.meta.outputs.pr) || format('codex/autofix-{0}', steps.meta.outputs.run_id) }}"
+          git checkout -B "$BRANCH"
+          if [ -n "${{ steps.meta.outputs.pr }}" ]; then
+            gh pr comment "${{ steps.meta.outputs.pr }}" --body "[codex-autofix-attempt] run=${{ steps.meta.outputs.run_id }}"
+          fi
+          python scripts/workflow_contracts.py
+          TEST_RESULT="pass"
+          pytest -q tests/test_workflow_contracts.py || TEST_RESULT="fail"
+          git add .codex/failure_context.json .codex/autofix_state.json || true
+          git commit -m "chore: update codex autofix scaffold context" || true
+          git push -u origin "$BRANCH" || true
+          cat > /tmp/codex_scaffold_pr_body.md <<PRBODY
+## Codex自動修正（Scaffold）
+- 検知した失敗内容: workflow失敗または手動指示により起動
+- 推定原因: 失敗ログ要確認（テスト/型/lint/外部設定）
+- 修正内容: **本PRでは自動修正本体は未実装**。失敗コンテキスト収集とエスカレーション制御のみ。
+- 実行したテスト: python scripts/workflow_contracts.py, pytest -q tests/test_workflow_contracts.py
+- テスト結果: ${TEST_RESULT}
+- Notion / Cloudflare / GitHub Secrets / 外部サービス側で必要な設定変更: 必要時に人間が判断
+- 未確定事項: Codex CLI/Action 連携
+- 人間が確認すべきポイント: 失敗ログ、Secrets、DBスキーマ
+PRBODY
+          gh pr create --base "${{ steps.meta.outputs.branch }}" --head "$BRANCH" --title "Codex自動修正Scaffold: ${{ steps.meta.outputs.workflow }}" --body-file /tmp/codex_scaffold_pr_body.md || {
+            if [ -n "${{ steps.meta.outputs.pr }}" ]; then
+              gh pr comment "${{ steps.meta.outputs.pr }}" --body "Codex自動修正Scaffold: コンテキスト更新を実施しました。テスト結果=${TEST_RESULT}"
+            fi
+          }

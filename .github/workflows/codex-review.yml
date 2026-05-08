@@ -1,0 +1,52 @@
+name: Codex Review Scaffold
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/codex review') || contains(github.event.comment.body, '@codex review')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Collect PR diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .codex
+          gh pr diff "${{ steps.pr.outputs.number }}" > .codex/review_diff.patch
+          echo "saved=.codex/review_diff.patch" >> "$GITHUB_OUTPUT"
+      - name: Post scaffold review comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const body = [
+              '## Codexレビュー（Scaffold）',
+              '- PR差分を `gh pr diff` で取得し、`.codex/review_diff.patch` として保存しました。',
+              '- 現時点では**差分を解析して具体指摘を生成するCodex本体連携は未実装**です。',
+              '- 重点確認観点（手動確認）:',
+              '  1. Notionプロパティ名・型不一致',
+              '  2. UTC/JST変換の破綻',
+              '  3. Secrets名変更や必須env追加漏れ',
+              '  4. 本番deploy/メール送信など外部副作用の混入',
+              '- 具体修正を進める場合は `/codex fix` をコメントしてください。'
+            ].join('\n');
+            await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body});
