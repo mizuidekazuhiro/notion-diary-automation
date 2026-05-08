@@ -494,3 +494,25 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - Notion `validation_error`, `xxx is not a property that exists`, `expected to be rich_text`, `valid ISO 8601` 系エラー。
 - Cloudflare Workers の認証・Secrets・Vars不足。
 - GitHub Secrets 未設定/名称不一致/権限不足。
+
+### Codex連携の現状（2026-05-08時点）
+- 現在のworkflowは **Scaffold（段階導入）** です。Codex本体（`openai/codex-action` や Codex CLI 非対話実行）による自動コード修正は未実装です。
+- 現時点でできること:
+  - 失敗トリガー検知
+  - 対象PR/head_sha の解決
+  - 失敗コンテキスト収集
+  - 自動再試行上限（2回）と停止時Issue作成
+  - `/codex explain` `/codex plan` の日本語コメント
+- まだできないこと:
+  - 失敗ログを解釈してコードを自動修正する本体処理
+  - 差分を読んだ具体的な自動レビュー指摘生成
+- Codex本体連携に必要な追加Secret（将来）:
+  - `OPENAI_API_KEY`（または同等のCodex実行トークン）
+- 外部副作用回避のため、CIで意図的に実行しないもの:
+  - 本番deployコマンド
+  - Notion書き込み更新コマンド
+  - メール送信コマンド
+
+### 自動修正回数カウントの実装方式
+- 回数はローカルJSONではなく、PRコメント中の `[codex-autofix-attempt]` マーカー件数を基準に算出します。
+- PRに紐づかない `workflow_run`（push由来）ではコメント集計ができないため、上限判定精度が下がる可能性があります。
