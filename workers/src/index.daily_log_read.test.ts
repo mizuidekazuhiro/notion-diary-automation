@@ -18,10 +18,31 @@ const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFro
 (() => {
   const props = {
     "Location summary": { rich_text: [{ plain_text: "Legacy要約" }] },
+    "location_summary": { rich_text: [{ plain_text: "payload要約" }] },
   };
   const resolved = resolveLocationSummaryFields(props, {} as any);
   assert.equal(resolved.locationSummary, "Legacy要約");
   assert.equal(resolved.locationSummarySource, "location_summary_legacy");
+})();
+
+(() => {
+  const props = {
+    "location_summary": { rich_text: [{ plain_text: "payload要約" }] },
+  };
+  const resolved = resolveLocationSummaryFields(props, {} as any);
+  assert.equal(resolved.locationSummary, "payload要約");
+  assert.equal(resolved.locationSummarySource, "location_summary_payload");
+})();
+
+(() => {
+  const props = {
+    "Custom Location Summary": { rich_text: [{ plain_text: "Custom要約" }] },
+  };
+  const resolved = resolveLocationSummaryFields(props, {
+    DAILY_LOG_LOCATION_SUMMARY_PROP: "Custom Location Summary",
+  } as any);
+  assert.equal(resolved.locationSummary, "Custom要約");
+  assert.equal(resolved.locationSummarySource, "location_summary_gpt");
 })();
 
 (() => {

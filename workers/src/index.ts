@@ -2006,8 +2006,18 @@ function resolveLocationSummaryFields(
 } {
   const configuredGptProp = env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)";
   const gptPropName = resolvePropertyName(properties, configuredGptProp, "daily_log_read:location_summary_gpt");
-  const legacyPropName = resolvePropertyName(properties, "Location summary", "daily_log_read:location_summary_legacy");
-  const payloadPropName = resolvePropertyName(properties, "location_summary", "daily_log_read:location_summary_payload");
+  const exactLegacyPropName = Object.prototype.hasOwnProperty.call(properties, "Location summary")
+    ? "Location summary"
+    : null;
+  const exactPayloadPropName = Object.prototype.hasOwnProperty.call(properties, "location_summary")
+    ? "location_summary"
+    : null;
+  const legacyPropName =
+    exactLegacyPropName ||
+    resolvePropertyName(properties, "Location summary", "daily_log_read:location_summary_legacy");
+  const payloadPropName =
+    exactPayloadPropName ||
+    resolvePropertyName(properties, "location_summary", "daily_log_read:location_summary_payload");
   const locationSummaryGpt = (gptPropName ? getPlainTextFromRichText(properties[gptPropName]) : "").trim() || null;
   const locationSummaryLegacy = (legacyPropName ? getPlainTextFromRichText(properties[legacyPropName]) : "").trim() || null;
   const locationSummaryPayload = (payloadPropName ? getPlainTextFromRichText(properties[payloadPropName]) : "").trim() || null;
