@@ -104,6 +104,26 @@ def test_fail_when_invalid_img_src_exists() -> None:
     assert "meal_photo_invalid_img_src" in _codes(report)
 
 
+def test_fail_when_notion_image_url_exists_in_img_src() -> None:
+    summary = _summary(meal_photos=["https://example.com/a.jpg"])
+    report = build_quality_report(
+        summary,
+        mail_plain_text="https://example.com/a.jpg",
+        mail_html='<img src="https://www.notion.so/image/abc" />',
+    )
+    assert "meal_photo_invalid_img_src" in _codes(report)
+
+
+def test_fail_when_notion_image_url_with_permission_record_exists_in_img_src() -> None:
+    summary = _summary(meal_photos=["https://example.com/a.jpg"])
+    report = build_quality_report(
+        summary,
+        mail_plain_text="https://example.com/a.jpg",
+        mail_html='<img src="https://www.notion.so/image/abc?permissionRecord=1" />',
+    )
+    assert "meal_photo_invalid_img_src" in _codes(report)
+
+
 def test_snapshot_fields_present_pass() -> None:
     summary = _summary(location_summary="loc", meal_photos=["https://example.com/a.jpg"], mail_input_snapshot_json='{"meal_photos":["https://example.com/a.jpg"],"location_summary":"loc"}')
     report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary\nLocation summary: loc\n- https://example.com/a.jpg", mail_html='<img src="https://example.com/a.jpg" />')

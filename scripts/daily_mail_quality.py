@@ -159,7 +159,7 @@ def build_quality_report(
     if meal_photos_count > 0 and not meal_photos_rendered:
         _add_issue(issues, "meal_photos_not_rendered", "error", "Meal photos exist but are not rendered in HTML or text mail.")
 
-    invalid_img_src_count = len(re.findall(r'<img[^>]+src="[^"]*(?:file://|permissionrecord=|notion\\.so/image/)[^"]*"', mail_html or "", re.IGNORECASE))
+    invalid_img_src_count = len(re.findall(r'<img[^>]+src="[^"]*(?:file://|permissionrecord=|notion\.so/image/)[^"]*"', mail_html or "", re.IGNORECASE))
     if invalid_img_src_count > 0:
         _add_issue(issues, "meal_photo_invalid_img_src", "error", "Mail HTML contains invalid meal photo image source URL(s).")
 
