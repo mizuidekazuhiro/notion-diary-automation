@@ -273,7 +273,6 @@ class DailyLogSummary:
     diary: Optional[str]
     meal_summary: Optional[str]
     meal_photos: List[str]
-    meal_photo_source_extraction_failed_count: Optional[int]
     place: Optional[str]
     activity_summary: Optional[str]
     done_count: Optional[int]
@@ -288,7 +287,6 @@ class DailyLogSummary:
     expenses_total: Optional[float]
     expenses: ExpenseSummary
     location_summary: Optional[str]
-    location_summary_source: Optional[str]
     mood: Optional[str]
     notes: Optional[str]
     weight: Optional[float]
@@ -312,6 +310,8 @@ class DailyLogSummary:
     sleep_analysis_jp: Optional[str]
     today_condition_forecast_jp: Optional[str]
     today_advice: Optional[str]
+    meal_photo_source_extraction_failed_count: Optional[int] = None
+    location_summary_source: Optional[str] = None
     study_minutes: Optional[float] = None
     study_sessions: Optional[int] = None
     study_last_used_at: Optional[str] = None
