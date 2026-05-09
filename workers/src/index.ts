@@ -26,6 +26,7 @@ import {
   buildPhotoOnlyUpdateProperties,
   buildMealPhotoUpdateProperties,
   collectMealPhotosFromHealthPages,
+  mergeNotionFilesDedup,
   resolveIngestTargetDate,
 } from "./domain/daily_log_ingest";
 import {
@@ -1204,6 +1205,43 @@ function buildDailyLogUpsertDiagnostics(input: {
     meal_photos_files_count: getMealPhotosFilesCount(input.properties),
   };
 }
+
+function sanitizeMealPhotosPatchProperties(properties: Record<string, any>): {
+  sanitizedProperties: Record<string, any>;
+  removedEmptyMealPhotos: boolean;
+} {
+  const sanitizedProperties = { ...properties };
+  const mealPhotosProperty = sanitizedProperties["Meal Photos"];
+  const files = Array.isArray(mealPhotosProperty?.files) ? mealPhotosProperty.files : null;
+  const removedEmptyMealPhotos =
+    Boolean(mealPhotosProperty) && Array.isArray(files) && files.length === 0;
+  if (removedEmptyMealPhotos) {
+    delete sanitizedProperties["Meal Photos"];
+  }
+  return { sanitizedProperties, removedEmptyMealPhotos };
+}
+
+function logDailyLogPatchKeys(input: {
+  endpointName: string;
+  targetDate: string;
+  pageId: string | null;
+  canonicalPageId: string | null;
+  properties: Record<string, any>;
+  reason: string;
+}): void {
+  const patchPropertyKeys = Object.keys(input.properties);
+  console.log("DAILY_LOG_PATCH_KEYS", {
+    endpoint_name: input.endpointName,
+    target_date: input.targetDate,
+    page_id: input.pageId,
+    canonical_page_id: input.canonicalPageId,
+    patch_property_keys: patchPropertyKeys,
+    patch_includes_meal_photos: patchPropertyKeys.includes("Meal Photos"),
+    meal_photos_files_count: getMealPhotosFilesCount(input.properties),
+    reason: input.reason,
+  });
+}
+
 function getSchemaCacheKey(
   dbId: string,
   expectedProperties: ExpectedProperty[],
@@ -2429,28 +2467,29 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   });
 
   const resolvedPageId = pageId ?? existingPage?.id;
-  const diagnostics = buildDailyLogUpsertDiagnostics({
+  const { sanitizedProperties, removedEmptyMealPhotos } =
+    sanitizeMealPhotosPatchProperties(properties);
+  logDailyLogPatchKeys({
+    endpointName: "/api/daily_log/upsert",
     targetDate,
-    pageId,
+    pageId: resolvedPageId ?? null,
     canonicalPageId,
-    duplicateDetected,
-    duplicateMergeCompleted,
-    properties,
+    properties: sanitizedProperties,
+    reason: removedEmptyMealPhotos ? "removed_empty_meal_photos" : "daily_log_upsert",
   });
-  console.log("DAILY_LOG_UPSERT_PATCH_KEYS", diagnostics);
 
   let resultResponse: Response;
   if (resolvedPageId) {
     resultResponse = await notionFetch(env, `/pages/${resolvedPageId}`, {
       method: "PATCH",
-      body: JSON.stringify({ properties }),
+      body: JSON.stringify({ properties: sanitizedProperties }),
     });
   } else {
     resultResponse = await notionFetch(env, "/pages", {
       method: "POST",
       body: JSON.stringify({
         parent: { database_id: env.DAILY_LOG_DB_ID },
-        properties,
+        properties: sanitizedProperties,
       }),
     });
   }
@@ -2666,6 +2705,8 @@ async function handleDailyLogHealthIngest(
   );
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingPage = resolvedDailyLog.canonicalPage;
   const updateProperties: Record<string, any> = {};
 
   if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.protein, "number")) {
@@ -2708,8 +2749,14 @@ async function handleDailyLogHealthIngest(
     );
   }
   if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.mealPhoto, "files")) {
-    updateProperties[dailyLogHealthPropertyNames.mealPhoto] =
-      createFilesProperty(mealPhotos);
+    const existingMealPhotos = normalizeFilesFromProperty(
+      existingPage?.properties?.[dailyLogHealthPropertyNames.mealPhoto],
+    );
+    const mergedMealPhotos = mergeNotionFilesDedup(existingMealPhotos, mealPhotos);
+    if (mealPhotos.length > 0 && mergedMealPhotos.length > 0) {
+      updateProperties[dailyLogHealthPropertyNames.mealPhoto] =
+        createFilesProperty(mergedMealPhotos);
+    }
   } else {
     console.warn(
       `Daily_Log missing files property "${dailyLogHealthPropertyNames.mealPhoto}", skipping.`,
@@ -2803,14 +2850,22 @@ async function handleDailyLogHealthIngest(
     );
   }
 
-  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
-  const existingPage = resolvedDailyLog.canonicalPage;
+  const { sanitizedProperties, removedEmptyMealPhotos } =
+    sanitizeMealPhotosPatchProperties(updateProperties);
+  logDailyLogPatchKeys({
+    endpointName: "/execute/api/daily_log/ingest_health",
+    targetDate,
+    pageId: existingPage?.id ?? null,
+    canonicalPageId: existingPage?.id ?? null,
+    properties: sanitizedProperties,
+    reason: removedEmptyMealPhotos ? "removed_empty_meal_photos" : "health_ingest_update",
+  });
 
   let resultResponse: Response;
   if (existingPage) {
     resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ properties: updateProperties }),
+      body: JSON.stringify({ properties: sanitizedProperties }),
     });
   } else {
     const title = `Daily Log｜${targetDate}`;
@@ -2818,7 +2873,7 @@ async function handleDailyLogHealthIngest(
       [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
       "Target Date": createDateProperty(targetDate),
       Date: createDateProperty(targetDate),
-      ...updateProperties,
+      ...sanitizedProperties,
     };
     resultResponse = await notionFetch(env, "/pages", {
       method: "POST",
@@ -2866,11 +2921,22 @@ async function upsertDailyLogByTargetDate(
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
   const existingPage = resolvedDailyLog.canonicalPage;
 
+  const { sanitizedProperties, removedEmptyMealPhotos } =
+    sanitizeMealPhotosPatchProperties(updateProperties);
+  logDailyLogPatchKeys({
+    endpointName: logContext,
+    targetDate,
+    pageId: existingPage?.id ?? null,
+    canonicalPageId: existingPage?.id ?? null,
+    properties: sanitizedProperties,
+    reason: removedEmptyMealPhotos ? "removed_empty_meal_photos" : `${logContext}_update`,
+  });
+
   let resultResponse: Response;
   if (existingPage) {
     resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ properties: updateProperties }),
+      body: JSON.stringify({ properties: sanitizedProperties }),
     });
   } else {
     const title = `Daily Log｜${targetDate}`;
@@ -2878,7 +2944,7 @@ async function upsertDailyLogByTargetDate(
       [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
       "Target Date": createDateProperty(targetDate),
       Date: createDateProperty(targetDate),
-      ...updateProperties,
+      ...sanitizedProperties,
     };
     resultResponse = await notionFetch(env, "/pages", {
       method: "POST",
@@ -3695,12 +3761,22 @@ async function handleDailyLogExpensesIngest(
 
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
   const existingPage = resolvedDailyLog.canonicalPage;
+  const { sanitizedProperties, removedEmptyMealPhotos } =
+    sanitizeMealPhotosPatchProperties(updateProperties);
+  logDailyLogPatchKeys({
+    endpointName: "/execute/api/daily_log/ingest_expenses",
+    targetDate,
+    pageId: existingPage?.id ?? null,
+    canonicalPageId: existingPage?.id ?? null,
+    properties: sanitizedProperties,
+    reason: removedEmptyMealPhotos ? "removed_empty_meal_photos" : "expenses_ingest_update",
+  });
 
   let resultResponse: Response;
   if (existingPage) {
     resultResponse = await notionFetch(env, `/pages/${existingPage.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ properties: updateProperties }),
+      body: JSON.stringify({ properties: sanitizedProperties }),
     });
   } else {
     const title = `Daily Log｜${targetDate}`;
@@ -3708,7 +3784,7 @@ async function handleDailyLogExpensesIngest(
       [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
       "Target Date": createDateProperty(targetDate),
       Date: createDateProperty(targetDate),
-      ...updateProperties,
+      ...sanitizedProperties,
     };
     resultResponse = await notionFetch(env, "/pages", {
       method: "POST",
@@ -4551,6 +4627,14 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
     "Mail ID": createRichTextProperty(mailId),
     Source: createSelectProperty(source),
   };
+  logDailyLogPatchKeys({
+    endpointName: "/execute/api/daily_log/ensure",
+    targetDate,
+    pageId: null,
+    canonicalPageId: null,
+    properties,
+    reason: "ensure_create",
+  });
 
   const resultResponse = await notionFetch(env, "/pages", {
     method: "POST",
@@ -5298,4 +5382,5 @@ export const __test__ = {
   buildDailyLogUpsertProperties,
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
+  sanitizeMealPhotosPatchProperties,
 };

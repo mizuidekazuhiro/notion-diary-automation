@@ -208,6 +208,20 @@ def _is_renderable_photo_url(url: str) -> bool:
     return any(lowered.split("?", 1)[0].endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"))
 
 def run_ingest(config: Config, target_date: str, run_id: str) -> None:
+    debug_readback = os.getenv("DAILY_LOG_DEBUG_READBACK_AFTER_EACH_STEP", "").lower() == "true"
+
+    def _readback(step_name: str) -> None:
+        if not debug_readback:
+            return
+        summary = read_daily_log(
+            daily_log_read_url=config.daily_log_read_url,
+            target_date=target_date,
+            bearer_token=config.bearer_token,
+        )
+        meal_count = len(getattr(summary, "meal_photos", []) or []) if summary else -1
+        page_id = getattr(summary, "page_id", "") if summary else ""
+        logging.info("phase1_debug_readback step=%s page_id=%s meal_photos_count=%s", step_name, page_id, meal_count)
+
     title = f"Daily Log｜{target_date}"
     logging.info(
         "Worker endpoint config: daily_log_upsert_url=%s",
@@ -221,6 +235,7 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         mail_id=run_id,
         bearer_token=config.bearer_token,
     )
+    _readback("ensure")
 
     ingest_sources(
         target_date=target_date,
@@ -232,6 +247,7 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         bearer_token=config.bearer_token,
         run_id=run_id,
         source_label="automation",
+        after_step=_readback,
     )
 
 

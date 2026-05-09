@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from connectors.expenses import ExpensesConnector
 from connectors.health import HealthConnector
@@ -30,7 +30,23 @@ def ingest_sources(
     bearer_token: Optional[str],
     run_id: str,
     source_label: str,
+    after_step: Optional[Callable[[str], None]] = None,
 ) -> IngestResult:
+    def _log_patch_summary(endpoint_name: str, payload: Any) -> None:
+        payload_dict = payload if isinstance(payload, dict) else {}
+        if not payload_dict:
+            return
+        patch_keys = payload_dict.get("patch_property_keys")
+        if not isinstance(patch_keys, list):
+            patch_keys = []
+        print(
+            "PHASE1_CONNECTOR_RESPONSE "
+            f"endpoint_name={endpoint_name} "
+            f"patch_includes_meal_photos={bool(payload_dict.get('patch_includes_meal_photos', False))} "
+            f"meal_photos_files_count={int(payload_dict.get('meal_photos_files_count') or 0)} "
+            f"patch_property_keys={patch_keys}"
+        )
+
     connectors = [
         TasksConnector(tasks_closed_url, bearer_token),
         HealthConnector(health_ingest_url, bearer_token),
@@ -43,6 +59,17 @@ def ingest_sources(
 
     for connector in connectors:
         result = connector.fetch(target_date)
+        endpoint_name = {
+            "tasks": "tasks",
+            "health": "/execute/api/daily_log/ingest_health",
+            "expenses": "/execute/api/daily_log/ingest_expenses",
+        }.get(connector.id, connector.id)
+        result_payload = getattr(result, "payload", None)
+        if result_payload is None:
+            result_payload = getattr(result, "raw_payload", None)
+        _log_patch_summary(endpoint_name, result_payload or {})
+        if after_step:
+            after_step(f"ingest_{connector.id}")
         rendered = connector.render(result)
         summary_blocks.update(rendered.get("summary_blocks", {}))
         raw_payload[connector.id] = rendered.get("raw_payload", {})
@@ -91,7 +118,10 @@ def ingest_sources(
         ),
     }
 
-    upsert_daily_log(daily_log_upsert_url, payload, bearer_token)
+    upsert_response = upsert_daily_log(daily_log_upsert_url, payload, bearer_token)
+    _log_patch_summary("/api/daily_log/upsert", upsert_response)
+    if after_step:
+        after_step("upsert")
 
     return IngestResult(
         summary_html=summary_html,
