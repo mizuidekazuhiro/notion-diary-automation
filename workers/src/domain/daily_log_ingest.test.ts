@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  buildMealPhotoUpdateProperties,
   buildPhotoOnlyUpdateProperties,
   collectMealPhotosFromHealthPages,
   resolveIngestTargetDate,
@@ -55,5 +56,24 @@ assert.equal(updatePayload.Fat, undefined);
 assert.equal(updatePayload.Carb, undefined);
 assert.equal(updatePayload.Kcal, undefined);
 assert.equal(updatePayload.Weight, undefined);
+
+const noIncomingUpdatePayload = buildMealPhotoUpdateProperties(
+  "Meal Photos",
+  [{ name: "existing", type: "external", external: { url: "https://existing.example" } }],
+  [],
+);
+assert.equal("Meal Photos" in noIncomingUpdatePayload, false);
+
+const keepExistingAndAddIncomingPayload = buildMealPhotoUpdateProperties(
+  "Meal Photos",
+  [{ name: "existing", type: "external", external: { url: "https://existing.example" } }],
+  [{ name: "new", type: "external", external: { url: "https://new.example" } }],
+);
+assert.equal("Meal Photos" in keepExistingAndAddIncomingPayload, true);
+assert.equal(keepExistingAndAddIncomingPayload["Meal Photos"].files.length, 2);
+assert.equal(
+  keepExistingAndAddIncomingPayload["Meal Photos"].files[0].external.url,
+  "https://existing.example",
+);
 
 console.log("daily_log_ingest tests passed");

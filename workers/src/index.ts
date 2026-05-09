@@ -24,6 +24,7 @@ import {
 } from "./domain/location_summary";
 import {
   buildPhotoOnlyUpdateProperties,
+  buildMealPhotoUpdateProperties,
   collectMealPhotosFromHealthPages,
   resolveIngestTargetDate,
 } from "./domain/daily_log_ingest";
@@ -2962,6 +2963,10 @@ async function handleDailyLogPhotosIngest(
     normalizeFilesFromProperty,
   );
   console.info(`[daily_log.ingest_photos] collected_meal_photos_count=${mealPhotos.length}`);
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingDailyLogMealPhotos = normalizeFilesFromProperty(
+    resolvedDailyLog.canonicalPage?.properties?.[dailyLogHealthPropertyNames.mealPhoto],
+  );
   if (!mealPhotos.length) {
     const noPhotosReason =
       healthPages.length === 0
@@ -2973,6 +2978,9 @@ async function handleDailyLogPhotosIngest(
           ? "property_missing"
           : "normalized_photo_count=0";
     console.warn(`[daily_log.ingest_photos] no_photos_reason=${noPhotosReason}`);
+    console.info(
+      `[daily_log.ingest_photos] DAILY_LOG_INGEST_PHOTOS_SKIP_EMPTY target_date=${targetDate} health_photos_count=${mealPhotos.length} daily_log_existing_photos_count=${existingDailyLogMealPhotos.length} reason=health_photos_empty_keep_existing_daily_log_photos`,
+    );
     return new Response(
       JSON.stringify({
         ok: true,
@@ -3009,10 +3017,17 @@ async function handleDailyLogPhotosIngest(
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   let updateProperties: Record<string, any> = {};
   if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.mealPhoto, "files")) {
-    updateProperties = buildPhotoOnlyUpdateProperties(
+    const rawPhotoUpdate = buildMealPhotoUpdateProperties(
       dailyLogHealthPropertyNames.mealPhoto,
-      createFilesProperty(mealPhotos),
+      existingDailyLogMealPhotos,
+      mealPhotos,
     );
+    if (rawPhotoUpdate[dailyLogHealthPropertyNames.mealPhoto]?.files) {
+      updateProperties = buildPhotoOnlyUpdateProperties(
+        dailyLogHealthPropertyNames.mealPhoto,
+        createFilesProperty(rawPhotoUpdate[dailyLogHealthPropertyNames.mealPhoto].files),
+      );
+    }
   } else {
     console.warn(
       `Daily_Log missing files property "${dailyLogHealthPropertyNames.mealPhoto}", skipping.`,
