@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { __test__ } from "./index";
 
-const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFromProperty, buildDailyLogUpsertProperties, getMealPhotosFilesCount, buildDailyLogUpsertDiagnostics } = __test__;
+const {
+  resolveLocationSummaryFields,
+  normalizeFilesFromProperty,
+  getFileUrlsFromProperty,
+  buildDailyLogUpsertProperties,
+  getMealPhotosFilesCount,
+  buildDailyLogUpsertDiagnostics,
+} = __test__;
 
 (() => {
   const props = {
@@ -68,9 +75,9 @@ const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFro
   assert.deepEqual(normalizeFilesFromProperty({ files: [] } as any), []);
 })();
 
-console.log("index.daily_log_read.test.ts: ok");
-
 (() => {
+  assert.equal(typeof buildDailyLogUpsertProperties, "function");
+  assert.equal(typeof getMealPhotosFilesCount, "function");
   const properties = buildDailyLogUpsertProperties({
     title: "Daily Log｜2026-05-08",
     targetDate: "2026-05-08",
@@ -84,6 +91,7 @@ console.log("index.daily_log_read.test.ts: ok");
 })();
 
 (() => {
+  assert.equal(typeof buildDailyLogUpsertDiagnostics, "function");
   const properties = buildDailyLogUpsertProperties({
     title: "Daily Log｜2026-05-08",
     targetDate: "2026-05-08",
@@ -103,3 +111,5 @@ console.log("index.daily_log_read.test.ts: ok");
   assert.equal(diagnostics.resolved_update_page_id, "page-override");
   assert.equal(diagnostics.patch_includes_meal_photos, false);
 })();
+
+console.log("index.daily_log_read.test.ts: ok");
