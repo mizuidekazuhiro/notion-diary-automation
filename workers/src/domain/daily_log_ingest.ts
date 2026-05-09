@@ -55,3 +55,40 @@ export function buildPhotoOnlyUpdateProperties(
     [dailyLogMealPhotoPropertyName]: photosPropertyValue,
   };
 }
+
+export function mergeMealPhotos(
+  existingPhotos: Array<Record<string, any>>,
+  incomingPhotos: Array<Record<string, any>>,
+): Array<Record<string, any>> {
+  const merged: Array<Record<string, any>> = [];
+  const seen = new Set<string>();
+  for (const photo of [...existingPhotos, ...incomingPhotos]) {
+    const key =
+      photo.type === "external"
+        ? `external:${photo.external?.url ?? ""}`
+        : photo.type === "file"
+          ? `file:${photo.file?.url ?? ""}`
+          : JSON.stringify(photo);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(photo);
+  }
+  return merged;
+}
+
+export function buildMealPhotoUpdateProperties(
+  dailyLogMealPhotoPropertyName: string,
+  existingPhotos: Array<Record<string, any>>,
+  incomingPhotos: Array<Record<string, any>>,
+): Record<string, any> {
+  if (!incomingPhotos.length) {
+    return {};
+  }
+  const merged = mergeMealPhotos(existingPhotos, incomingPhotos);
+  if (!merged.length) {
+    return {};
+  }
+  return buildPhotoOnlyUpdateProperties(dailyLogMealPhotoPropertyName, {
+    files: merged,
+  });
+}
