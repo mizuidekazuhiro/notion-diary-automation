@@ -5381,4 +5381,15 @@ export const __test__ = {
   buildDailyLogUpsertProperties,
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
+  sanitizeMealPhotosPatchProperties,
+};
+
+export {
+  buildDailyLogUpsertProperties,
+  getMealPhotosFilesCount,
+  buildDailyLogUpsertDiagnostics,
+  sanitizeMealPhotosPatchProperties,
+  normalizeFilesFromProperty,
+  getFileUrlsFromProperty,
+  resolveLocationSummaryFields,
 };
