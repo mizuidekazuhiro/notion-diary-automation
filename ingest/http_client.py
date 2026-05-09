@@ -147,6 +147,17 @@ def fetch_json(url: str, bearer_token: Optional[str]) -> Dict[str, Any]:
     for retry_count in range(FETCH_RETRY_MAX_RETRIES + 1):
         try:
             resp = _session().get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
+        except (
+            requests.exceptions.MissingSchema,
+            requests.exceptions.InvalidURL,
+            requests.exceptions.InvalidSchema,
+        ) as e:
+            logging.error(
+                "fetch_json non_retryable_request_exception url=%s error=%s",
+                url,
+                type(e).__name__,
+            )
+            raise RuntimeError(f"fetch_json failed: url={url}") from e
         except requests.exceptions.RequestException as e:
             if retry_count < FETCH_RETRY_MAX_RETRIES:
                 wait_seconds = min(
