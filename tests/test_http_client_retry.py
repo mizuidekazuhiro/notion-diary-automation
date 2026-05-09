@@ -65,3 +65,23 @@ def test_fetch_json_retries_429_until_exhausted(monkeypatch: pytest.MonkeyPatch)
 
     assert attempts["count"] == 3
     assert sleeps == [0.0, 0.0]
+
+
+def test_fetch_json_missing_schema_fails_without_retry(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    sleeps: list[float] = []
+
+    class _Session:
+        def get(self, url: str, headers: dict[str, str], timeout: object) -> _Response:
+            del headers, timeout
+            raise requests.exceptions.MissingSchema(f"Invalid URL '{url}'")
+
+    monkeypatch.setattr(http_client, "FETCH_RETRY_MAX_RETRIES", 5)
+    monkeypatch.setattr(http_client, "_session", lambda: _Session())
+    monkeypatch.setattr(http_client.time, "sleep", lambda sec: sleeps.append(sec))
+
+    with pytest.raises(RuntimeError):
+        http_client.fetch_json("read?date=2026-03-19", bearer_token=None)
+
+    assert sleeps == []
+    assert "non_retryable_request_exception" in caplog.text
+    assert "fetch_json retrying" not in caplog.text

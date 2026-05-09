@@ -17,6 +17,31 @@ HAS_PANDAS = importlib.util.find_spec("pandas") is not None
 HAS_SKLEARN = importlib.util.find_spec("sklearn") is not None
 
 
+def _patch_history_result(
+    monkeypatch: pytest.MonkeyPatch,
+    generator_module,
+    summaries: list[DailyLogSummary],
+    *,
+    include_next_day: bool = False,
+    failed_dates: list[str] | None = None,
+    missing_dates: list[str] | None = None,
+) -> None:
+    failed_dates = failed_dates or []
+    missing_dates = missing_dates or []
+    requested_dates = [item.target_date for item in summaries] + failed_dates + missing_dates
+
+    def _fake_loader(**kwargs):
+        return generator_module.TodayAdviceHistoryLoadResult(
+            summaries=summaries,
+            requested_dates=requested_dates,
+            failed_dates=failed_dates,
+            missing_dates=missing_dates,
+            include_next_day=include_next_day,
+        )
+
+    monkeypatch.setattr(generator_module, "_load_daily_logs_for_period_with_debug", _fake_loader)
+
+
 def _summary(day: int, **overrides: object) -> DailyLogSummary:
     payload = dict(
         target_date=f"2026-03-{day:02d}",
@@ -197,7 +222,12 @@ def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
     histories = [_summary(i, mood="★" if i % 2 == 0 else "★★★★", notes="疲れ" if i % 3 == 0 else "回復") for i in range(1, 14)]
     target = _summary(20, target_date="2026-03-20", sleep_duration_min=290, sleep_score=62)
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    _patch_history_result(monkeypatch, generator, [target, *histories])
+    monkeypatch.setattr(
+        generator,
+        "read_daily_log",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("read_daily_log must be mocked by history loader")),
+    )
     monkeypatch.setattr(
         generator,
         "_chat_completion",
@@ -234,7 +264,7 @@ def test_exploratory_analysis_is_included_in_audit_log(monkeypatch) -> None:
     histories = [_summary(i, mood="★" if i % 2 == 0 else "★★★★", notes="疲れ") for i in range(1, 13)]
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    _patch_history_result(monkeypatch, generator, [target, *histories])
     monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
@@ -252,7 +282,7 @@ def test_notes_label_count_reflected_in_audit_log(monkeypatch) -> None:
     histories = [_summary(i, notes="" if i % 2 == 0 else "疲れ") for i in range(1, 11)]
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    _patch_history_result(monkeypatch, generator, [target, *histories])
     monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
@@ -271,7 +301,7 @@ def test_notes_quality_warning_when_non_empty_but_no_signals(monkeypatch) -> Non
     histories = [_summary(i, notes="疲れ") for i in range(1, 8)]
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    _patch_history_result(monkeypatch, generator, [target, *histories])
     monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
 
     def _fake_labeler(**kwargs: object) -> dict[str, object]:
@@ -313,7 +343,7 @@ def test_regression_availability_reflected_in_audit_log(monkeypatch) -> None:
     histories = [_summary(i, mood="★" if i % 3 == 0 else "★★★★", notes="疲れ" if i % 2 == 0 else "回復") for i in range(1, 19)]
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    _patch_history_result(monkeypatch, generator, [target, *histories])
     monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
@@ -331,7 +361,7 @@ def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
     histories = [_summary(i, notes="疲れ") for i in range(1, 12)]
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [target, *histories])
+    _patch_history_result(monkeypatch, generator, [target, *histories])
     monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "これは最終本文です。")
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
@@ -528,7 +558,7 @@ def test_real_case_like_payload_does_not_return_sleep_unknown(monkeypatch) -> No
         sleep_score=75,
     )
     histories = [_summary(i, target_date=f"2026-03-{i:02d}") for i in range(1, 20)]
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: [next_day, target, *histories])
+    _patch_history_result(monkeypatch, generator, [next_day, target, *histories])
     monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "今日は睡眠を踏まえて負荷を調整してください。")
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-26")
