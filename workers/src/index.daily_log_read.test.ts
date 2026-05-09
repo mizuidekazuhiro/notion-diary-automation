@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { __test__ } from "./index";
 
-const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFromProperty } = __test__;
+const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFromProperty, buildDailyLogUpsertProperties, getMealPhotosFilesCount, buildDailyLogUpsertDiagnostics } = __test__;
 
 (() => {
   const props = {
@@ -69,3 +69,37 @@ const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFro
 })();
 
 console.log("index.daily_log_read.test.ts: ok");
+
+(() => {
+  const properties = buildDailyLogUpsertProperties({
+    title: "Daily Log｜2026-05-08",
+    targetDate: "2026-05-08",
+    summaryText: "summary",
+    mailId: "25597151669",
+    source: "automation",
+  });
+  assert.equal("Meal Photos" in properties, false);
+  assert.equal(getMealPhotosFilesCount(properties), 0);
+  assert.deepEqual(properties["Activity Summary"].rich_text[0].text.content, "summary");
+})();
+
+(() => {
+  const properties = buildDailyLogUpsertProperties({
+    title: "Daily Log｜2026-05-08",
+    targetDate: "2026-05-08",
+    summaryText: "summary",
+    mailId: "25597151669",
+    source: "automation",
+  });
+  const diagnostics = buildDailyLogUpsertDiagnostics({
+    targetDate: "2026-05-08",
+    pageId: "page-override",
+    canonicalPageId: "canonical-page",
+    duplicateDetected: true,
+    duplicateMergeCompleted: false,
+    properties,
+  });
+  assert.equal(diagnostics.page_id_overrode_canonical, true);
+  assert.equal(diagnostics.resolved_update_page_id, "page-override");
+  assert.equal(diagnostics.patch_includes_meal_photos, false);
+})();

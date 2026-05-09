@@ -1158,6 +1158,52 @@ async function updateMoodNotes(env: Env, data: {
   );
 }
 
+
+function buildDailyLogUpsertProperties(input: {
+  title: string;
+  targetDate: string;
+  summaryText: string;
+  mailId: string;
+  source: string;
+}): Record<string, any> {
+  return {
+    [TITLE_PROPERTIES.dailyLog]: createTitleProperty(input.title),
+    "Target Date": createDateProperty(input.targetDate),
+    Date: createDateProperty(input.targetDate),
+    "Activity Summary": createRichTextProperty(input.summaryText),
+    "Mail ID": createRichTextProperty(input.mailId),
+    Source: createSelectProperty(input.source),
+  };
+}
+
+function getMealPhotosFilesCount(properties: Record<string, any>): number {
+  const files = properties["Meal Photos"]?.files;
+  return Array.isArray(files) ? files.length : 0;
+}
+
+function buildDailyLogUpsertDiagnostics(input: {
+  targetDate: string;
+  pageId?: string;
+  canonicalPageId: string | null;
+  duplicateDetected: boolean;
+  duplicateMergeCompleted: boolean;
+  properties: Record<string, any>;
+}): Record<string, any> {
+  const patchPropertyKeys = Object.keys(input.properties);
+  const resolvedUpdatePageId = input.pageId ?? input.canonicalPageId;
+  return {
+    target_date: input.targetDate,
+    page_id: input.pageId ?? null,
+    canonical_page_id: input.canonicalPageId,
+    resolved_update_page_id: resolvedUpdatePageId,
+    page_id_overrode_canonical: Boolean(input.pageId && input.canonicalPageId && input.pageId !== input.canonicalPageId),
+    duplicate_detected: input.duplicateDetected,
+    duplicate_merge_completed: input.duplicateMergeCompleted,
+    patch_property_keys: patchPropertyKeys,
+    patch_includes_meal_photos: patchPropertyKeys.includes("Meal Photos"),
+    meal_photos_files_count: getMealPhotosFilesCount(input.properties),
+  };
+}
 function getSchemaCacheKey(
   dbId: string,
   expectedProperties: ExpectedProperty[],
@@ -2364,42 +2410,37 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   } = data;
 
   let existingPage: Record<string, any> | null = null;
-  if (!pageId) {
-    const queryResponse = await notionFetch(
-      env,
-      `/databases/${env.DAILY_LOG_DB_ID}/query`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          page_size: 1,
-          filter: {
-            property: "Target Date",
-            date: { equals: targetDate },
-          },
-        }),
-      },
-    );
+  let canonicalPageId: string | null = null;
+  let duplicateDetected = false;
+  let duplicateMergeCompleted = false;
 
-    if (!queryResponse.ok) {
-      return notionErrorResponse(queryResponse, "handleDailyLogUpsert.query");
-    }
+  const resolved = await resolveDailyLogPageForDate(env, targetDate);
+  existingPage = resolved.canonicalPage;
+  canonicalPageId = resolved.canonicalPage?.id ?? null;
+  duplicateDetected = resolved.duplicatePages.length > 0;
+  duplicateMergeCompleted = resolved.mergeCompleted;
 
-    const queryData = await queryResponse.json();
-    existingPage = (queryData.results ?? [])[0] ?? null;
-  }
+  const properties = buildDailyLogUpsertProperties({
+    title,
+    targetDate,
+    summaryText,
+    mailId,
+    source,
+  });
 
-  const properties: Record<string, any> = {
-    [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
-    "Target Date": createDateProperty(targetDate),
-    Date: createDateProperty(targetDate),
-    "Activity Summary": createRichTextProperty(summaryText),
-    "Mail ID": createRichTextProperty(mailId),
-    Source: createSelectProperty(source),
-  };
+  const resolvedPageId = pageId ?? existingPage?.id;
+  const diagnostics = buildDailyLogUpsertDiagnostics({
+    targetDate,
+    pageId,
+    canonicalPageId,
+    duplicateDetected,
+    duplicateMergeCompleted,
+    properties,
+  });
+  console.log("DAILY_LOG_UPSERT_PATCH_KEYS", diagnostics);
 
   let resultResponse: Response;
-  if (pageId || existingPage) {
-    const resolvedPageId = pageId ?? existingPage?.id;
+  if (resolvedPageId) {
     resultResponse = await notionFetch(env, `/pages/${resolvedPageId}`, {
       method: "PATCH",
       body: JSON.stringify({ properties }),
@@ -2428,7 +2469,6 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     return notionErrorResponseFromDetails(details);
   }
 
-  const resolvedPageId = pageId ?? (existingPage ? existingPage.id : undefined);
   const finalPageId = resolvedPageId ?? (await resultResponse.json()).id;
   void dataJson;
 
@@ -5255,4 +5295,7 @@ export const __test__ = {
   normalizeFilesFromProperty,
   getFileUrlsFromProperty,
   resolveLocationSummaryFields,
+  buildDailyLogUpsertProperties,
+  getMealPhotosFilesCount,
+  buildDailyLogUpsertDiagnostics,
 };

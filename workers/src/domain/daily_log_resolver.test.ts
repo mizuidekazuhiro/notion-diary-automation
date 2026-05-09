@@ -23,3 +23,21 @@ console.log("daily_log_resolver.test.ts: ok");
 assert.deepEqual(toNotionUpdateProperty({ id:"x", type:"rich_text", rich_text:[{plain_text:"a"}] }), { rich_text:[{plain_text:"a"}] });
 assert.deepEqual(toNotionUpdateProperty({ id:"x", type:"select", select:{name:"Good"} }), { select:{name:"Good"} });
 assert.equal(toNotionUpdateProperty({ id:"x", type:"formula", formula:{} }), null);
+
+(() => {
+  const canonical: any = {
+    id: "c",
+    properties: { "Meal Photos": { files: [{ name: "c1", external: { url: "https://example.com/c1.jpg" } }] } },
+  };
+  const duplicateEmpty: any = { id: "d", properties: { "Meal Photos": { files: [] } } };
+  const keepPatch = buildDuplicateMergePatch(canonical, [duplicateEmpty]);
+  assert.equal("Meal Photos" in keepPatch.properties, false);
+
+  const duplicateWithPhoto: any = {
+    id: "d2",
+    properties: { "Meal Photos": { files: [{ name: "d1", external: { url: "https://example.com/d1.jpg" } }] } },
+  };
+  const mergePatch = buildDuplicateMergePatch(canonical, [duplicateWithPhoto]);
+  assert.equal("Meal Photos" in mergePatch.properties, true);
+  assert.equal(mergePatch.properties["Meal Photos"].files.length, 2);
+})();
