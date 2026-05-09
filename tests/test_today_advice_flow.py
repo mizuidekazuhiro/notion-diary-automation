@@ -11,6 +11,31 @@ from scripts.mood_advice_generator import normalize_mood_to_score
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
 
 
+def _patch_history_result(
+    monkeypatch: pytest.MonkeyPatch,
+    generator_module,
+    summaries: list[DailyLogSummary],
+    *,
+    include_next_day: bool = False,
+    failed_dates: list[str] | None = None,
+    missing_dates: list[str] | None = None,
+) -> None:
+    failed_dates = failed_dates or []
+    missing_dates = missing_dates or []
+    requested_dates = [item.target_date for item in summaries] + failed_dates + missing_dates
+
+    def _fake_loader(**kwargs):
+        return generator_module.TodayAdviceHistoryLoadResult(
+            summaries=summaries,
+            requested_dates=requested_dates,
+            failed_dates=failed_dates,
+            missing_dates=missing_dates,
+            include_next_day=include_next_day,
+        )
+
+    monkeypatch.setattr(generator_module, "_load_daily_logs_for_period_with_debug", _fake_loader)
+
+
 def _summary(**overrides: object) -> DailyLogSummary:
     payload = dict(
         target_date="2026-03-20",
@@ -232,7 +257,7 @@ def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None
     assert "diary" not in structured["last_30_days_summary"]["daily_records"][0]
 
 
-def test_generation_context_excludes_today_non_sleep_fields_from_inputs() -> None:
+def test_generation_context_excludes_today_non_sleep_fields_from_inputs(monkeypatch) -> None:
     from scripts.mood_advice_generator import build_today_advice_generation_context
 
     today = _summary(
@@ -259,19 +284,18 @@ def test_generation_context_excludes_today_non_sleep_fields_from_inputs() -> Non
 
     import scripts.mood_advice_generator as generator
 
-    def fake_loader(**kwargs):
-        return [today, yesterday]
+    _patch_history_result(monkeypatch, generator, [today, yesterday])
+    monkeypatch.setattr(
+        generator,
+        "read_daily_log",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("read_daily_log must not be called in this test")),
+    )
 
-    original = generator.load_daily_logs_for_period
-    generator.load_daily_logs_for_period = fake_loader
-    try:
-        context = build_today_advice_generation_context(
-            daily_log_read_url="read",
-            bearer_token=None,
-            target_date="2026-03-20",
-        )
-    finally:
-        generator.load_daily_logs_for_period = original
+    context = build_today_advice_generation_context(
+        daily_log_read_url="read",
+        bearer_token=None,
+        target_date="2026-03-20",
+    )
 
     assert context is not None
     judgment_input = context["judgment_input"]
@@ -352,7 +376,7 @@ def test_generate_today_advice_ignores_same_day_non_sleep_zero_and_missing_field
         _summary(target_date="2026-03-13", done_count=3, expenses_total=2600, meal_summary="パスタ", notes="午前が安定", mood="★★★★"),
     ]
 
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
+    _patch_history_result(monkeypatch, generator, history)
     monkeypatch.setattr(generator, "label_notes_in_batches", lambda **kwargs: {})
     monkeypatch.setattr(
         generator,
@@ -375,7 +399,7 @@ def test_generate_today_advice_ignores_same_day_non_sleep_zero_and_missing_field
     assert any("7日" in item or "done" in item.lower() for item in result.judgment_json["evidence_used"])
 
 
-def test_generation_context_surfaces_recent_7d_non_sleep_patterns() -> None:
+def test_generation_context_surfaces_recent_7d_non_sleep_patterns(monkeypatch) -> None:
     from scripts.mood_advice_generator import build_today_advice_generation_context
 
     today = _summary(target_date="2026-03-20", done_count=0, notes=None, meal_summary=None, expenses_total=0)
@@ -391,12 +415,8 @@ def test_generation_context_surfaces_recent_7d_non_sleep_patterns() -> None:
     ]
 
     import scripts.mood_advice_generator as generator
-    original = generator.load_daily_logs_for_period
-    generator.load_daily_logs_for_period = lambda **kwargs: [today, *prior_days]
-    try:
-        context = build_today_advice_generation_context(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
-    finally:
-        generator.load_daily_logs_for_period = original
+    _patch_history_result(monkeypatch, generator, [today, *prior_days])
+    context = build_today_advice_generation_context(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
 
     behavior = context["today_state"]["historical_behavior_patterns"]
     recording = context["today_state"]["historical_recording_patterns"]
@@ -431,7 +451,7 @@ def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) 
     ]
     prompts: list[str] = []
 
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
+    _patch_history_result(monkeypatch, generator, history)
 
     def fake_chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str:
         prompts.append(user_prompt)
@@ -546,7 +566,7 @@ def test_structured_comparison_includes_meal_notes_location_signals() -> None:
     assert location["low_mood"]["late_outing_day_rate"] == 0.5
 
 
-def test_generation_context_adds_structured_non_sleep_comparisons() -> None:
+def test_generation_context_adds_structured_non_sleep_comparisons(monkeypatch) -> None:
     from scripts.mood_advice_generator import build_today_advice_generation_context
     import scripts.mood_advice_generator as generator
 
@@ -556,12 +576,8 @@ def test_generation_context_adds_structured_non_sleep_comparisons() -> None:
         _summary(target_date="2026-03-19", mood="★★★★★", kcal=2200, protein=140, fat=55, carb=250, notes="集中できた", location_summary="出社中心"),
         _summary(target_date="2026-03-18", mood="★", kcal=1500, protein=70, fat=80, carb=160, notes="寝不足で眠い", location_summary="自宅中心・夜まで外出"),
     ]
-    original = generator.load_daily_logs_for_period
-    generator.load_daily_logs_for_period = lambda **kwargs: history
-    try:
-        context = build_today_advice_generation_context(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
-    finally:
-        generator.load_daily_logs_for_period = original
+    _patch_history_result(monkeypatch, generator, history)
+    context = build_today_advice_generation_context(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
 
     assert context is not None
     structured = context["judgment_input"]["structured_historical_comparison"]["comparisons"]
@@ -589,7 +605,7 @@ def test_generate_today_advice_requires_recent_and_good_bad_evidence(monkeypatch
         _summary(target_date="2026-03-13", mood="★★", kcal=1550, protein=72, fat=82, carb=165, notes="疲れと眠気", location_summary="自宅中心"),
     ]
 
-    monkeypatch.setattr(generator, "load_daily_logs_for_period", lambda **kwargs: history)
+    _patch_history_result(monkeypatch, generator, history)
     monkeypatch.setattr(generator, "label_notes_in_batches", lambda **kwargs: {})
     monkeypatch.setattr(
         generator,
