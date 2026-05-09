@@ -26,6 +26,7 @@ import {
   buildPhotoOnlyUpdateProperties,
   buildMealPhotoUpdateProperties,
   collectMealPhotosFromHealthPages,
+  mergeNotionFilesDedup,
   resolveIngestTargetDate,
 } from "./domain/daily_log_ingest";
 import {

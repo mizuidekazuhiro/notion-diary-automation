@@ -76,6 +76,8 @@ export function mergeMealPhotos(
   return merged;
 }
 
+export const mergeNotionFilesDedup = mergeMealPhotos;
+
 export function buildMealPhotoUpdateProperties(
   dailyLogMealPhotoPropertyName: string,
   existingPhotos: Array<Record<string, any>>,
