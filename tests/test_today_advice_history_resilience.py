@@ -119,3 +119,14 @@ def test_generate_today_advice_returns_none_when_context_missing(monkeypatch) ->
     monkeypatch.setattr(generator, "build_today_advice_generation_context", lambda **kwargs: None)
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-05-08")
     assert result is None
+
+
+def test_generate_today_advice_does_not_call_openai_when_context_missing(monkeypatch) -> None:
+    monkeypatch.setattr(generator, "build_today_advice_generation_context", lambda **kwargs: None)
+
+    def _fail_openai(*args, **kwargs):
+        raise AssertionError("OpenAI call should not happen when context is missing")
+
+    monkeypatch.setattr(generator, "shared_chat_completion", _fail_openai)
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-05-08")
+    assert result is None
