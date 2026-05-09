@@ -431,12 +431,12 @@
     },
     "2026-05-08": {
       "alert_text": null,
-      "generated_at": "2026-05-09T08:25:37Z",
-      "input_hash": "77851fafd0d0b4941cefbd2762393c1fd6e904ca9eb0d50a303d0e219bb4bd67",
+      "generated_at": "2026-05-09T13:42:19Z",
+      "input_hash": "953613fff86207dcad7806152375726afaee31d2ea8dcd3a74c0bbeb6194e50b",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
-      "score": 0.037432916249097156
+      "score": 0.03741868603052692
     },
     "2026-05-09": {
       "alert_text": null,
@@ -450,6 +450,6 @@
       "score": 0.03674279200940336
     }
   },
-  "updated_at": "2026-05-09T08:41:26Z",
+  "updated_at": "2026-05-09T13:42:19Z",
   "version": 1
 }
