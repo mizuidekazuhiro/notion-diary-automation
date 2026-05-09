@@ -5383,13 +5383,3 @@ export const __test__ = {
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
 };
-
-export {
-  buildDailyLogUpsertProperties,
-  getMealPhotosFilesCount,
-  buildDailyLogUpsertDiagnostics,
-  sanitizeMealPhotosPatchProperties,
-  normalizeFilesFromProperty,
-  getFileUrlsFromProperty,
-  resolveLocationSummaryFields,
-};
