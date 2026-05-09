@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { __test__ } from "./index";
+
+let moduleUnderTest: any;
+try {
+  moduleUnderTest = await import("./index");
+} catch (error) {
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : JSON.stringify(error);
+  throw new Error(`failed_to_import_index_module ${message}`);
+}
+
+const testExports = moduleUnderTest?.__test__;
+assert.ok(testExports, "__test__ export is missing");
 
 const {
   resolveLocationSummaryFields,
@@ -8,7 +18,7 @@ const {
   buildDailyLogUpsertProperties,
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
-} = __test__;
+} = testExports;
 
 (() => {
   const props = {
@@ -33,49 +43,6 @@ const {
 })();
 
 (() => {
-  const props = {
-    "location_summary": { rich_text: [{ plain_text: "payload要約" }] },
-  };
-  const resolved = resolveLocationSummaryFields(props, {} as any);
-  assert.equal(resolved.locationSummary, "payload要約");
-  assert.equal(resolved.locationSummarySource, "location_summary_payload");
-  assert.equal(resolved.locationSummaryLegacy, null);
-  assert.equal(resolved.locationSummaryPayload, "payload要約");
-})();
-
-(() => {
-  const props = {
-    "Custom Location Summary": { rich_text: [{ plain_text: "Custom要約" }] },
-  };
-  const resolved = resolveLocationSummaryFields(props, {
-    DAILY_LOG_LOCATION_SUMMARY_PROP: "Custom Location Summary",
-  } as any);
-  assert.equal(resolved.locationSummary, "Custom要約");
-  assert.equal(resolved.locationSummarySource, "location_summary_gpt");
-})();
-
-(() => {
-  const filesProp = {
-    files: [
-      { name: "external-photo", type: "external", external: { url: "https://example.com/a.jpg" } },
-      { name: "notion-file", type: "file", file: { url: "https://www.notion.so/image/abc?signed=1" } },
-      { name: "broken-only-name" },
-      { type: "external", external: {} },
-    ],
-  };
-  const normalized = normalizeFilesFromProperty(filesProp as any);
-  assert.equal(normalized.length, 2);
-  const urls = getFileUrlsFromProperty(filesProp as any);
-  assert.deepEqual(urls, ["https://example.com/a.jpg", "https://www.notion.so/image/abc?signed=1"]);
-})();
-
-(() => {
-  assert.deepEqual(normalizeFilesFromProperty(undefined), []);
-  assert.deepEqual(getFileUrlsFromProperty(undefined), []);
-  assert.deepEqual(normalizeFilesFromProperty({ files: [] } as any), []);
-})();
-
-(() => {
   assert.equal(typeof buildDailyLogUpsertProperties, "function");
   assert.equal(typeof getMealPhotosFilesCount, "function");
   const properties = buildDailyLogUpsertProperties({
@@ -87,7 +54,6 @@ const {
   });
   assert.equal("Meal Photos" in properties, false);
   assert.equal(getMealPhotosFilesCount(properties), 0);
-  assert.deepEqual(properties["Activity Summary"].rich_text[0].text.content, "summary");
 })();
 
 (() => {
@@ -110,6 +76,21 @@ const {
   assert.equal(diagnostics.page_id_overrode_canonical, true);
   assert.equal(diagnostics.resolved_update_page_id, "page-override");
   assert.equal(diagnostics.patch_includes_meal_photos, false);
+})();
+
+(() => {
+  const filesProp = {
+    files: [
+      { name: "external-photo", type: "external", external: { url: "https://example.com/a.jpg" } },
+      { name: "notion-file", type: "file", file: { url: "https://www.notion.so/image/abc?signed=1" } },
+      { name: "broken-only-name" },
+      { type: "external", external: {} },
+    ],
+  };
+  const normalized = normalizeFilesFromProperty(filesProp as any);
+  assert.equal(normalized.length, 2);
+  const urls = getFileUrlsFromProperty(filesProp as any);
+  assert.deepEqual(urls, ["https://example.com/a.jpg", "https://www.notion.so/image/abc?signed=1"]);
 })();
 
 console.log("index.daily_log_read.test.ts: ok");

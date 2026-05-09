@@ -32,15 +32,18 @@ def ingest_sources(
     source_label: str,
     after_step: Optional[Callable[[str], None]] = None,
 ) -> IngestResult:
-    def _log_patch_summary(endpoint_name: str, payload: Dict[str, Any]) -> None:
-        patch_keys = payload.get("patch_property_keys")
+    def _log_patch_summary(endpoint_name: str, payload: Any) -> None:
+        payload_dict = payload if isinstance(payload, dict) else {}
+        if not payload_dict:
+            return
+        patch_keys = payload_dict.get("patch_property_keys")
         if not isinstance(patch_keys, list):
             patch_keys = []
         print(
             "PHASE1_CONNECTOR_RESPONSE "
             f"endpoint_name={endpoint_name} "
-            f"patch_includes_meal_photos={bool(payload.get('patch_includes_meal_photos', False))} "
-            f"meal_photos_files_count={int(payload.get('meal_photos_files_count') or 0)} "
+            f"patch_includes_meal_photos={bool(payload_dict.get('patch_includes_meal_photos', False))} "
+            f"meal_photos_files_count={int(payload_dict.get('meal_photos_files_count') or 0)} "
             f"patch_property_keys={patch_keys}"
         )
 
@@ -56,7 +59,15 @@ def ingest_sources(
 
     for connector in connectors:
         result = connector.fetch(target_date)
-        _log_patch_summary(f"/execute/api/daily_log/ingest_{connector.id}", result.payload)
+        endpoint_name = {
+            "tasks": "tasks",
+            "health": "/execute/api/daily_log/ingest_health",
+            "expenses": "/execute/api/daily_log/ingest_expenses",
+        }.get(connector.id, connector.id)
+        result_payload = getattr(result, "payload", None)
+        if result_payload is None:
+            result_payload = getattr(result, "raw_payload", None)
+        _log_patch_summary(endpoint_name, result_payload or {})
         if after_step:
             after_step(f"ingest_{connector.id}")
         rendered = connector.render(result)
