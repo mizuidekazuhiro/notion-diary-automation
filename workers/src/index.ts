@@ -1180,6 +1180,30 @@ function getMealPhotosFilesCount(properties: Record<string, any>): number {
   const files = properties["Meal Photos"]?.files;
   return Array.isArray(files) ? files.length : 0;
 }
+
+function buildDailyLogUpsertDiagnostics(input: {
+  targetDate: string;
+  pageId?: string;
+  canonicalPageId: string | null;
+  duplicateDetected: boolean;
+  duplicateMergeCompleted: boolean;
+  properties: Record<string, any>;
+}): Record<string, any> {
+  const patchPropertyKeys = Object.keys(input.properties);
+  const resolvedUpdatePageId = input.pageId ?? input.canonicalPageId;
+  return {
+    target_date: input.targetDate,
+    page_id: input.pageId ?? null,
+    canonical_page_id: input.canonicalPageId,
+    resolved_update_page_id: resolvedUpdatePageId,
+    page_id_overrode_canonical: Boolean(input.pageId && input.canonicalPageId && input.pageId !== input.canonicalPageId),
+    duplicate_detected: input.duplicateDetected,
+    duplicate_merge_completed: input.duplicateMergeCompleted,
+    patch_property_keys: patchPropertyKeys,
+    patch_includes_meal_photos: patchPropertyKeys.includes("Meal Photos"),
+    meal_photos_files_count: getMealPhotosFilesCount(input.properties),
+  };
+}
 function getSchemaCacheKey(
   dbId: string,
   expectedProperties: ExpectedProperty[],
@@ -2390,13 +2414,11 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   let duplicateDetected = false;
   let duplicateMergeCompleted = false;
 
-  if (!pageId) {
-    const resolved = await resolveDailyLogPageForDate(env, targetDate);
-    existingPage = resolved.canonicalPage;
-    canonicalPageId = resolved.canonicalPage?.id ?? null;
-    duplicateDetected = resolved.duplicatePages.length > 0;
-    duplicateMergeCompleted = resolved.mergeCompleted;
-  }
+  const resolved = await resolveDailyLogPageForDate(env, targetDate);
+  existingPage = resolved.canonicalPage;
+  canonicalPageId = resolved.canonicalPage?.id ?? null;
+  duplicateDetected = resolved.duplicatePages.length > 0;
+  duplicateMergeCompleted = resolved.mergeCompleted;
 
   const properties = buildDailyLogUpsertProperties({
     title,
@@ -2406,19 +2428,16 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
     source,
   });
 
-  const patchPropertyKeys = Object.keys(properties);
-  const mealPhotosFilesCount = getMealPhotosFilesCount(properties);
   const resolvedPageId = pageId ?? existingPage?.id;
-  console.log("DAILY_LOG_UPSERT_PATCH_KEYS", {
-    target_date: targetDate,
-    page_id: resolvedPageId ?? null,
-    canonical_page_id: canonicalPageId,
-    patch_property_keys: patchPropertyKeys,
-    patch_includes_meal_photos: patchPropertyKeys.includes("Meal Photos"),
-    meal_photos_files_count: mealPhotosFilesCount,
-    duplicate_detected: duplicateDetected,
-    duplicate_merge_completed: duplicateMergeCompleted,
+  const diagnostics = buildDailyLogUpsertDiagnostics({
+    targetDate,
+    pageId,
+    canonicalPageId,
+    duplicateDetected,
+    duplicateMergeCompleted,
+    properties,
   });
+  console.log("DAILY_LOG_UPSERT_PATCH_KEYS", diagnostics);
 
   let resultResponse: Response;
   if (resolvedPageId) {
@@ -5278,4 +5297,5 @@ export const __test__ = {
   resolveLocationSummaryFields,
   buildDailyLogUpsertProperties,
   getMealPhotosFilesCount,
+  buildDailyLogUpsertDiagnostics,
 };
