@@ -108,3 +108,14 @@ def test_build_today_advice_context_history_debug_separates_failed_and_missing(m
     assert context["history_debug"]["history_missing_count"] == 0
     assert context["history_debug"]["history_partial"] is True
     assert context["history_debug"]["history_incomplete"] is True
+
+def test_trend_direction_returns_none_for_insufficient_data() -> None:
+    assert generator._trend_direction([]) is None
+    assert generator._trend_direction([1, 2]) is None
+    assert not isinstance(generator._trend_direction([1, 2]), generator.SafeDailyLogReadResult)
+
+
+def test_generate_today_advice_returns_none_when_context_missing(monkeypatch) -> None:
+    monkeypatch.setattr(generator, "build_today_advice_generation_context", lambda **kwargs: None)
+    result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-05-08")
+    assert result is None

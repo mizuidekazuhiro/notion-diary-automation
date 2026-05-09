@@ -469,7 +469,7 @@ def _compare_metric_windows(current: Optional[float], base: Optional[float]) -> 
 def _trend_direction(values: Sequence[Optional[float]]) -> Optional[str]:
     nums = [float(v) for v in values if v is not None]
     if len(nums) < 3:
-        return SafeDailyLogReadResult(summary=None, failed=True, error_type=type(exc).__name__)
+        return None
     if nums[0] < nums[1] < nums[2]:
         return "up"
     if nums[0] > nums[1] > nums[2]:
@@ -1056,7 +1056,7 @@ def generate_today_advice(
     )
     if not context:
         logging.info("Skipping Today advice because no Daily Log history is available. target_date=%s", target_date)
-        return SafeDailyLogReadResult(summary=None, failed=True, error_type=type(exc).__name__)
+        return None
 
     history = context["history"]
     structured = context["structured"]
