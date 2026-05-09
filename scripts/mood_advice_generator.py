@@ -247,6 +247,22 @@ class MoodAdviceResult:
     history_count: int
 
 
+@dataclass(frozen=True)
+class SafeDailyLogReadResult:
+    summary: Optional[DailyLogSummary]
+    failed: bool
+    error_type: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TodayAdviceHistoryLoadResult:
+    summaries: list[DailyLogSummary]
+    requested_dates: list[str]
+    failed_dates: list[str]
+    missing_dates: list[str]
+    include_next_day: bool
+
+
 def _safe_text(value: object) -> Optional[str]:
     if not isinstance(value, str):
         return None
@@ -293,13 +309,13 @@ def normalize_mood_to_score(raw_mood: object) -> Optional[int]:
 
 
 
-def _safe_read_daily_log_for_advice(*, daily_log_read_url: str, bearer_token: Optional[str], day: str) -> Optional[DailyLogSummary]:
+def _safe_read_daily_log_for_advice(*, daily_log_read_url: str, bearer_token: Optional[str], day: str) -> SafeDailyLogReadResult:
     try:
-        return read_daily_log(
+        return SafeDailyLogReadResult(summary=read_daily_log(
             daily_log_read_url=daily_log_read_url,
             target_date=day,
             bearer_token=bearer_token,
-        )
+        ), failed=False)
     except Exception as exc:
         logging.warning(
             "today_advice_history_read_skipped date=%s reason=%s error=%s",
@@ -307,7 +323,64 @@ def _safe_read_daily_log_for_advice(*, daily_log_read_url: str, bearer_token: Op
             type(exc).__name__,
             str(exc)[:300],
         )
-        return None
+        return SafeDailyLogReadResult(summary=None, failed=True, error_type=type(exc).__name__)
+
+
+def _load_daily_logs_for_period_with_debug(
+    *,
+    daily_log_read_url: str,
+    bearer_token: Optional[str],
+    target_date: str,
+    days: int = LOOKBACK_DAYS,
+    include_next_day: bool = False,
+) -> TodayAdviceHistoryLoadResult:
+    base_day = datetime.strptime(target_date, "%Y-%m-%d")
+    requested_dates: list[str] = []
+    if include_next_day:
+        requested_dates.append((base_day + timedelta(days=1)).strftime("%Y-%m-%d"))
+    for offset in range(days):
+        requested_dates.append((base_day - timedelta(days=offset)).strftime("%Y-%m-%d"))
+
+    summaries: list[DailyLogSummary] = []
+    failed_dates: list[str] = []
+    missing_dates: list[str] = []
+
+    logging.info("today_advice_history_load_start target_date=%s days=%s include_next_day=%s", target_date, days, include_next_day)
+    for day in requested_dates:
+        result = _safe_read_daily_log_for_advice(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, day=day)
+        if result.failed:
+            failed_dates.append(day)
+            continue
+        if result.summary is None:
+            missing_dates.append(day)
+            logging.info("today_advice_history_missing date=%s", day)
+            continue
+        summaries.append(result.summary)
+
+    partial = bool(failed_dates)
+    incomplete = bool(failed_dates or missing_dates)
+    logging.info(
+        "today_advice_history_load_done target_date=%s requested_count=%s loaded_count=%s failed_count=%s missing_count=%s partial=%s incomplete=%s",
+        target_date,
+        len(requested_dates),
+        len(summaries),
+        len(failed_dates),
+        len(missing_dates),
+        partial,
+        incomplete,
+    )
+    if partial:
+        logging.info("today_advice_history_partial=true target_date=%s failed_dates=%s", target_date, failed_dates)
+    if incomplete and not partial:
+        logging.info("today_advice_history_incomplete=true target_date=%s missing_dates=%s", target_date, missing_dates)
+
+    return TodayAdviceHistoryLoadResult(
+        summaries=summaries,
+        requested_dates=requested_dates,
+        failed_dates=failed_dates,
+        missing_dates=missing_dates,
+        include_next_day=include_next_day,
+    )
 
 
 def load_daily_logs_for_period(
@@ -318,44 +391,14 @@ def load_daily_logs_for_period(
     days: int = LOOKBACK_DAYS,
     include_next_day: bool = False,
 ) -> list[DailyLogSummary]:
-    base_day = datetime.strptime(target_date, "%Y-%m-%d")
-    summaries: list[DailyLogSummary] = []
-    failed_dates: list[str] = []
-    requested_count = days + (1 if include_next_day else 0)
-    logging.info(
-        "today_advice_history_load_start target_date=%s days=%s include_next_day=%s",
-        target_date,
-        days,
-        include_next_day,
+    result = _load_daily_logs_for_period_with_debug(
+        daily_log_read_url=daily_log_read_url,
+        bearer_token=bearer_token,
+        target_date=target_date,
+        days=days,
+        include_next_day=include_next_day,
     )
-    read_days: list[str] = []
-    if include_next_day:
-        read_days.append((base_day + timedelta(days=1)).strftime("%Y-%m-%d"))
-    for offset in range(days):
-        read_days.append((base_day - timedelta(days=offset)).strftime("%Y-%m-%d"))
-
-    for day in read_days:
-        summary = _safe_read_daily_log_for_advice(
-            daily_log_read_url=daily_log_read_url,
-            bearer_token=bearer_token,
-            day=day,
-        )
-        if summary:
-            summaries.append(summary)
-            continue
-        failed_dates.append(day)
-
-    logging.info(
-        "today_advice_history_load_done target_date=%s requested_count=%s loaded_count=%s failed_count=%s partial=%s",
-        target_date,
-        requested_count,
-        len(summaries),
-        len(failed_dates),
-        bool(failed_dates),
-    )
-    if failed_dates:
-        logging.info("today_advice_history_partial=true target_date=%s failed_dates=%s", target_date, failed_dates)
-    return summaries
+    return result.summaries
 
 
 def _mean(values: Sequence[Optional[float]]) -> Optional[float]:
@@ -426,7 +469,7 @@ def _compare_metric_windows(current: Optional[float], base: Optional[float]) -> 
 def _trend_direction(values: Sequence[Optional[float]]) -> Optional[str]:
     nums = [float(v) for v in values if v is not None]
     if len(nums) < 3:
-        return None
+        return SafeDailyLogReadResult(summary=None, failed=True, error_type=type(exc).__name__)
     if nums[0] < nums[1] < nums[2]:
         return "up"
     if nums[0] > nums[1] > nums[2]:
@@ -758,13 +801,14 @@ def build_today_advice_generation_context(
     bearer_token: Optional[str],
     target_date: str,
 ) -> Optional[dict[str, Any]]:
-    history = load_daily_logs_for_period(
+    history_result = _load_daily_logs_for_period_with_debug(
         daily_log_read_url=daily_log_read_url,
         bearer_token=bearer_token,
         target_date=target_date,
         days=LOOKBACK_DAYS,
         include_next_day=False,
     )
+    history = history_result.summaries
     if not history:
         return None
 
@@ -820,17 +864,16 @@ def build_today_advice_generation_context(
             "notes_used": notes_used,
         },
     }
-    base_day = datetime.strptime(target_date, "%Y-%m-%d")
-    history_dates = {(item.target_date or "").strip() for item in history if (item.target_date or "").strip()}
-    expected_dates = {(base_day - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(LOOKBACK_DAYS)}
-    failed_dates = sorted(expected_dates - history_dates)
     history_debug = {
-        "history_requested_days": LOOKBACK_DAYS,
-        "history_loaded_count": len(history),
-        "history_failed_count": len(failed_dates),
-        "history_failed_dates": failed_dates,
-        "history_partial": bool(failed_dates),
-        "include_next_day": False,
+        "history_requested_days": len(history_result.requested_dates),
+        "history_loaded_count": len(history_result.summaries),
+        "history_failed_count": len(history_result.failed_dates),
+        "history_missing_count": len(history_result.missing_dates),
+        "history_failed_dates": history_result.failed_dates,
+        "history_missing_dates": history_result.missing_dates,
+        "history_partial": bool(history_result.failed_dates),
+        "history_incomplete": bool(history_result.failed_dates or history_result.missing_dates),
+        "include_next_day": history_result.include_next_day,
     }
     return {
         "history": history,
@@ -1013,7 +1056,7 @@ def generate_today_advice(
     )
     if not context:
         logging.info("Skipping Today advice because no Daily Log history is available. target_date=%s", target_date)
-        return None
+        return SafeDailyLogReadResult(summary=None, failed=True, error_type=type(exc).__name__)
 
     history = context["history"]
     structured = context["structured"]

@@ -913,6 +913,8 @@ def _generate_and_save_today_advice(
         "history_loaded_count": context.get("history_debug", {}).get("history_loaded_count"),
         "history_failed_count": context.get("history_debug", {}).get("history_failed_count"),
         "history_partial": context.get("history_debug", {}).get("history_partial"),
+        "history_missing_count": context.get("history_debug", {}).get("history_missing_count"),
+        "history_incomplete": context.get("history_debug", {}).get("history_incomplete"),
         "include_next_day": context.get("history_debug", {}).get("include_next_day"),
     }
     logging.info(
