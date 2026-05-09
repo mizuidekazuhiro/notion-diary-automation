@@ -910,6 +910,10 @@ def _generate_and_save_today_advice(
         "historical_recording_fields": sorted(today_state.get("historical_recording_patterns", {}).keys()),
         "expense_count": summary.expenses.count if summary.expenses else 0,
         "hash_input_summary": normalized_hash_payload,
+        "history_loaded_count": context.get("history_debug", {}).get("history_loaded_count"),
+        "history_failed_count": context.get("history_debug", {}).get("history_failed_count"),
+        "history_partial": context.get("history_debug", {}).get("history_partial"),
+        "include_next_day": context.get("history_debug", {}).get("include_next_day"),
     }
     logging.info(
         "phase_c_today_advice_input_summary target_date(JST)=%s run_id=%s has_today_advice=%s has_notes=%s has_location_summary=%s has_diary=%s debug_summary=%s",

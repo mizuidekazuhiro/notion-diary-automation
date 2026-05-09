@@ -184,6 +184,16 @@ def fetch_json(url: str, bearer_token: Optional[str]) -> Dict[str, Any]:
             time.sleep(wait_seconds)
             continue
 
+        response_preview = (resp.text or "")[:300]
+        retry_after = resp.headers.get("Retry-After")
+        logging.error(
+            "fetch_json final_failure=true url=%s status_code=%s retry_after=%s retry_count=%s response_preview=%s",
+            url,
+            status,
+            retry_after,
+            retry_count,
+            json.dumps(response_preview, ensure_ascii=False),
+        )
         try:
             resp.raise_for_status()
         except requests.exceptions.RequestException as e:

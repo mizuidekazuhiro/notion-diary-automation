@@ -291,34 +291,70 @@ def normalize_mood_to_score(raw_mood: object) -> Optional[int]:
     return None
 
 
+
+
+def _safe_read_daily_log_for_advice(*, daily_log_read_url: str, bearer_token: Optional[str], day: str) -> Optional[DailyLogSummary]:
+    try:
+        return read_daily_log(
+            daily_log_read_url=daily_log_read_url,
+            target_date=day,
+            bearer_token=bearer_token,
+        )
+    except Exception as exc:
+        logging.warning(
+            "today_advice_history_read_skipped date=%s reason=%s error=%s",
+            day,
+            type(exc).__name__,
+            str(exc)[:300],
+        )
+        return None
+
+
 def load_daily_logs_for_period(
     *,
     daily_log_read_url: str,
     bearer_token: Optional[str],
     target_date: str,
     days: int = LOOKBACK_DAYS,
-    include_next_day: bool = True,
+    include_next_day: bool = False,
 ) -> list[DailyLogSummary]:
     base_day = datetime.strptime(target_date, "%Y-%m-%d")
     summaries: list[DailyLogSummary] = []
+    failed_dates: list[str] = []
+    requested_count = days + (1 if include_next_day else 0)
+    logging.info(
+        "today_advice_history_load_start target_date=%s days=%s include_next_day=%s",
+        target_date,
+        days,
+        include_next_day,
+    )
+    read_days: list[str] = []
     if include_next_day:
-        next_day = (base_day + timedelta(days=1)).strftime("%Y-%m-%d")
-        next_summary = read_daily_log(
-            daily_log_read_url=daily_log_read_url,
-            target_date=next_day,
-            bearer_token=bearer_token,
-        )
-        if next_summary:
-            summaries.append(next_summary)
+        read_days.append((base_day + timedelta(days=1)).strftime("%Y-%m-%d"))
     for offset in range(days):
-        day = (base_day - timedelta(days=offset)).strftime("%Y-%m-%d")
-        summary = read_daily_log(
+        read_days.append((base_day - timedelta(days=offset)).strftime("%Y-%m-%d"))
+
+    for day in read_days:
+        summary = _safe_read_daily_log_for_advice(
             daily_log_read_url=daily_log_read_url,
-            target_date=day,
             bearer_token=bearer_token,
+            day=day,
         )
         if summary:
             summaries.append(summary)
+            continue
+        failed_dates.append(day)
+
+    logging.info(
+        "today_advice_history_load_done target_date=%s requested_count=%s loaded_count=%s failed_count=%s partial=%s",
+        target_date,
+        requested_count,
+        len(summaries),
+        len(failed_dates),
+        bool(failed_dates),
+    )
+    if failed_dates:
+        logging.info("today_advice_history_partial=true target_date=%s failed_dates=%s", target_date, failed_dates)
     return summaries
 
 
@@ -727,6 +763,7 @@ def build_today_advice_generation_context(
         bearer_token=bearer_token,
         target_date=target_date,
         days=LOOKBACK_DAYS,
+        include_next_day=False,
     )
     if not history:
         return None
@@ -783,6 +820,18 @@ def build_today_advice_generation_context(
             "notes_used": notes_used,
         },
     }
+    base_day = datetime.strptime(target_date, "%Y-%m-%d")
+    history_dates = {(item.target_date or "").strip() for item in history if (item.target_date or "").strip()}
+    expected_dates = {(base_day - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(LOOKBACK_DAYS)}
+    failed_dates = sorted(expected_dates - history_dates)
+    history_debug = {
+        "history_requested_days": LOOKBACK_DAYS,
+        "history_loaded_count": len(history),
+        "history_failed_count": len(failed_dates),
+        "history_failed_dates": failed_dates,
+        "history_partial": bool(failed_dates),
+        "include_next_day": False,
+    }
     return {
         "history": history,
         "historical_summaries": historical_summaries,
@@ -795,6 +844,7 @@ def build_today_advice_generation_context(
         "selected_sleep_candidate": selected_sleep_candidate,
         "sleep_properties_source": sleep_properties_source,
         "today_sleep_context": today_sleep_context,
+        "history_debug": history_debug,
     }
 
 
