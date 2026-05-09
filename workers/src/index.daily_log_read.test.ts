@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { __test__ } from "./index";
 
-const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFromProperty } = __test__;
+const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFromProperty, buildDailyLogUpsertProperties, getMealPhotosFilesCount } = __test__;
 
 (() => {
   const props = {
@@ -69,3 +69,16 @@ const { resolveLocationSummaryFields, normalizeFilesFromProperty, getFileUrlsFro
 })();
 
 console.log("index.daily_log_read.test.ts: ok");
+
+(() => {
+  const properties = buildDailyLogUpsertProperties({
+    title: "Daily Log｜2026-05-08",
+    targetDate: "2026-05-08",
+    summaryText: "summary",
+    mailId: "25597151669",
+    source: "automation",
+  });
+  assert.equal("Meal Photos" in properties, false);
+  assert.equal(getMealPhotosFilesCount(properties), 0);
+  assert.deepEqual(properties["Activity Summary"].rich_text[0].text.content, "summary");
+})();
