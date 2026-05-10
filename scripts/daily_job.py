@@ -647,6 +647,16 @@ def _utc_timestamp() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+def _is_strict_notion_schema_audit() -> bool:
+    return str(os.getenv("STRICT_NOTION_SCHEMA_AUDIT", "false")).strip().lower() == "true"
+
+
+def _warn_or_raise_schema(message: str) -> None:
+    if _is_strict_notion_schema_audit():
+        raise RuntimeError(message)
+    logging.warning(message)
+
+
 def _build_diary_hash_payload(
     summary: "DailyLogSummary",
     diary_input_fields: dict[str, str],
@@ -1144,6 +1154,9 @@ def _ensure_notes_label_persisted(
         return summary
     payload = build_notes_label_persistence_payload(summary=summary, label=label, model=config.openai_model)
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    if refreshed_summary is None or str(getattr(refreshed_summary, "notes_label_input_hash", "") or "").strip() != str(payload.get("notes_label_input_hash") or "").strip():
+        _warn_or_raise_schema(f"notes_label_persist_missing_or_mismatch target_date={summary.target_date}")
     logging.info(
         "phase_c_notes_label_saved target_date(JST)=%s run_id=%s updated=%s reason=%s persisted_hit_count=%s",
         summary.target_date,
@@ -1152,7 +1165,6 @@ def _ensure_notes_label_persisted(
         save_result.get("reason"),
         note_audit.get("persisted_hit_count", 0),
     )
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
     return refreshed_summary or summary
 
 
@@ -1596,7 +1608,10 @@ def _compute_f_risk_alert_runtime(
             "matched_patterns": [str(item) for item in matched_patterns],
             "skip_reason": "unchanged_input_reused_state",
             "no_alert_reason": previous_state.get("no_alert_reason"),
-            "state_meta": {
+            "input_hash": current_input_hash,
+            "input_hash": current_input_hash,
+            "input_hash": current_input_hash,
+        "state_meta": {
                 "backend": store.meta.backend,
                 "state_read_ok": store.meta.state_read_ok,
                 "state_write_ok": store.meta.state_write_ok,
@@ -1713,8 +1728,23 @@ def _generate_and_save_f_risk(
     summary: "DailyLogSummary",
     run_id: str,
 ) -> "DailyLogSummary":
-    _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
-    return _refresh_daily_log_summary(config, summary.target_date) or summary
+    result = _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    payload = {
+        "f_risk_alert": result.get("alert_text") or "",
+        "f_risk_score": result.get("score"),
+        "f_risk_reason": result.get("reason") or "",
+        "f_risk_matched_patterns": json.dumps(result.get("matched_patterns") or [], ensure_ascii=False),
+        "f_risk_input_hash": result.get("input_hash") or "",
+        "f_risk_generated_at": _utc_timestamp(),
+    }
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    refreshed = _refresh_daily_log_summary(config, summary.target_date)
+    if refreshed is None:
+        _warn_or_raise_schema(f"f_risk_persist_readback_failed target_date={summary.target_date}")
+        return summary
+    if not str(getattr(refreshed, "f_risk_generated_at", "") or "").strip():
+        _warn_or_raise_schema(f"f_risk_persist_missing_fields target_date={summary.target_date} save_reason={save_result.get('reason')}")
+    return refreshed or summary
 
 
 def _generate_and_save_diary(
