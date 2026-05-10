@@ -2,11 +2,21 @@ import assert from "node:assert/strict";
 import { __test__ } from "./index";
 
 const {
+  buildDailyLogProperties,
   buildDailyLogUpsertProperties,
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
 } = __test__;
+
+(() => {
+  const schema = buildDailyLogProperties({} as any);
+  const required = new Map(schema.map((item: { name: string; type: string }) => [item.name, item.type]));
+  assert.equal(required.get("Mail Input Hash"), "rich_text");
+  assert.equal(required.get("Mail Input Snapshot"), "rich_text");
+  assert.equal(required.get("Mail Sent At"), "date");
+  assert.equal(required.get("Mail Version"), "number");
+})();
 
 (() => {
   const properties = buildDailyLogUpsertProperties({

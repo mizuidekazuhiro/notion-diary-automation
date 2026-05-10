@@ -416,6 +416,26 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             "mail_version": new_version if new_version > 0 else 1,
         },
     )
+    try:
+        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+        persisted_hash = ((getattr(refreshed_summary, "mail_input_hash", None) or "").strip() or None) if refreshed_summary else None
+        persisted = bool(persisted_hash and persisted_hash == current_input_hash)
+        persisted_version = getattr(refreshed_summary, "mail_version", None) if refreshed_summary else None
+        logging.info(
+            "mail_metadata_persist_check target_date=%s expected_hash=%s persisted_hash=%s persisted=%s mail_version=%s",
+            summary.target_date,
+            current_input_hash,
+            persisted_hash or "",
+            persisted,
+            persisted_version,
+        )
+    except Exception as exc:
+        logging.warning(
+            "mail_metadata_persist_check_failed target_date=%s expected_hash=%s error=%s",
+            summary.target_date,
+            current_input_hash,
+            exc,
+        )
 
 
 def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:

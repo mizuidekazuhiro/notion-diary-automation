@@ -82,6 +82,11 @@ def test_publish_first_send(monkeypatch):
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert len(sent) == 1
     assert len(updated) == 1
+    saved_payload = updated[0]
+    assert isinstance(saved_payload.get("mail_input_hash"), str) and saved_payload["mail_input_hash"]
+    assert isinstance(saved_payload.get("mail_input_snapshot_json"), str) and saved_payload["mail_input_snapshot_json"]
+    assert isinstance(saved_payload.get("mail_sent_at"), str) and saved_payload["mail_sent_at"]
+    assert isinstance(saved_payload.get("mail_version"), int)
 
 
 def test_publish_skip_when_input_hash_unchanged_even_if_mail_body_changed(monkeypatch):
