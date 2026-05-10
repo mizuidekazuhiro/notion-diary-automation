@@ -7,6 +7,8 @@ const {
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
+  parseStudyPayload,
+  applyStudyUpdateProperties,
 } = __test__;
 
 (() => {
@@ -15,7 +17,24 @@ const {
   assert.equal(required.get("Mail Input Hash"), "rich_text");
   assert.equal(required.get("Mail Sent At"), "date");
   assert.equal(required.get("Mail Version"), "number");
-  assert.equal(required.has("Mail Input Snapshot"), false);
+  assert.equal(required.get("Study Minutes"), "number");
+  assert.equal(required.get("Study Sessions"), "number");
+  assert.equal(required.get("Study Last Used At"), "date");
+  assert.equal(required.get("Mail Input Snapshot"), "rich_text");
+})();
+
+(() => {
+  const parsed = parseStudyPayload({ study_minutes: 0, study_sessions: 0, study_last_used_at: "2026-05-10T09:00:00+09:00" });
+  const updates: Record<string, unknown> = {};
+  const schema = {
+    "Study Minutes": { type: "number" },
+    "Study Sessions": { type: "number" },
+    "Study Last Used At": { type: "date" },
+  };
+  applyStudyUpdateProperties(updates as any, schema as any, parsed);
+  assert.equal((updates["Study Minutes"] as any).number, 0);
+  assert.equal((updates["Study Sessions"] as any).number, 0);
+  assert.equal((updates["Study Last Used At"] as any).date.start, "2026-05-10T09:00:00+09:00");
 })();
 
 (() => {

@@ -48,10 +48,12 @@ const {
 (() => {
   const metadata = extractMailMetadataFromProperties({
     "Mail Input Hash": { rich_text: [{ plain_text: "abc123" }] },
+    "Mail Input Snapshot": { rich_text: [{ plain_text: "{\"x\":1}" }] },
     "Mail Sent At": { date: { start: "2026-05-10T00:00:00+09:00" } },
     "Mail Version": { number: 3 },
   } as any);
   assert.equal(metadata.mailInputHash, "abc123");
+  assert.equal(metadata.mailInputSnapshot, "{\"x\":1}");
   assert.equal(metadata.mailSentAt, "2026-05-10T00:00:00+09:00");
   assert.equal(metadata.mailVersion, 3);
 })();
