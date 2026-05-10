@@ -241,6 +241,7 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: MAIL_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
+    { name: MAIL_INPUT_SNAPSHOT_PROPERTY_NAME, type: "rich_text" },
     { name: MAIL_SENT_AT_PROPERTY_NAME, type: "date" },
     { name: MAIL_VERSION_PROPERTY_NAME, type: "number" },
     { name: "Mood", type: "select" },
@@ -295,6 +296,7 @@ const WEATHER_RETRIEVED_AT_PROPERTY_NAME = "Weather Retrieved At";
 const WEATHER_INPUT_HASH_PROPERTY_NAME = "Weather Input Hash";
 const WEATHER_GENERATED_AT_PROPERTY_NAME = "Weather Generated At";
 const MAIL_INPUT_HASH_PROPERTY_NAME = "Mail Input Hash";
+const MAIL_INPUT_SNAPSHOT_PROPERTY_NAME = "Mail Input Snapshot";
 const MAIL_SENT_AT_PROPERTY_NAME = "Mail Sent At";
 const MAIL_VERSION_PROPERTY_NAME = "Mail Version";
 const WEATHER_SELECT_LABEL_BY_CODE: Record<number, string> = {
@@ -3978,6 +3980,8 @@ async function handleDailyLogGenerateDiary(
     typeof payload.weather_generated_at === "string" ? payload.weather_generated_at.trim() : "";
   const mailInputHash =
     typeof payload.mail_input_hash === "string" ? payload.mail_input_hash.trim() : "";
+  const mailInputSnapshot =
+    typeof payload.mail_input_snapshot === "string" ? payload.mail_input_snapshot.trim() : "";
   const mailSentAt =
     typeof payload.mail_sent_at === "string" ? payload.mail_sent_at.trim() : "";
   const mailVersion =
@@ -3998,6 +4002,7 @@ async function handleDailyLogGenerateDiary(
     !weatherInputHash &&
     !weatherGeneratedAt &&
     !mailInputHash &&
+    !mailInputSnapshot &&
     !mailSentAt &&
     mailVersion === null &&
     !diaryInputHash &&
@@ -4151,11 +4156,29 @@ async function handleDailyLogGenerateDiary(
       NOTES_RICH_TEXT_LIMIT,
     );
   }
+  if (mailInputSnapshot && hasPropertyType(dailyLogProperties, MAIL_INPUT_SNAPSHOT_PROPERTY_NAME, "rich_text")) {
+    updateProperties[MAIL_INPUT_SNAPSHOT_PROPERTY_NAME] = createRichTextPropertyWithLimit(
+      mailInputSnapshot,
+      NOTES_RICH_TEXT_LIMIT,
+    );
+  }
   if (mailSentAt && hasPropertyType(dailyLogProperties, MAIL_SENT_AT_PROPERTY_NAME, "date")) {
     updateProperties[MAIL_SENT_AT_PROPERTY_NAME] = createDateProperty(mailSentAt);
   }
   if (mailVersion !== null && hasPropertyType(dailyLogProperties, MAIL_VERSION_PROPERTY_NAME, "number")) {
     updateProperties[MAIL_VERSION_PROPERTY_NAME] = createNumberProperty(mailVersion);
+  }
+  if (typeof payload.diary_notification_sent === "boolean" && hasPropertyType(dailyLogProperties, DIARY_NOTIFICATION_SENT_PROPERTY_NAME, "checkbox")) {
+    updateProperties[DIARY_NOTIFICATION_SENT_PROPERTY_NAME] = createCheckboxProperty(payload.diary_notification_sent);
+  }
+  if (diaryNotificationHash && hasPropertyType(dailyLogProperties, DIARY_NOTIFICATION_HASH_PROPERTY_NAME, "rich_text")) {
+    updateProperties[DIARY_NOTIFICATION_HASH_PROPERTY_NAME] = createRichTextProperty(diaryNotificationHash);
+  }
+  if (diaryNotificationSentAt && hasPropertyType(dailyLogProperties, DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME, "date")) {
+    updateProperties[DIARY_NOTIFICATION_SENT_AT_PROPERTY_NAME] = createDateProperty(diaryNotificationSentAt);
+  }
+  if (diaryNotificationVersionRaw !== null && hasPropertyType(dailyLogProperties, DIARY_NOTIFICATION_VERSION_PROPERTY_NAME, "number")) {
+    updateProperties[DIARY_NOTIFICATION_VERSION_PROPERTY_NAME] = createNumberProperty(diaryNotificationVersionRaw);
   }
   const diaryInputHashPropertyName = getDiaryInputHashPropertyName(env);
   if (diaryInputHash && hasPropertyType(dailyLogProperties, diaryInputHashPropertyName, "rich_text")) {
@@ -4249,6 +4272,10 @@ async function handleDailyLogGenerateDiary(
         weather_retrieved_at: Boolean(weatherRetrievedAt),
         weather_input_hash: Boolean(weatherInputHash),
         weather_generated_at: Boolean(weatherGeneratedAt),
+        mail_input_hash: Boolean(mailInputHash),
+        mail_input_snapshot: Boolean(mailInputSnapshot),
+        mail_sent_at: Boolean(mailSentAt),
+        mail_version: mailVersion !== null,
       })}`,
     );
     return jsonResponse({

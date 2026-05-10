@@ -15,7 +15,11 @@ const {
   assert.equal(required.get("Mail Input Hash"), "rich_text");
   assert.equal(required.get("Mail Sent At"), "date");
   assert.equal(required.get("Mail Version"), "number");
-  assert.equal(required.has("Mail Input Snapshot"), false);
+  assert.equal(required.get("Mail Input Snapshot"), "rich_text");
+  assert.equal(required.get("Diary Notification Sent"), "checkbox");
+  assert.equal(required.get("Diary Notification Hash"), "rich_text");
+  assert.equal(required.get("Diary Notification Sent At"), "date");
+  assert.equal(required.get("Diary Notification Version"), "number");
 })();
 
 (() => {
