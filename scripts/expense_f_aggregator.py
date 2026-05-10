@@ -90,13 +90,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
     target_set = set(target_dates)
     start_day = min(datetime.fromisoformat(d).replace(tzinfo=JST) for d in target_set)
     end_day = max(datetime.fromisoformat(d).replace(tzinfo=JST) for d in target_set) + timedelta(days=1)
-    filter_payload = {
-        "and": [
-            {"property": names["f"], "checkbox": {"equals": True}},
-            {"timestamp": "created_time", "created_time": {"on_or_after": start_day.astimezone().isoformat()}},
-            {"timestamp": "created_time", "created_time": {"before": end_day.astimezone().isoformat()}},
-        ]
-    }
+    filter_payload = {"and": [{"property": names["f"], "checkbox": {"equals": True}}]}
     payload = {"filter": filter_payload, "sorts": [{"timestamp": "created_time", "direction": "ascending"}], "page_size": 100}
 
     try:
@@ -113,7 +107,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 timeout=20,
             )
             if resp.status_code >= 400:
-                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": "timestamp_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
+                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": "expense_date_prop_or_received_at_prop_or_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
                 return {d: unavailable for d in target_dates}
             data = resp.json()
             pages.extend(data.get("results", []))
@@ -124,10 +118,21 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
         grouped = {d: {"total": 0.0, "merchants": [], "times": [], "count": 0} for d in target_set}
         for page in pages:
             created_time = str(page.get("created_time") or "")
-            day_key = _resolve_target_date(created_time)
+            props = page.get("properties", {})
+            filter_strategy = "created_time_fallback"
+            day_key = None
+            if names.get("date"):
+                day_key = _extract_date_prop_value(props.get(names["date"]))
+                if day_key:
+                    filter_strategy = "expense_date_prop"
+            if day_key is None and names.get("received_at"):
+                day_key = _extract_date_prop_value(props.get(names["received_at"]))
+                if day_key:
+                    filter_strategy = "received_at_prop"
+            if day_key is None:
+                day_key = _resolve_target_date_from_iso(created_time)
             if not day_key or day_key not in grouped:
                 continue
-            props = page.get("properties", {})
             grouped[day_key]["count"] += 1
             grouped[day_key]["total"] += _parse_number(props.get(names["amount"])) or 0.0
             grouped[day_key]["merchants"].append(_parse_rich_text(props.get(names["merchant"])) or "Unknown")
@@ -152,7 +157,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                     "created_time_source": "page.created_time",
                     "date_window_start": start_day.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "date_window_end": end_day.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "filter_strategy": "timestamp_created_time",
+                    "filter_strategy": "expense_date_prop_or_received_at_prop_or_created_time",
                     "query_exception_class": None,
                     "query_exception_message": None,
                     "matched_count": count_value,
@@ -163,7 +168,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             )
         return result
     except Exception as exc:  # noqa: BLE001
-        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": "timestamp_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
+        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": "expense_date_prop_or_received_at_prop_or_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
         return {d: unavailable for d in target_dates}
 
 
@@ -190,10 +195,20 @@ def _parse_number(prop: dict[str, Any] | None) -> Optional[float]:
     return None
 
 
-def _resolve_target_date(created_time: str) -> Optional[str]:
-    if not created_time:
+def _resolve_target_date_from_iso(value: str) -> Optional[str]:
+    if not value:
         return None
     try:
-        return datetime.fromisoformat(created_time.replace("Z", "+00:00")).astimezone(JST).strftime("%Y-%m-%d")
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(JST).strftime('%Y-%m-%d')
     except ValueError:
-        return created_time[:10]
+        return value[:10]
+
+
+def _extract_date_prop_value(prop: dict[str, Any] | None) -> Optional[str]:
+    if not prop:
+        return None
+    ptype = prop.get('type')
+    if ptype != 'date':
+        return None
+    date_value = (prop.get('date') or {}).get('start')
+    return _resolve_target_date_from_iso(str(date_value or ''))
