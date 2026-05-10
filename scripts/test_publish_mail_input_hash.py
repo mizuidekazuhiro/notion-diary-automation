@@ -80,7 +80,7 @@ def test_publish_first_send(monkeypatch):
     monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
     monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: sent.append(True))
     monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: updated.append(kwargs["payload"]) or {"updated": True})
-    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=updated[-1]["mail_input_hash"], mail_version=updated[-1]["mail_version"], mail_sent_at=updated[-1]["mail_sent_at"]))
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=updated[-1]["mail_input_hash"], mail_version=updated[-1]["mail_version"], mail_sent_at=updated[-1]["mail_sent_at"], mail_input_snapshot_json=updated[-1]["mail_input_snapshot"]))
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert len(sent) == 1
     assert len(updated) == 1
@@ -167,7 +167,7 @@ def test_publish_uses_today_jst_for_f_risk_target_date(monkeypatch):
     monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
     saved=[]
     monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
-    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"]))
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"]))
     class MockDateTime:
         @staticmethod
         def now(_tz):
@@ -218,7 +218,23 @@ def test_publish_passes_expense_f_alert_to_render_and_snapshot(monkeypatch):
     monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
     saved=[]
     monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
-    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"]))
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"]))
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert captured["render_expense"] == expense_alert
     assert captured["snapshot_expense"] == expense_alert
+
+
+def test_publish_logs_expense_f_alert_rendered_true(monkeypatch, caplog):
+    summary = _summary()
+    reads = [summary, summary]
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: reads.pop(0) if reads else summary)
+    monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": True, "summary": "detected"})
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
+    saved = []
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"]))
+    caplog.set_level("INFO")
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    assert "expense_f_alert_rendered=True" in caplog.text
