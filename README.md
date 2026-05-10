@@ -21,10 +21,12 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 ## Phase ごとの最終仕様
 
 > 最新運用メモ（F 関連）:
-> - Expense F / F Risk は **Notion Daily Log へ保存しません**。
-> - Expense F 集計と F Risk 判定は **Expenses DB 直読 + 実行時メモリ**で扱います。
-> - F Risk の継続状態（input hash / reason / generated_at など）は `automation-state` ブランチの `.state/f_risk_state.json`（ローカルは `.runtime/f_risk_state.local.json`）に保存します。
-> - F Risk Alert の表示先はメールのみです（Notion へは書き戻しません）。
+> - Expense F の正は Expenses DB の `F` チェックボックスで、ユーザー手動付与の実績ラベル（教師データ）です。
+> - Daily Log メールでは対象日の `F=true` 支出を Expenses DB 直読で表示します（Expense F 集計の Daily_Log 保存はデフォルト無効）。
+> - Expense F 集計を Daily_Log へ保存したい場合のみ `SAVE_EXPENSE_F_SUMMARY_TO_DAILY_LOG=true` を有効化します。
+> - F Risk は事後通知ではなく予防アラートで、主状態管理は `automation-state` ブランチ `.state/f_risk_state.json`（ローカル `.runtime/f_risk_state.local.json`）です。
+> - F Risk の Daily_Log 保存はデフォルト無効で、保存したい場合のみ `SAVE_F_RISK_TO_DAILY_LOG=true` を有効化します。
+> - Notes Label の Daily_Log 保存もデフォルト無効で、保存したい場合のみ `SAVE_NOTES_LABEL_TO_DAILY_LOG=true` を有効化します。
 
 ### Phase A: ingest
 - Daily Log ページを ensure します。
@@ -463,3 +465,12 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - When duplicates are detected, the worker fills only **empty canonical fields** from duplicates.
 - The `2026-05-07` duplicate case is covered by automatic canonical merge logic.
 - Manual recovery should be used only as a last resort.
+
+
+## Daily_Log 推奨プロパティ監査
+- `scripts/audit_notion_schema.py` で Daily_Log DB の推奨プロパティ/型を監査できます。
+- Mail Input / Study / Weather など現DBに存在する主要項目は通常監査対象です。
+- Expense F / F Risk / Notes Label の保存用プロパティは、対応する `SAVE_*_TO_DAILY_LOG=true` の場合のみ監査対象です。
+- `STRICT_NOTION_SCHEMA_AUDIT=false` (デフォルト): 監査対象の不足/型不一致は WARNING。
+- `STRICT_NOTION_SCHEMA_AUDIT=true`: 監査対象になっている項目だけを失敗対象にして exit 1。
+- Meal summary は未記録日があり得るため、空でも即エラーではありません。
