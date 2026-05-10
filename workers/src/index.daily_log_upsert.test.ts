@@ -13,9 +13,9 @@ const {
   const schema = buildDailyLogProperties({} as any);
   const required = new Map(schema.map((item: { name: string; type: string }) => [item.name, item.type]));
   assert.equal(required.get("Mail Input Hash"), "rich_text");
+  assert.equal(required.get("Mail Input Snapshot"), "rich_text");
   assert.equal(required.get("Mail Sent At"), "date");
   assert.equal(required.get("Mail Version"), "number");
-  assert.equal(required.has("Mail Input Snapshot"), false);
 })();
 
 (() => {
