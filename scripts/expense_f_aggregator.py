@@ -25,6 +25,10 @@ class ExpenseFAggregate:
     skip_reason: Optional[str] = None
 
 
+def _auth_header(token: str) -> dict[str, str]:
+    return {"Authorization": "Bearer " + token, "Notion-Version": NOTION_VERSION}
+
+
 def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
     return aggregate_expense_f_for_dates([target_date]).get(
         target_date,
@@ -58,7 +62,7 @@ def _fetch_schema(*, token: str, db_id: str) -> tuple[dict[str, Any], dict[str, 
     try:
         resp = requests.get(
             f"https://api.notion.com/v1/databases/{db_id}",
-            headers={"Authorization": f"Bearer {token}", "Notion-Version": NOTION_VERSION},
+            headers=_auth_header(token),
             timeout=20,
         )
         if resp.status_code >= 400:
@@ -132,14 +136,16 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             body = dict(payload)
             if cursor:
                 body["start_cursor"] = cursor
+            post_headers = _auth_header(token)
+            post_headers["Content-Type"] = "application/json"
             resp = requests.post(
                 f"https://api.notion.com/v1/databases/{db_id}/query",
-                headers={"Authorization": f"Bearer {token}", "Notion-Version": NOTION_VERSION, "Content-Type": "application/json"},
+                headers=post_headers,
                 json=body,
                 timeout=20,
             )
             if resp.status_code >= 400:
-                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": "timestamp_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
+                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
                 return {d: unavailable for d in target_dates}
             data = resp.json()
             pages.extend(data.get("results", []))
@@ -155,7 +161,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             if query_time_source == "expense_date":
                 day_key = _parse_date_prop(props.get(names["date"])) or day_key
             elif query_time_source == "received_at":
-                day_key = _parse_date_prop(props.get(names["received_at"])) or day_key
+                day_key = _parse_date_prop(props.get(names["received_at"]), as_jst_date=True) or day_key
             if not day_key or day_key not in grouped:
                 continue
             grouped[day_key]["count"] += 1
@@ -193,7 +199,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             )
         return result
     except Exception as exc:  # noqa: BLE001
-        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": "timestamp_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
+        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
         return {d: unavailable for d in target_dates}
 
 
@@ -220,14 +226,22 @@ def _parse_number(prop: dict[str, Any] | None) -> Optional[float]:
     return None
 
 
-def _parse_date_prop(prop: dict[str, Any] | None) -> Optional[str]:
+def _parse_date_prop(prop: dict[str, Any] | None, *, as_jst_date: bool = False) -> Optional[str]:
     if not prop or prop.get("type") != "date":
         return None
     date_obj = prop.get("date") or {}
     raw = str(date_obj.get("start") or "").strip()
     if not raw:
         return None
-    return raw[:10]
+    if not as_jst_date or "T" not in raw:
+        return raw[:10]
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=JST)
+        return parsed.astimezone(JST).strftime("%Y-%m-%d")
+    except ValueError:
+        return raw[:10]
 
 
 def _resolve_target_date(created_time: str) -> Optional[str]:
