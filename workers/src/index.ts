@@ -243,6 +243,9 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: MAIL_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
     { name: MAIL_SENT_AT_PROPERTY_NAME, type: "date" },
     { name: MAIL_VERSION_PROPERTY_NAME, type: "number" },
+    { name: "Study Minutes", type: "number" },
+    { name: "Study Sessions", type: "number" },
+    { name: "Study Last Used At", type: "date" },
     { name: "Mood", type: "select" },
     { name: "Source", type: "select" },
     { name: "Weight", type: "number" },
@@ -3904,6 +3907,51 @@ async function readTaskTitlesByRelationIds(
   return details.map((item) => item.title).filter(Boolean);
 }
 
+function parseStudyPayload(payload: Record<string, unknown>) {
+  const studyMinutesPresent = Object.prototype.hasOwnProperty.call(payload, "study_minutes");
+  const studySessionsPresent = Object.prototype.hasOwnProperty.call(payload, "study_sessions");
+  const studyLastUsedAtPresent = Object.prototype.hasOwnProperty.call(payload, "study_last_used_at");
+  const studyMinutes =
+    typeof payload.study_minutes === "number" && Number.isFinite(payload.study_minutes)
+      ? payload.study_minutes
+      : null;
+  const studySessions =
+    typeof payload.study_sessions === "number" && Number.isFinite(payload.study_sessions)
+      ? payload.study_sessions
+      : null;
+  const studyLastUsedAt =
+    typeof payload.study_last_used_at === "string" ? payload.study_last_used_at.trim() : "";
+  return { studyMinutesPresent, studySessionsPresent, studyLastUsedAtPresent, studyMinutes, studySessions, studyLastUsedAt };
+}
+
+function applyStudyUpdateProperties(
+  updateProperties: Record<string, any>,
+  dailyLogProperties: Record<string, any>,
+  parsed: ReturnType<typeof parseStudyPayload>,
+): void {
+  if (parsed.studyMinutesPresent) {
+    if (parsed.studyMinutes !== null && hasPropertyType(dailyLogProperties, "Study Minutes", "number")) {
+      updateProperties["Study Minutes"] = createNumberProperty(parsed.studyMinutes);
+    } else {
+      console.warn("[generate_diary] study_update_skipped_reason=invalid_or_missing_property field=study_minutes");
+    }
+  }
+  if (parsed.studySessionsPresent) {
+    if (parsed.studySessions !== null && hasPropertyType(dailyLogProperties, "Study Sessions", "number")) {
+      updateProperties["Study Sessions"] = createNumberProperty(parsed.studySessions);
+    } else {
+      console.warn("[generate_diary] study_update_skipped_reason=invalid_or_missing_property field=study_sessions");
+    }
+  }
+  if (parsed.studyLastUsedAtPresent) {
+    if (parsed.studyLastUsedAt && hasPropertyType(dailyLogProperties, "Study Last Used At", "date")) {
+      updateProperties["Study Last Used At"] = createDateProperty(parsed.studyLastUsedAt);
+    } else if (parsed.studyLastUsedAt) {
+      console.warn("[generate_diary] study_update_skipped_reason=invalid_or_missing_property field=study_last_used_at");
+    }
+  }
+}
+
 async function handleDailyLogGenerateDiary(
   request: Request,
   env: Env,
@@ -3982,6 +4030,11 @@ async function handleDailyLogGenerateDiary(
     typeof payload.mail_sent_at === "string" ? payload.mail_sent_at.trim() : "";
   const mailVersion =
     typeof payload.mail_version === "number" ? payload.mail_version : null;
+  const studyPayload = parseStudyPayload(payload);
+  const { studyMinutesPresent, studySessionsPresent, studyLastUsedAtPresent } = studyPayload;
+  console.log(
+    `[generate_diary] study_minutes_present=${studyMinutesPresent} study_sessions_present=${studySessionsPresent} study_last_used_at_present=${studyLastUsedAtPresent} study_minutes_value=${studyPayload.studyMinutes === null ? "null" : studyPayload.studyMinutes}`,
+  );
   if (
     !diary &&
     !sleepAnalysisJp &&
@@ -4000,6 +4053,9 @@ async function handleDailyLogGenerateDiary(
     !mailInputHash &&
     !mailSentAt &&
     mailVersion === null &&
+    !studyMinutesPresent &&
+    !studySessionsPresent &&
+    !studyLastUsedAtPresent &&
     !diaryInputHash &&
     !todayAdviceInputHash &&
     !diaryGeneratedAt &&
@@ -4157,6 +4213,7 @@ async function handleDailyLogGenerateDiary(
   if (mailVersion !== null && hasPropertyType(dailyLogProperties, MAIL_VERSION_PROPERTY_NAME, "number")) {
     updateProperties[MAIL_VERSION_PROPERTY_NAME] = createNumberProperty(mailVersion);
   }
+  applyStudyUpdateProperties(updateProperties, dailyLogProperties, studyPayload);
   const diaryInputHashPropertyName = getDiaryInputHashPropertyName(env);
   if (diaryInputHash && hasPropertyType(dailyLogProperties, diaryInputHashPropertyName, "rich_text")) {
     updateProperties[diaryInputHashPropertyName] = createRichTextProperty(diaryInputHash);
@@ -4905,6 +4962,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       getStringFromProperty(properties[studyLastUsedAtPropertyName]) ||
       null
     : null;
+  console.log(
+    `[daily_log_read] study_minutes_present=${studyMinutes !== null} study_sessions_present=${studySessions !== null} study_last_used_at_present=${Boolean(studyLastUsedAt)} study_minutes_value=${studyMinutes === null ? "null" : studyMinutes}`,
+  );
   const weatherPropertyName = resolveExactPropertyName(
     properties,
     getWeatherPropertyName(env),
@@ -5428,4 +5488,6 @@ export const __test__ = {
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
+  parseStudyPayload,
+  applyStudyUpdateProperties,
 };
