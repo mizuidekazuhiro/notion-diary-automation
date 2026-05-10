@@ -1494,6 +1494,16 @@ def _compute_expense_f_alert(
             else ""
         ),
         "reasons": reasons,
+        "count": aggregate.count,
+        "total": aggregate.total,
+        "merchants": aggregate.merchants,
+        "data_status": aggregate.data_status,
+        "filter_strategy": aggregate.debug_summary.get("filter_strategy"),
+        "alert_text": (
+            f"{summary.target_date} に Fプロパティ付きの望ましくない支出を検知しました。再発防止の判断に使ってください。"
+            if matched
+            else ""
+        ),
         "debug": {
             "data_status": aggregate.data_status,
             "skip_reason": aggregate.skip_reason,
@@ -1595,6 +1605,7 @@ def _compute_f_risk_alert_runtime(
             "reason": str(previous_state.get("reason") or "reused_from_state"),
             "matched_patterns": [str(item) for item in matched_patterns],
             "skip_reason": "unchanged_input_reused_state",
+            "input_hash": current_input_hash,
             "no_alert_reason": previous_state.get("no_alert_reason"),
             "state_meta": {
                 "backend": store.meta.backend,
@@ -1639,6 +1650,7 @@ def _compute_f_risk_alert_runtime(
             "matched_patterns": [],
             "skip_reason": "f_risk_exception",
             "no_alert_reason": type(exc).__name__,
+            "input_hash": current_input_hash,
             "state_meta": {
                 "backend": store.meta.backend,
                 "state_read_ok": store.meta.state_read_ok,
@@ -1695,6 +1707,7 @@ def _compute_f_risk_alert_runtime(
         "matched_patterns": result.matched_patterns,
         "skip_reason": result.skip_reason,
         "no_alert_reason": row.get("no_alert_reason"),
+        "input_hash": current_input_hash,
         "state_meta": {
             "backend": store.meta.backend,
             "state_read_ok": store.meta.state_read_ok,
