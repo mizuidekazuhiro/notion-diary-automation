@@ -139,7 +139,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 timeout=20,
             )
             if resp.status_code >= 400:
-                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": "timestamp_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
+                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
                 return {d: unavailable for d in target_dates}
             data = resp.json()
             pages.extend(data.get("results", []))
@@ -193,7 +193,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             )
         return result
     except Exception as exc:  # noqa: BLE001
-        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": "timestamp_created_time", "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
+        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
         return {d: unavailable for d in target_dates}
 
 

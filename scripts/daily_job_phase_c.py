@@ -19,9 +19,17 @@ class PhaseCDeps:
     mark_notified: Callable[[str], None]
 
 
-def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: Any, run_id: str) -> Any:
+def _run_optional_enrichment(
+    step_name: str,
+    fn: Callable[[Any], Any],
+    summary: Any,
+    run_id: str,
+    step_status: dict[str, str],
+) -> Any:
     try:
-        return fn(summary)
+        out = fn(summary)
+        step_status[step_name] = "success"
+        return out
     except Exception as exc:  # noqa: BLE001
         logging.exception(
             "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
@@ -32,6 +40,7 @@ def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: 
             str(exc),
             step_name,
         )
+        step_status[step_name] = "failed"
         return summary
 
 
@@ -52,8 +61,7 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
         return
 
-    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id)
-    step_status["weather"] = "success"
+    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
 
     try:
@@ -78,14 +86,11 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         step_status["expense_f"] = "success"
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id)
-    step_status["sleep"] = "success"
+    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id)
-    step_status["notes_label"] = "success"
+    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id)
-    step_status["f_risk"] = "success"
+    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
     try:
         summary = deps.run_today_advice(summary)
