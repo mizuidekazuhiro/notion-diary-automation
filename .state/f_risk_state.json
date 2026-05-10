@@ -440,16 +440,16 @@
     },
     "2026-05-09": {
       "alert_text": null,
-      "generated_at": "2026-05-09T13:57:43Z",
-      "input_hash": "0f7ec15908bdbb4926180ae288b71a3728de2592d41c0aeeb3b6ae4ccb44f550",
+      "generated_at": "2026-05-10T03:24:51Z",
+      "input_hash": "ce30540b08443d1f2f30286ba6a4e499e00fb35675197ddf9cbb15a1c49d6aa9",
       "matched_patterns": [
         "週末バイアス"
       ],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
-      "score": 0.03797193702134183
+      "score": 0.03891285227319748
     }
   },
-  "updated_at": "2026-05-09T13:57:43Z",
+  "updated_at": "2026-05-10T03:24:51Z",
   "version": 1
 }
