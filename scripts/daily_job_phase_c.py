@@ -19,9 +19,17 @@ class PhaseCDeps:
     mark_notified: Callable[[str], None]
 
 
-def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: Any, run_id: str) -> Any:
+def _run_optional_enrichment(
+    step_name: str,
+    fn: Callable[[Any], Any],
+    summary: Any,
+    run_id: str,
+    step_status: dict[str, str],
+) -> Any:
     try:
-        return fn(summary)
+        out = fn(summary)
+        step_status[step_name] = "success"
+        return out
     except Exception as exc:  # noqa: BLE001
         logging.exception(
             "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
@@ -32,11 +40,13 @@ def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: 
             str(exc),
             step_name,
         )
+        step_status[step_name] = "failed"
         return summary
 
 
 def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps) -> None:
     logging.info("phase_c_start target_date(JST)=%s run_id=%s", target_date, run_id)
+    step_status: dict[str, str] = {k: "pending" for k in ["weather", "expense_f", "sleep", "notes_label", "f_risk", "today_advice", "diary", "notify", "mail_metadata", "study"]}
     summary = deps.refresh_summary(config, target_date)
     if not summary:
         logging.info(
@@ -45,9 +55,13 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             run_id,
             False,
         )
+        step_status["notify"] = "not_applicable"
+        step_status["mail_metadata"] = "not_applicable"
+        step_status["study"] = "not_applicable"
+        logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
         return
 
-    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id)
+    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
 
     try:
@@ -67,17 +81,32 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             "reasons": [],
             "debug": {"error": str(exc)},
         }
+        step_status["expense_f"] = "failed"
+    else:
+        step_status["expense_f"] = "success"
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id)
+    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id)
+    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id)
+    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = deps.run_today_advice(summary)
+    try:
+        summary = deps.run_today_advice(summary)
+        step_status["today_advice"] = "success"
+    except Exception:
+        step_status["today_advice"] = "failed"
+        logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
+        raise
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = deps.run_diary(summary)
+    try:
+        summary = deps.run_diary(summary)
+        step_status["diary"] = "success"
+    except Exception:
+        step_status["diary"] = "failed"
+        logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
+        raise
     summary = deps.refresh_summary(config, summary.target_date) or summary
 
     if not (summary.diary or "").strip():
@@ -86,6 +115,10 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             summary.target_date,
             run_id,
         )
+        step_status["notify"] = "skipped"
+        step_status["mail_metadata"] = "not_applicable"
+        step_status["study"] = "not_applicable"
+        logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", summary.target_date, run_id, step_status)
         return
 
     if expense_f_alert.get("matched"):
@@ -113,5 +146,11 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             run_id,
             True,
         )
+        step_status["notify"] = "success"
+    else:
+        step_status["notify"] = "skipped"
+    step_status["mail_metadata"] = "not_applicable"
+    step_status["study"] = "not_applicable"
+    logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", summary.target_date, run_id, step_status)
 
     logging.info("phase_c_end target_date(JST)=%s run_id=%s", summary.target_date, run_id)
