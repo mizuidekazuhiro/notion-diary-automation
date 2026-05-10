@@ -273,7 +273,6 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     summary_today_advice = (getattr(summary, "today_advice", "") or "").strip()
     summary_diary = (getattr(summary, "diary", "") or "").strip()
     summary_mail_input_hash = (getattr(summary, "mail_input_hash", "") or "").strip()
-    summary_mail_input_snapshot_json = (getattr(summary, "mail_input_snapshot_json", "") or "").strip()
     duplicate_info = getattr(summary, "duplicate_info", {}) or {}
     duplicate_fields_present = duplicate_info.get("duplicate_fields_present", {}) if isinstance(duplicate_info, dict) else {}
     logging.info(
@@ -298,7 +297,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         bool(summary_mail_id),
         summary_diary_notification_sent,
         bool(summary_mail_input_hash),
-        bool(summary_mail_input_snapshot_json),
+        False,
     )
     if not target_date_matches:
         raise RuntimeError(f"Phase04 fail: target_date mismatch expected={target_date} actual={summary.target_date}")
@@ -376,19 +375,6 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     is_update_mail = bool(previous_input_hash and hash_changed)
     new_version = (normalized_previous_version + 1) if should_send else normalized_previous_version
     changed_fields: list[str] = []
-    previous_snapshot_raw = (getattr(summary, "mail_input_snapshot_json", None) or "").strip()
-    if previous_snapshot_raw:
-        try:
-            previous_snapshot = json.loads(previous_snapshot_raw)
-            changed_fields = sorted(
-                {
-                    *set(previous_snapshot.keys()),
-                    *set(input_snapshot.keys()),
-                }
-            )
-            changed_fields = [key for key in changed_fields if previous_snapshot.get(key) != input_snapshot.get(key)]
-        except json.JSONDecodeError:
-            changed_fields = []
     logging.info(
         "mail_input_hash_current=%s mail_input_hash_previous=%s mail_input_hash_changed=%s mail_send_decision=%s mail_send_skip_reason=%s mail_version_previous=%s mail_version_new=%s changed_fields=%s changed_fields_count=%s",
         current_input_hash,
@@ -411,7 +397,6 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         target_date=summary.target_date,
         payload={
             "mail_input_hash": current_input_hash,
-            "mail_input_snapshot_json": input_snapshot_raw,
             "mail_sent_at": datetime.now(JST).replace(microsecond=0).isoformat(),
             "mail_version": new_version if new_version > 0 else 1,
         },
