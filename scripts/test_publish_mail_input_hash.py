@@ -73,12 +73,14 @@ def test_publish_first_send(monkeypatch):
     sent = []
     updated = []
     summary = _summary()
-    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: summary)
+    reads=[summary, summary]
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: reads.pop(0) if reads else summary)
     monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
     monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"summary": ""})
     monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
     monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: sent.append(True))
     monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: updated.append(kwargs["payload"]) or {"updated": True})
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=updated[-1]["mail_input_hash"], mail_version=updated[-1]["mail_version"], mail_sent_at=updated[-1]["mail_sent_at"], mail_input_snapshot_json=updated[-1]["mail_input_snapshot"]))
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert len(sent) == 1
     assert len(updated) == 1
@@ -87,6 +89,8 @@ def test_publish_first_send(monkeypatch):
     assert "mail_input_snapshot_json" not in saved_payload
     assert isinstance(saved_payload.get("mail_sent_at"), str) and saved_payload["mail_sent_at"]
     assert isinstance(saved_payload.get("mail_version"), int)
+    assert isinstance(saved_payload.get("mail_input_snapshot"), str) and saved_payload["mail_input_snapshot"]
+    assert saved_payload.get("diary_notification_sent") is True
 
 
 def test_publish_skip_when_input_hash_unchanged_even_if_mail_body_changed(monkeypatch):
@@ -96,7 +100,8 @@ def test_publish_skip_when_input_hash_unchanged_even_if_mail_body_changed(monkey
     monkeypatch.setattr("scripts.daily_job.build_mail_input_snapshot", lambda *_args, **_kwargs: {"target_date": "2026-04-01"})
     same_hash = daily_job.sha256_hex('{"target_date":"2026-04-01"}')
     summary.mail_input_hash = same_hash
-    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: summary)
+    reads=[summary, summary]
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: reads.pop(0) if reads else summary)
     mails = [SimpleNamespace(subject="S", plain_text="P1", html_body="H1"), SimpleNamespace(subject="S2", plain_text="P2", html_body="H2")]
     monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: mails.pop(0) if mails else SimpleNamespace(subject="S2", plain_text="P2", html_body="H2"))
     monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"summary": ""})
@@ -160,7 +165,9 @@ def test_publish_uses_today_jst_for_f_risk_target_date(monkeypatch):
     monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
     monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": True, "summary": "detected"})
     monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **_kwargs: {"updated": True})
+    saved=[]
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"]))
     class MockDateTime:
         @staticmethod
         def now(_tz):
@@ -175,3 +182,112 @@ def test_publish_uses_today_jst_for_f_risk_target_date(monkeypatch):
     monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", _fake_f_risk)
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert captured["target_date_override"] == "2026-04-02"
+
+
+def test_publish_raises_when_persistence_verification_fails(monkeypatch):
+    summary = _summary()
+    stale = _summary(mail_input_hash=None, mail_version=None, mail_sent_at=None)
+    reads = [summary, stale]
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: reads.pop(0) if reads else stale)
+    monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **_kwargs: {"updated": True})
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "2")
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "0")
+    import pytest
+    with pytest.raises(RuntimeError, match="attempts=2"):
+        daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+
+
+def test_publish_passes_expense_f_alert_to_render_and_snapshot(monkeypatch):
+    summary = _summary()
+    reads=[summary, summary]
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: reads.pop(0) if reads else summary)
+    expense_alert = {"matched": True, "summary": "F detected", "alert_text": "alert"}
+    captured = {}
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: expense_alert)
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
+    def _render(_summary, *, expense_f_alert, f_risk_alert):
+        captured["render_expense"] = expense_f_alert
+        return SimpleNamespace(subject="S", plain_text="P", html_body="H")
+    def _snapshot(_summary, *, expense_f_alert, f_risk_alert):
+        captured["snapshot_expense"] = expense_f_alert
+        return {"target_date": "2026-04-01", "expense_f": bool(expense_f_alert.get("matched"))}
+    monkeypatch.setattr("scripts.daily_job.render_mail", _render)
+    monkeypatch.setattr("scripts.daily_job.build_mail_input_snapshot", _snapshot)
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
+    saved=[]
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"]))
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    assert captured["render_expense"] == expense_alert
+    assert captured["snapshot_expense"] == expense_alert
+
+
+def test_publish_persist_verify_retries_until_second_attempt_success(monkeypatch):
+    summary = _summary()
+    sent = []
+    saved = []
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: summary)
+    monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: sent.append(True))
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
+    stale = SimpleNamespace(mail_input_hash="", mail_version=None, mail_sent_at="", mail_input_snapshot_json="")
+    def _refresh(*_args, **_kwargs):
+        if len(sent) == 1 and len(saved) == 1 and _refresh.calls == 0:
+            _refresh.calls += 1
+            return stale
+        return SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"])
+    _refresh.calls = 0
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", _refresh)
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "3")
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "0")
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    assert len(sent) == 1
+    assert len(saved) == 1
+
+
+def test_publish_persist_verify_retries_on_refresh_exception(monkeypatch):
+    summary = _summary()
+    sent = []
+    saved = []
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: summary)
+    monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: sent.append(True))
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **kwargs: saved.append(kwargs["payload"]) or {"updated": True})
+    def _refresh(*_args, **_kwargs):
+        if _refresh.calls == 0:
+            _refresh.calls += 1
+            raise RuntimeError("temporary read failure")
+        return SimpleNamespace(mail_input_hash=saved[-1]["mail_input_hash"], mail_version=saved[-1]["mail_version"], mail_sent_at=saved[-1]["mail_sent_at"], mail_input_snapshot_json=saved[-1]["mail_input_snapshot"])
+    _refresh.calls = 0
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", _refresh)
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "3")
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "0")
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    assert len(sent) == 1
+
+
+def test_publish_persist_verify_backoff_zero_skips_sleep(monkeypatch):
+    summary = _summary()
+    monkeypatch.setattr("scripts.daily_job.read_daily_log", lambda **_kwargs: summary)
+    monkeypatch.setattr("scripts.daily_job.render_mail", lambda *_args, **_kwargs: SimpleNamespace(subject="S", plain_text="P", html_body="H"))
+    monkeypatch.setattr("scripts.daily_job._compute_expense_f_alert", lambda **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job._compute_f_risk_alert_runtime", lambda *_args, **_kwargs: {"matched": False, "summary": ""})
+    monkeypatch.setattr("scripts.daily_job.send_mail", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **_kwargs: {"updated": True})
+    monkeypatch.setattr("scripts.daily_job._refresh_daily_log_summary", lambda *_args, **_kwargs: SimpleNamespace(mail_input_hash="", mail_version=None, mail_sent_at="", mail_input_snapshot_json=""))
+    sleeps = []
+    monkeypatch.setattr("scripts.daily_job.time.sleep", lambda sec: sleeps.append(sec))
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "2")
+    monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "0")
+    import pytest
+    with pytest.raises(RuntimeError):
+        daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    assert sleeps == []

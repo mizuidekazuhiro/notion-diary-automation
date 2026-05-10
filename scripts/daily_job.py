@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -83,6 +84,7 @@ WEATHER_DETAIL_FIELDS = (
     "weather_code",
 )
 WEATHER_PROVIDER = "open-meteo-jma"
+MAIL_INPUT_SNAPSHOT_MAX_CHARS = 1900
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,92 @@ def resolve_target_date(*, explicit_target_date: Optional[str], now: Optional[da
     if phase in {"notify_diary", "all"} and get_today_advice_target_mode() == "TODAY":
         return now.date().strftime("%Y-%m-%d")
     return get_target_date(now)
+
+
+def _get_mail_metadata_persist_verify_retries() -> int:
+    raw = os.getenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "3")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 3
+    return value if value > 0 else 3
+
+
+def _get_mail_metadata_persist_verify_backoff_seconds() -> float:
+    raw = os.getenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "2")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 2.0
+    return value if value >= 0 else 2.0
+
+
+def _verify_primary_mail_metadata_persisted_with_retry(
+    *,
+    config: Config,
+    target_date: str,
+    expected_hash: str,
+    expected_version: int,
+) -> None:
+    max_attempts = _get_mail_metadata_persist_verify_retries()
+    backoff_seconds = _get_mail_metadata_persist_verify_backoff_seconds()
+    last_persisted_hash: str | None = None
+    last_persisted_version: int | None = None
+    last_persisted_mail_sent_at_present = False
+    last_persisted_mail_input_snapshot_present = False
+    for attempt in range(1, max_attempts + 1):
+        try:
+            refreshed_summary = _refresh_daily_log_summary(config, target_date)
+            persisted_hash = ((getattr(refreshed_summary, "mail_input_hash", None) or "").strip() or None) if refreshed_summary else None
+            persisted_version = getattr(refreshed_summary, "mail_version", None) if refreshed_summary else None
+            persisted_mail_sent_at_present = bool((getattr(refreshed_summary, "mail_sent_at", None) or "").strip()) if refreshed_summary else False
+            persisted_snapshot_value = (
+                (getattr(refreshed_summary, "mail_input_snapshot_json", None) or "").strip()
+                or (getattr(refreshed_summary, "mail_input_snapshot", None) or "").strip()
+            ) if refreshed_summary else ""
+            persisted_mail_input_snapshot_present = bool(persisted_snapshot_value)
+            persisted_ok = (
+                bool(refreshed_summary)
+                and persisted_hash == expected_hash
+                and persisted_version == expected_version
+                and persisted_mail_sent_at_present
+                and persisted_mail_input_snapshot_present
+            )
+            logging.info(
+                "mail_metadata_persist_check_attempt target_date=%s attempt=%s max_attempts=%s persisted_hash=%s persisted_version=%s persisted_mail_sent_at_present=%s persisted_mail_input_snapshot_present=%s persisted_ok=%s",
+                target_date,
+                attempt,
+                max_attempts,
+                persisted_hash or "",
+                persisted_version,
+                persisted_mail_sent_at_present,
+                persisted_mail_input_snapshot_present,
+                persisted_ok,
+            )
+            last_persisted_hash = persisted_hash
+            last_persisted_version = persisted_version
+            last_persisted_mail_sent_at_present = persisted_mail_sent_at_present
+            last_persisted_mail_input_snapshot_present = persisted_mail_input_snapshot_present
+            if persisted_ok:
+                return
+        except Exception as exc:
+            logging.warning(
+                "mail_metadata_persist_check_attempt_failed target_date=%s attempt=%s max_attempts=%s exception_class=%s exception_message=%s",
+                target_date,
+                attempt,
+                max_attempts,
+                exc.__class__.__name__,
+                str(exc),
+            )
+        if attempt < max_attempts and backoff_seconds > 0:
+            time.sleep(backoff_seconds)
+    raise RuntimeError(
+        "primary mail metadata persistence verification failed after retries: "
+        f"target_date={target_date} expected_hash={expected_hash} last_persisted_hash={last_persisted_hash or ''} "
+        f"expected_version={expected_version} last_persisted_version={last_persisted_version} "
+        f"last_persisted_mail_sent_at_present={last_persisted_mail_sent_at_present} "
+        f"last_persisted_mail_input_snapshot_present={last_persisted_mail_input_snapshot_present} attempts={max_attempts}"
+    )
 
 
 
@@ -331,14 +419,17 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         run_id=run_id,
         target_date_override=f_risk_target_date,
     )
-    expense_f_alert_for_render = {"matched": False}
+    expense_f_alert_for_render = expense_f_alert if isinstance(expense_f_alert, dict) else {"matched": False}
     f_risk_alert_rendered = bool(f_risk_alert.get("matched")) and bool(str(f_risk_alert.get("alert_text") or "").strip())
+    expense_f_alert_rendered = bool(expense_f_alert_for_render.get("matched")) and bool(
+        str(expense_f_alert_for_render.get("summary") or expense_f_alert_for_render.get("alert_text") or "").strip()
+    )
     logging.info(
         "mail_render_context daily_log_target_date=%s f_risk_target_date=%s f_risk_alert_rendered=%s expense_f_alert_rendered=%s f_risk_reason=%s f_risk_score=%s",
         summary.target_date,
         f_risk_target_date,
         f_risk_alert_rendered,
-        False,
+        expense_f_alert_rendered,
         str(f_risk_alert.get("reason") or ""),
         f_risk_alert.get("score"),
     )
@@ -388,39 +479,57 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         len(changed_fields),
     )
     logging.info("mail_input_hash_fields_include_meal_photos=%s", "meal_photos" in MAIL_INPUT_HASH_FIELDS)
+    logging.info(
+        "mail_send_decision target_date=%s previous_mail_input_hash_present=%s current_mail_input_hash=%s hash_changed=%s should_send=%s is_update_mail=%s previous_mail_version=%s new_mail_version=%s",
+        target_date,
+        bool(previous_input_hash),
+        current_input_hash,
+        hash_changed,
+        should_send,
+        is_update_mail,
+        normalized_previous_version,
+        new_version,
+    )
     if not should_send:
+        logging.info(
+            "mail_send_skipped target_date=%s skip_reason=input_hash_unchanged persisted_hash=%s current_hash=%s",
+            target_date,
+            previous_input_hash or "",
+            current_input_hash,
+        )
         return
     subject = f"【更新版】{mail.subject}" if is_update_mail and not mail.subject.startswith("【更新版】") else mail.subject
     send_mail(mail_config, subject, mail.plain_text, mail.html_body)
-    _save_daily_log_fields(
-        config,
+    mail_sent_at = datetime.now(JST).replace(microsecond=0).isoformat()
+    mail_version_to_save = new_version if new_version > 0 else 1
+    snapshot_to_save = input_snapshot_raw
+    snapshot_truncated = False
+    if len(snapshot_to_save) > MAIL_INPUT_SNAPSHOT_MAX_CHARS:
+        snapshot_to_save = snapshot_to_save[:MAIL_INPUT_SNAPSHOT_MAX_CHARS]
+        snapshot_truncated = True
+    # Primary mail metadata used for dedupe / sent-state / persistence verification.
+    primary_mail_metadata_payload = {
+        "mail_input_hash": current_input_hash,
+        "mail_input_snapshot": snapshot_to_save,
+        "mail_sent_at": mail_sent_at,
+        "mail_version": mail_version_to_save,
+    }
+    # Legacy diary notification metadata: kept for backward compatibility only.
+    legacy_diary_notification_payload = {
+        "diary_notification_sent": True,
+        "diary_notification_hash": current_input_hash,
+        "diary_notification_sent_at": mail_sent_at,
+        "diary_notification_version": mail_version_to_save,
+    }
+    payload = {**primary_mail_metadata_payload, **legacy_diary_notification_payload}
+    logging.info("mail_metadata_save_attempted=true saved_fields=%s mail_input_snapshot_truncated=%s", ",".join(sorted(payload.keys())), snapshot_truncated)
+    _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    _verify_primary_mail_metadata_persisted_with_retry(
+        config=config,
         target_date=summary.target_date,
-        payload={
-            "mail_input_hash": current_input_hash,
-            "mail_sent_at": datetime.now(JST).replace(microsecond=0).isoformat(),
-            "mail_version": new_version if new_version > 0 else 1,
-        },
+        expected_hash=current_input_hash,
+        expected_version=mail_version_to_save,
     )
-    try:
-        refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-        persisted_hash = ((getattr(refreshed_summary, "mail_input_hash", None) or "").strip() or None) if refreshed_summary else None
-        persisted = bool(persisted_hash and persisted_hash == current_input_hash)
-        persisted_version = getattr(refreshed_summary, "mail_version", None) if refreshed_summary else None
-        logging.info(
-            "mail_metadata_persist_check target_date=%s expected_hash=%s persisted_hash=%s persisted=%s mail_version=%s",
-            summary.target_date,
-            current_input_hash,
-            persisted_hash or "",
-            persisted,
-            persisted_version,
-        )
-    except Exception as exc:
-        logging.warning(
-            "mail_metadata_persist_check_failed target_date=%s expected_hash=%s error=%s",
-            summary.target_date,
-            current_input_hash,
-            exc,
-        )
 
 
 def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:

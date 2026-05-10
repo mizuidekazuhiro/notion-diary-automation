@@ -178,6 +178,10 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `publish/email_templates.py` は値があるセクションだけ描画します。
 - 送信判定はメール本文ではなく Notion 由来の入力データ差分（`Mail Input Hash`）で行います。
 - `Mail Input Hash` が前回と同じ場合は送信・送信メタ更新をスキップし、変化時のみ更新版（件名 `【更新版】...`）を送信します。
+- Mail 送信管理の正は `Mail Input Hash` / `Mail Input Snapshot` / `Mail Sent At` / `Mail Version` の4項目です。
+- `Diary Notification Sent` / `Diary Notification Hash` / `Diary Notification Sent At` / `Diary Notification Version` は旧互換として保存のみ継続します（重複防止の主判定には使いません）。
+- 送信後の Notion 永続化確認は bounded retry/backoff で実行し、`Mail Input` 系4項目のみを必須確認対象にします。これにより反映遅延や一時的 readback 失敗による誤失敗と再実行時の重複送信リスクを下げています。
+- Meal summary / Kcal / Protein / Fat / Carb / Weight が空であることは、未記録の可能性があるため本修正の不具合判定対象外です。
 - メール本文の表示順は次のとおりです。
   1. `Weather`
   2. `Today advice`
