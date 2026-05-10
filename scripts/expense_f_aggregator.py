@@ -47,6 +47,13 @@ def _resolve_prop_name(*, env_value: Optional[str], aliases: list[str], schema: 
     return None, {"source": "schema_alias", "value": None, "resolved": False, "aliases": aliases}
 
 
+def _is_date_prop(schema: dict[str, Any], prop_name: Optional[str]) -> bool:
+    if not prop_name:
+        return False
+    prop = schema.get(prop_name)
+    return isinstance(prop, dict) and prop.get("type") == "date"
+
+
 def _fetch_schema(*, token: str, db_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
         resp = requests.get(
@@ -90,13 +97,32 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
     target_set = set(target_dates)
     start_day = min(datetime.fromisoformat(d).replace(tzinfo=JST) for d in target_set)
     end_day = max(datetime.fromisoformat(d).replace(tzinfo=JST) for d in target_set) + timedelta(days=1)
-    filter_payload = {
-        "and": [
-            {"property": names["f"], "checkbox": {"equals": True}},
+    if _is_date_prop(schema, names.get("date")):
+        date_filter = [
+            {"property": names["date"], "date": {"on_or_after": start_day.date().isoformat()}},
+            {"property": names["date"], "date": {"before": end_day.date().isoformat()}},
+        ]
+        filter_strategy = "expense_date_prop"
+        query_time_source = "expense_date"
+    elif _is_date_prop(schema, names.get("received_at")):
+        date_filter = [
+            {"property": names["received_at"], "date": {"on_or_after": start_day.date().isoformat()}},
+            {"property": names["received_at"], "date": {"before": end_day.date().isoformat()}},
+        ]
+        filter_strategy = "received_at_prop"
+        query_time_source = "received_at"
+    else:
+        date_filter = [
             {"timestamp": "created_time", "created_time": {"on_or_after": start_day.astimezone().isoformat()}},
             {"timestamp": "created_time", "created_time": {"before": end_day.astimezone().isoformat()}},
         ]
-    }
+        filter_strategy = "created_time_fallback"
+        query_time_source = "created_time"
+    family_prop = _resolve_prop_name(env_value=_env_or_none("EXPENSE_FAMILY_CARD_PROP"), aliases=["FamilyCard"], schema=schema)[0]
+    filter_terms = [{"property": names["f"], "checkbox": {"equals": True}}, *date_filter]
+    if family_prop:
+        filter_terms.append({"or": [{"property": family_prop, "checkbox": {"equals": False}}, {"property": family_prop, "checkbox": {"is_empty": True}}]})
+    filter_payload = {"and": filter_terms}
     payload = {"filter": filter_payload, "sorts": [{"timestamp": "created_time", "direction": "ascending"}], "page_size": 100}
 
     try:
@@ -123,11 +149,15 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
 
         grouped = {d: {"total": 0.0, "merchants": [], "times": [], "count": 0} for d in target_set}
         for page in pages:
+            props = page.get("properties", {})
             created_time = str(page.get("created_time") or "")
             day_key = _resolve_target_date(created_time)
+            if query_time_source == "expense_date":
+                day_key = _parse_date_prop(props.get(names["date"])) or day_key
+            elif query_time_source == "received_at":
+                day_key = _parse_date_prop(props.get(names["received_at"])) or day_key
             if not day_key or day_key not in grouped:
                 continue
-            props = page.get("properties", {})
             grouped[day_key]["count"] += 1
             grouped[day_key]["total"] += _parse_number(props.get(names["amount"])) or 0.0
             grouped[day_key]["merchants"].append(_parse_rich_text(props.get(names["merchant"])) or "Unknown")
@@ -149,10 +179,10 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 data_status=status,
                 debug_summary={
                     "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()},
-                    "created_time_source": "page.created_time",
+                    "created_time_source": query_time_source,
                     "date_window_start": start_day.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "date_window_end": end_day.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "filter_strategy": "timestamp_created_time",
+                    "filter_strategy": filter_strategy,
                     "query_exception_class": None,
                     "query_exception_message": None,
                     "matched_count": count_value,
@@ -188,6 +218,16 @@ def _parse_number(prop: dict[str, Any] | None) -> Optional[float]:
         n = prop.get("number")
         return float(n) if n is not None else None
     return None
+
+
+def _parse_date_prop(prop: dict[str, Any] | None) -> Optional[str]:
+    if not prop or prop.get("type") != "date":
+        return None
+    date_obj = prop.get("date") or {}
+    raw = str(date_obj.get("start") or "").strip()
+    if not raw:
+        return None
+    return raw[:10]
 
 
 def _resolve_target_date(created_time: str) -> Optional[str]:
