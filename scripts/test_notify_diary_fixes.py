@@ -49,10 +49,10 @@ def test_weather_geocode_query_normalization() -> None:
     assert _normalize_geocode_query("〒100-0001 東京都千代田区, Japan") == "東京都千代田区"
 
 
-def test_expense_f_created_time_filter_and_no_category(monkeypatch) -> None:
+def test_expense_f_date_filter_strategy(monkeypatch) -> None:
     monkeypatch.setenv("NOTION_TOKEN", "x")
     monkeypatch.setenv("EXPENSES_DB_ID", "db")
-    schema = {"F": {}, "Merchant": {}, "Amount": {}, "Date": {}}
+    schema = {"F": {"type": "checkbox"}, "Merchant": {"type": "rich_text"}, "Amount": {"type": "number"}, "Date": {"type": "date"}}
 
     class Resp:
         status_code = 200
@@ -69,9 +69,26 @@ def test_expense_f_created_time_filter_and_no_category(monkeypatch) -> None:
     with patch("scripts.expense_f_aggregator._fetch_schema", return_value=(schema, {"ok": True})), patch("scripts.expense_f_aggregator.requests.post", side_effect=_post):
         result = aggregate_expense_f_for_dates(["2026-03-28"])["2026-03-28"]
     assert result.data_status == "no_results"
-    assert result.debug_summary["filter_strategy"] == "timestamp_created_time"
+    assert result.debug_summary["filter_strategy"] == "expense_date_prop"
     assert result.debug_summary["resolved_props"]["category"]["resolved_name"] in {None, "Category"}
-    assert calls and calls[0]["filter"]["and"][1]["timestamp"] == "created_time"
+    assert calls and calls[0]["filter"]["and"][0]["property"] == "F"
+    assert calls and calls[0]["filter"]["and"][1]["property"] == "Date"
+
+
+def test_expense_f_received_at_filter_strategy(monkeypatch) -> None:
+    monkeypatch.setenv("NOTION_TOKEN", "x")
+    monkeypatch.setenv("EXPENSES_DB_ID", "db")
+    schema = {"F": {"type": "checkbox"}, "Merchant": {"type": "rich_text"}, "Amount": {"type": "number"}, "Received At": {"type": "date"}}
+
+    class Resp:
+        status_code = 200
+        def json(self):
+            return {"results": [], "has_more": False}
+    calls = []
+    with patch("scripts.expense_f_aggregator._fetch_schema", return_value=(schema, {"ok": True})), patch("scripts.expense_f_aggregator.requests.post", side_effect=lambda *a, **k: calls.append(k.get("json", {})) or Resp()):
+        result = aggregate_expense_f_for_dates(["2026-03-28"])["2026-03-28"]
+    assert result.debug_summary["filter_strategy"] == "received_at_prop"
+    assert calls and calls[0]["filter"]["and"][1]["property"] == "Received At"
 
 
 def test_expense_f_query_failed_logs_exception(monkeypatch) -> None:

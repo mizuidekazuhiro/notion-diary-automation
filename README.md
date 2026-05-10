@@ -21,10 +21,8 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 ## Phase ごとの最終仕様
 
 > 最新運用メモ（F 関連）:
-> - Expense F / F Risk は **Notion Daily Log へ保存しません**。
-> - Expense F 集計と F Risk 判定は **Expenses DB 直読 + 実行時メモリ**で扱います。
-> - F Risk の継続状態（input hash / reason / generated_at など）は `automation-state` ブランチの `.state/f_risk_state.json`（ローカルは `.runtime/f_risk_state.local.json`）に保存します。
-> - F Risk Alert の表示先はメールのみです（Notion へは書き戻しません）。
+> - Expense F / F Risk / Notes Label は Daily Log への保存を試みます。
+> - ただし Notion 側プロパティ不足時は WARNING を出して継続し、`STRICT_NOTION_SCHEMA_AUDIT=true` の時のみ失敗します。
 
 ### Phase A: ingest
 - Daily Log ページを ensure します。
@@ -463,3 +461,10 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - When duplicates are detected, the worker fills only **empty canonical fields** from duplicates.
 - The `2026-05-07` duplicate case is covered by automatic canonical merge logic.
 - Manual recovery should be used only as a last resort.
+
+
+## Daily_Log 推奨プロパティ監査
+- `scripts/audit_notion_schema.py` で Daily_Log DB の推奨プロパティ/型を監査できます。
+- `STRICT_NOTION_SCHEMA_AUDIT=false` (デフォルト): 不足/型不一致は WARNING。
+- `STRICT_NOTION_SCHEMA_AUDIT=true`: 不足/型不一致で exit 1。
+- Mail Input系は重複防止の正、Diary Notification系は旧互換、Study系はメール表示・Hash更新、F Risk/Notes Label系は保存再利用、Expense F系は警告保存、Weather Summaryは表示用、Meal summaryは未記録日があるため空でも即エラーではありません。
