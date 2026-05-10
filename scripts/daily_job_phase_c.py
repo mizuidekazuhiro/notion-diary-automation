@@ -19,9 +19,11 @@ class PhaseCDeps:
     mark_notified: Callable[[str], None]
 
 
-def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: Any, run_id: str) -> Any:
+def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: Any, run_id: str, status: dict[str,str]) -> Any:
     try:
-        return fn(summary)
+        out = fn(summary)
+        status[step_name] = "success"
+        return out
     except Exception as exc:  # noqa: BLE001
         logging.exception(
             "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
@@ -32,6 +34,7 @@ def _run_optional_enrichment(step_name: str, fn: Callable[[Any], Any], summary: 
             str(exc),
             step_name,
         )
+        status[step_name] = "failed"
         return summary
 
 
@@ -47,7 +50,9 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         )
         return
 
-    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id)
+    step_status = {k: "pending" for k in ["weather", "sleep", "notes_label", "f_risk", "today_advice", "diary", "notify", "mail_metadata", "study"]}
+
+    summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
 
     try:
@@ -69,15 +74,17 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         }
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id)
+    summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id)
+    summary = _run_optional_enrichment("notes_label", deps.run_notes_label, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id)
+    summary = _run_optional_enrichment("f_risk", deps.run_f_risk, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
     summary = deps.run_today_advice(summary)
+    step_status["today_advice"] = "success"
     summary = deps.refresh_summary(config, summary.target_date) or summary
     summary = deps.run_diary(summary)
+    step_status["diary"] = "success"
     summary = deps.refresh_summary(config, summary.target_date) or summary
 
     if not (summary.diary or "").strip():
@@ -98,6 +105,7 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         )
 
     notify_result = deps.run_notify(summary)
+    step_status["notify"] = "success"
     sent = bool(notify_result)
     already_marked = False
     if isinstance(notify_result, dict):
@@ -114,4 +122,5 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             True,
         )
 
+    logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s weather_%s sleep_%s notes_label_%s f_risk_%s today_advice_%s diary_%s notify_%s mail_metadata_%s study_%s", summary.target_date, run_id, step_status.get("weather"), step_status.get("sleep"), step_status.get("notes_label"), step_status.get("f_risk"), step_status.get("today_advice"), step_status.get("diary"), step_status.get("notify"), step_status.get("mail_metadata"), step_status.get("study"))
     logging.info("phase_c_end target_date(JST)=%s run_id=%s", summary.target_date, run_id)
