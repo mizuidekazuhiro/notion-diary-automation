@@ -49,7 +49,7 @@ def test_weather_geocode_query_normalization() -> None:
     assert _normalize_geocode_query("〒100-0001 東京都千代田区, Japan") == "東京都千代田区"
 
 
-def test_expense_f_created_time_filter_and_no_category(monkeypatch) -> None:
+def test_expense_f_created_time_fallback_and_no_category(monkeypatch) -> None:
     monkeypatch.setenv("NOTION_TOKEN", "x")
     monkeypatch.setenv("EXPENSES_DB_ID", "db")
     schema = {"F": {}, "Merchant": {}, "Amount": {}, "Date": {}}
@@ -69,7 +69,7 @@ def test_expense_f_created_time_filter_and_no_category(monkeypatch) -> None:
     with patch("scripts.expense_f_aggregator._fetch_schema", return_value=(schema, {"ok": True})), patch("scripts.expense_f_aggregator.requests.post", side_effect=_post):
         result = aggregate_expense_f_for_dates(["2026-03-28"])["2026-03-28"]
     assert result.data_status == "no_results"
-    assert result.debug_summary["filter_strategy"] == "timestamp_created_time"
+    assert result.debug_summary["filter_strategy"] == "created_time_fallback"
     assert result.debug_summary["resolved_props"]["category"]["resolved_name"] in {None, "Category"}
     assert calls and calls[0]["filter"]["and"][1]["timestamp"] == "created_time"
 
