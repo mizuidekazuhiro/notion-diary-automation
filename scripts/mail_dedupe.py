@@ -28,10 +28,9 @@ class MailDedupeDecision:
 
 MAIL_INPUT_HASH_FIELDS = (
     "target_date",
-    "diary",
-    "today_advice",
-    "sleep_analysis_jp",
-    "today_condition_forecast_jp",
+    "diary_input_hash",
+    "today_advice_input_hash",
+    "weather_input_hash",
     "weather_summary",
     "weather_location",
     "weather_temp_max_c",
@@ -141,10 +140,9 @@ def build_mail_input_snapshot(summary: Any, *, expense_f_alert: dict[str, Any], 
 
     raw: dict[str, Any] = {
         "target_date": getattr(summary, "target_date", None),
-        "diary": getattr(summary, "diary", None),
-        "today_advice": getattr(summary, "today_advice", None),
-        "sleep_analysis_jp": getattr(summary, "sleep_analysis_jp", None),
-        "today_condition_forecast_jp": getattr(summary, "today_condition_forecast_jp", None),
+        "diary_input_hash": getattr(summary, "diary_input_hash", None),
+        "today_advice_input_hash": getattr(summary, "today_advice_input_hash", None),
+        "weather_input_hash": getattr(summary, "weather_input_hash", None),
         "weather_summary": getattr(summary, "weather_summary", None),
         "weather_location": getattr(summary, "weather_location", None),
         "weather_temp_max_c": getattr(summary, "weather_temp_max_c", None),

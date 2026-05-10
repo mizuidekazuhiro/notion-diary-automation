@@ -240,6 +240,9 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Weather Generated At", type: "date" },
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
+    { name: MAIL_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
+    { name: MAIL_SENT_AT_PROPERTY_NAME, type: "date" },
+    { name: MAIL_VERSION_PROPERTY_NAME, type: "number" },
     { name: "Mood", type: "select" },
     { name: "Source", type: "select" },
     { name: "Weight", type: "number" },
@@ -291,6 +294,9 @@ const WEATHER_CODE_PROPERTY_NAME = "Weather Code";
 const WEATHER_RETRIEVED_AT_PROPERTY_NAME = "Weather Retrieved At";
 const WEATHER_INPUT_HASH_PROPERTY_NAME = "Weather Input Hash";
 const WEATHER_GENERATED_AT_PROPERTY_NAME = "Weather Generated At";
+const MAIL_INPUT_HASH_PROPERTY_NAME = "Mail Input Hash";
+const MAIL_SENT_AT_PROPERTY_NAME = "Mail Sent At";
+const MAIL_VERSION_PROPERTY_NAME = "Mail Version";
 const WEATHER_SELECT_LABEL_BY_CODE: Record<number, string> = {
   0: "晴れ",
   1: "晴れ",
@@ -2004,6 +2010,18 @@ function getPlainTextFromTitle(property: Record<string, any> | undefined): strin
   return title
     .map((item: { plain_text?: string }) => item.plain_text ?? "")
     .join("");
+}
+
+function extractMailMetadataFromProperties(properties: Record<string, any>) {
+  return {
+    mailInputHash:
+      getPlainTextFromRichText(properties[MAIL_INPUT_HASH_PROPERTY_NAME]) || null,
+    mailSentAt:
+      getDateTimeFromProperty(properties[MAIL_SENT_AT_PROPERTY_NAME]) ||
+      getStringFromProperty(properties[MAIL_SENT_AT_PROPERTY_NAME]) ||
+      null,
+    mailVersion: getNumberFromProperty(properties[MAIL_VERSION_PROPERTY_NAME]),
+  };
 }
 
 function buildMoodNotesEntry(notes: string, sourceUrl?: string): string {
@@ -3958,6 +3976,12 @@ async function handleDailyLogGenerateDiary(
     typeof payload.weather_input_hash === "string" ? payload.weather_input_hash.trim() : "";
   const weatherGeneratedAt =
     typeof payload.weather_generated_at === "string" ? payload.weather_generated_at.trim() : "";
+  const mailInputHash =
+    typeof payload.mail_input_hash === "string" ? payload.mail_input_hash.trim() : "";
+  const mailSentAt =
+    typeof payload.mail_sent_at === "string" ? payload.mail_sent_at.trim() : "";
+  const mailVersion =
+    typeof payload.mail_version === "number" ? payload.mail_version : null;
   if (
     !diary &&
     !sleepAnalysisJp &&
@@ -3973,6 +3997,9 @@ async function handleDailyLogGenerateDiary(
     !weatherRetrievedAt &&
     !weatherInputHash &&
     !weatherGeneratedAt &&
+    !mailInputHash &&
+    !mailSentAt &&
+    mailVersion === null &&
     !diaryInputHash &&
     !todayAdviceInputHash &&
     !diaryGeneratedAt &&
@@ -4117,6 +4144,18 @@ async function handleDailyLogGenerateDiary(
     } else if (hasPropertyType(dailyLogProperties, weatherGeneratedAtPropertyName, "rich_text")) {
       updateProperties[weatherGeneratedAtPropertyName] = createRichTextProperty(weatherGeneratedAt);
     }
+  }
+  if (mailInputHash && hasPropertyType(dailyLogProperties, MAIL_INPUT_HASH_PROPERTY_NAME, "rich_text")) {
+    updateProperties[MAIL_INPUT_HASH_PROPERTY_NAME] = createRichTextPropertyWithLimit(
+      mailInputHash,
+      NOTES_RICH_TEXT_LIMIT,
+    );
+  }
+  if (mailSentAt && hasPropertyType(dailyLogProperties, MAIL_SENT_AT_PROPERTY_NAME, "date")) {
+    updateProperties[MAIL_SENT_AT_PROPERTY_NAME] = createDateProperty(mailSentAt);
+  }
+  if (mailVersion !== null && hasPropertyType(dailyLogProperties, MAIL_VERSION_PROPERTY_NAME, "number")) {
+    updateProperties[MAIL_VERSION_PROPERTY_NAME] = createNumberProperty(mailVersion);
   }
   const diaryInputHashPropertyName = getDiaryInputHashPropertyName(env);
   if (diaryInputHash && hasPropertyType(dailyLogProperties, diaryInputHashPropertyName, "rich_text")) {
@@ -5014,6 +5053,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       typeof notificationVersion === "number" ? Math.trunc(notificationVersion) : null;
   }
   const mailId = getPlainTextFromRichText(properties["Mail ID"]);
+  const mailMetadata = extractMailMetadataFromProperties(properties);
   const source = properties.Source?.select?.name ?? null;
 
   const expensesRelationIds = getRelationIdsFromProperty(
@@ -5090,6 +5130,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       summary_text: summaryText,
       summary_html: summaryHtml,
       mail_id: mailId,
+      mail_input_hash: mailMetadata.mailInputHash,
+      mail_sent_at: mailMetadata.mailSentAt,
+      mail_version: mailMetadata.mailVersion,
       source,
       diary,
       meal_summary: mealSummary,
@@ -5376,6 +5419,8 @@ export default {
 };
 
 export const __test__ = {
+  buildDailyLogProperties,
+  extractMailMetadataFromProperties,
   normalizeFilesFromProperty,
   getFileUrlsFromProperty,
   resolveLocationSummaryFields,

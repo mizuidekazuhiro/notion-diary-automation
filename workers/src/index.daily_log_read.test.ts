@@ -3,6 +3,7 @@ import { __test__ } from "./index";
 
 const {
   resolveLocationSummaryFields,
+  extractMailMetadataFromProperties,
   normalizeFilesFromProperty,
   getFileUrlsFromProperty,
 } = __test__;
@@ -42,6 +43,17 @@ const {
   assert.equal(normalized.length, 2);
   const urls = getFileUrlsFromProperty(filesProp as any);
   assert.deepEqual(urls, ["https://example.com/a.jpg", "https://www.notion.so/image/abc?signed=1"]);
+})();
+
+(() => {
+  const metadata = extractMailMetadataFromProperties({
+    "Mail Input Hash": { rich_text: [{ plain_text: "abc123" }] },
+    "Mail Sent At": { date: { start: "2026-05-10T00:00:00+09:00" } },
+    "Mail Version": { number: 3 },
+  } as any);
+  assert.equal(metadata.mailInputHash, "abc123");
+  assert.equal(metadata.mailSentAt, "2026-05-10T00:00:00+09:00");
+  assert.equal(metadata.mailVersion, 3);
 })();
 
 (() => {

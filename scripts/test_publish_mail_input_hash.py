@@ -82,6 +82,11 @@ def test_publish_first_send(monkeypatch):
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert len(sent) == 1
     assert len(updated) == 1
+    saved_payload = updated[0]
+    assert isinstance(saved_payload.get("mail_input_hash"), str) and saved_payload["mail_input_hash"]
+    assert "mail_input_snapshot_json" not in saved_payload
+    assert isinstance(saved_payload.get("mail_sent_at"), str) and saved_payload["mail_sent_at"]
+    assert isinstance(saved_payload.get("mail_version"), int)
 
 
 def test_publish_skip_when_input_hash_unchanged_even_if_mail_body_changed(monkeypatch):
@@ -101,6 +106,42 @@ def test_publish_skip_when_input_hash_unchanged_even_if_mail_body_changed(monkey
     daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert sent == []
     assert updated == []
+
+
+def test_mail_input_hash_ignores_ai_generated_text_diffs():
+    s1 = _summary(
+        diary="A",
+        today_advice="B",
+        sleep_analysis_jp="C",
+        today_condition_forecast_jp="D",
+        diary_input_hash="diary-hash",
+        today_advice_input_hash="advice-hash",
+        weather_input_hash="weather-hash",
+    )
+    s2 = _summary(
+        diary="A changed",
+        today_advice="B changed",
+        sleep_analysis_jp="C changed",
+        today_condition_forecast_jp="D changed",
+        diary_input_hash="diary-hash",
+        today_advice_input_hash="advice-hash",
+        weather_input_hash="weather-hash",
+    )
+    from scripts.mail_dedupe import build_mail_input_snapshot, sha256_hex, snapshot_json
+
+    h1 = sha256_hex(snapshot_json(build_mail_input_snapshot(s1, expense_f_alert={"summary": ""}, f_risk_alert={"summary": ""})))
+    h2 = sha256_hex(snapshot_json(build_mail_input_snapshot(s2, expense_f_alert={"summary": ""}, f_risk_alert={"summary": ""})))
+    assert h1 == h2
+
+
+def test_mail_input_hash_changes_when_structured_input_changes():
+    base = _summary(weather_input_hash="weather-a", meal_photos=["a"], sleep_score=80.0)
+    changed = _summary(weather_input_hash="weather-b", meal_photos=["b"], sleep_score=81.0)
+    from scripts.mail_dedupe import build_mail_input_snapshot, sha256_hex, snapshot_json
+
+    h1 = sha256_hex(snapshot_json(build_mail_input_snapshot(base, expense_f_alert={"summary": ""}, f_risk_alert={"summary": ""})))
+    h2 = sha256_hex(snapshot_json(build_mail_input_snapshot(changed, expense_f_alert={"summary": ""}, f_risk_alert={"summary": ""})))
+    assert h1 != h2
 
 
 def test_notify_diary_phase_does_not_send_mail(monkeypatch):
