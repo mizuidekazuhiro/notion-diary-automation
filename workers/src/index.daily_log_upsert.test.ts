@@ -20,7 +20,7 @@ const {
   assert.equal(required.get("Study Minutes"), "number");
   assert.equal(required.get("Study Sessions"), "number");
   assert.equal(required.get("Study Last Used At"), "date");
-  assert.equal(required.has("Mail Input Snapshot"), false);
+  assert.equal(required.get("Mail Input Snapshot"), "rich_text");
 })();
 
 (() => {

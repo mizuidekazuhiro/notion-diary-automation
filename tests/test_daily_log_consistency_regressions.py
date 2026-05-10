@@ -162,10 +162,14 @@ def test_study_section_rendered_in_text_and_html() -> None:
     assert html.count("司法試験 Study") == 1
 
 
-def test_study_section_hidden_when_study_minutes_is_none() -> None:
+def test_study_section_rendered_when_minutes_none_but_other_study_fields_exist() -> None:
     payload = _payload(_summary(study_minutes=None, study_sessions=4))
-    assert "司法試験 Study" not in render_daily_log_text(payload)
-    assert "司法試験 Study" not in render_daily_log_html(payload)
+    text = render_daily_log_text(payload)
+    html = render_daily_log_html(payload)
+    assert "司法試験 Study" in text
+    assert "勉強時間: —" in text
+    assert "勉強時間: None" not in text
+    assert "司法試験 Study" in html
 
 
 def test_mail_snapshot_includes_study_fields() -> None:

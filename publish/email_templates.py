@@ -411,7 +411,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     study_html = ""
     if study_duration or study_sessions is not None or study_last_used_at:
         study_rows = [
-            ("勉強時間", study_duration),
+            ("勉強時間", study_duration or "—"),
             ("セッション数", str(study_sessions) if study_sessions is not None else "—"),
             ("最終利用", study_last_used_at or "—"),
         ]
@@ -858,7 +858,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         lines += [
             "",
             "司法試験 Study",
-            f"- 勉強時間: {study_duration}",
+            f"- 勉強時間: {study_duration or '—'}",
             f"- セッション数: {study_sessions if study_sessions is not None else '—'}",
             f"- 最終利用: {study_last_used_at or '—'}",
         ]

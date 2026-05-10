@@ -241,6 +241,7 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: env.DAILY_LOG_LOCATION_SUMMARY_PROP || "Location summary (GPT)", type: "rich_text" },
     { name: "Mail ID", type: "rich_text" },
     { name: MAIL_INPUT_HASH_PROPERTY_NAME, type: "rich_text" },
+    { name: MAIL_INPUT_SNAPSHOT_PROPERTY_NAME, type: "rich_text" },
     { name: MAIL_SENT_AT_PROPERTY_NAME, type: "date" },
     { name: MAIL_VERSION_PROPERTY_NAME, type: "number" },
     { name: "Study Minutes", type: "number" },
@@ -298,6 +299,7 @@ const WEATHER_RETRIEVED_AT_PROPERTY_NAME = "Weather Retrieved At";
 const WEATHER_INPUT_HASH_PROPERTY_NAME = "Weather Input Hash";
 const WEATHER_GENERATED_AT_PROPERTY_NAME = "Weather Generated At";
 const MAIL_INPUT_HASH_PROPERTY_NAME = "Mail Input Hash";
+const MAIL_INPUT_SNAPSHOT_PROPERTY_NAME = "Mail Input Snapshot";
 const MAIL_SENT_AT_PROPERTY_NAME = "Mail Sent At";
 const MAIL_VERSION_PROPERTY_NAME = "Mail Version";
 const WEATHER_SELECT_LABEL_BY_CODE: Record<number, string> = {
@@ -2019,6 +2021,8 @@ function extractMailMetadataFromProperties(properties: Record<string, any>) {
   return {
     mailInputHash:
       getPlainTextFromRichText(properties[MAIL_INPUT_HASH_PROPERTY_NAME]) || null,
+    mailInputSnapshot:
+      getPlainTextFromRichText(properties[MAIL_INPUT_SNAPSHOT_PROPERTY_NAME]) || null,
     mailSentAt:
       getDateTimeFromProperty(properties[MAIL_SENT_AT_PROPERTY_NAME]) ||
       getStringFromProperty(properties[MAIL_SENT_AT_PROPERTY_NAME]) ||
@@ -4026,6 +4030,8 @@ async function handleDailyLogGenerateDiary(
     typeof payload.weather_generated_at === "string" ? payload.weather_generated_at.trim() : "";
   const mailInputHash =
     typeof payload.mail_input_hash === "string" ? payload.mail_input_hash.trim() : "";
+  const mailInputSnapshot =
+    typeof payload.mail_input_snapshot === "string" ? payload.mail_input_snapshot.trim() : "";
   const mailSentAt =
     typeof payload.mail_sent_at === "string" ? payload.mail_sent_at.trim() : "";
   const mailVersion =
@@ -4051,6 +4057,7 @@ async function handleDailyLogGenerateDiary(
     !weatherInputHash &&
     !weatherGeneratedAt &&
     !mailInputHash &&
+    !mailInputSnapshot &&
     !mailSentAt &&
     mailVersion === null &&
     !studyMinutesPresent &&
@@ -4204,6 +4211,12 @@ async function handleDailyLogGenerateDiary(
   if (mailInputHash && hasPropertyType(dailyLogProperties, MAIL_INPUT_HASH_PROPERTY_NAME, "rich_text")) {
     updateProperties[MAIL_INPUT_HASH_PROPERTY_NAME] = createRichTextPropertyWithLimit(
       mailInputHash,
+      NOTES_RICH_TEXT_LIMIT,
+    );
+  }
+  if (mailInputSnapshot && hasPropertyType(dailyLogProperties, MAIL_INPUT_SNAPSHOT_PROPERTY_NAME, "rich_text")) {
+    updateProperties[MAIL_INPUT_SNAPSHOT_PROPERTY_NAME] = createRichTextPropertyWithLimit(
+      mailInputSnapshot,
       NOTES_RICH_TEXT_LIMIT,
     );
   }
@@ -5191,6 +5204,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       summary_html: summaryHtml,
       mail_id: mailId,
       mail_input_hash: mailMetadata.mailInputHash,
+      mail_input_snapshot: mailMetadata.mailInputSnapshot,
       mail_sent_at: mailMetadata.mailSentAt,
       mail_version: mailMetadata.mailVersion,
       source,
