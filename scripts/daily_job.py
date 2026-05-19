@@ -447,7 +447,18 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         "diary_notification_version": mail_version_to_save,
     }
     logging.info("mail_metadata_save_attempted=true saved_fields=%s mail_input_snapshot_truncated=%s", ",".join(sorted(payload.keys())), snapshot_truncated)
-    _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    try:
+        _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
+    except Exception as exc:
+        logging.error(
+            "mail_sent_but_metadata_persist_failed=true target_date=%s expected_hash=%s expected_version=%s exception_class=%s exception_message=%s",
+            summary.target_date,
+            current_input_hash,
+            mail_version_to_save,
+            exc.__class__.__name__,
+            str(exc),
+        )
+        raise
     max_attempts = _get_mail_metadata_persist_verify_retries()
     backoff_seconds = _get_mail_metadata_persist_verify_backoff_seconds()
     last_persisted_hash: str | None = None

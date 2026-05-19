@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from publish.read_daily_log import DailyLogSummary, read_daily_log
+from publish.read_daily_log import DailyLogSummary, ExpenseSummary, read_daily_log
 from ingest.http_client import fetch_json
 from scripts.note_batch_labeler import label_notes_in_batches, neutral_label
 from scripts.openai_chat_utils import chat_completion
@@ -465,7 +465,9 @@ def _load_histories_with_bulk_fallback(*, daily_log_read_url: str, bearer_token:
                 day = str(item.get("target_date") or "").strip()
                 if not day:
                     continue
-                summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
+                summary = _build_summary_from_history_item(item)
+                if summary is None:
+                    summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
                 if summary:
                     histories.append(summary)
             if histories:
@@ -475,6 +477,79 @@ def _load_histories_with_bulk_fallback(*, daily_log_read_url: str, bearer_token:
         logging.warning("f_risk_history_bulk_fetch_failed error=%s", exc)
 
     return _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=days)
+
+
+def _build_summary_from_history_item(item: dict[str, Any]) -> Optional[DailyLogSummary]:
+    target_date = str(item.get("target_date") or "").strip()
+    page_id = str(item.get("page_id") or "").strip()
+    if not target_date or not page_id:
+        return None
+    return DailyLogSummary(
+        target_date=target_date,
+        date=item.get("date"),
+        target_date_value=target_date,
+        page_id=page_id,
+        title=str(item.get("title") or ""),
+        summary_text="",
+        summary_html="",
+        mail_id="",
+        source=None,
+        diary=None,
+        meal_summary=None,
+        meal_photos=[],
+        place=None,
+        activity_summary=None,
+        done_count=None,
+        done_tasks=[],
+        done_tasks_detail=[],
+        drop_count=None,
+        drop_tasks=[],
+        kcal=None,
+        protein=None,
+        fat=None,
+        carb=None,
+        expenses_total=None,
+        expenses=ExpenseSummary(total=0.0, count=0, top=[], remaining=0),
+        location_summary=None,
+        mood=None,
+        notes=None,
+        weight=None,
+        sleep_start=None,
+        sleep_end=None,
+        sleep_duration_min=item.get("sleep_duration_min"),
+        resolved_sleep_duration_min=item.get("sleep_duration_min"),
+        resolved_sleep_duration_hours=None,
+        resolved_sleep_duration_text=None,
+        sleep_duration_source="history_api",
+        sleep_score=item.get("sleep_score"),
+        sleep_source=None,
+        readiness_stars=None,
+        readiness_hrv=item.get("readiness_hrv"),
+        readiness_bpm=item.get("readiness_bpm"),
+        baseline_hrv=None,
+        baseline_waking_bpm=None,
+        sleep_heart_rate=None,
+        deep_duration_min=None,
+        rem_duration_min=None,
+        sleep_analysis_jp=None,
+        today_condition_forecast_jp=None,
+        today_advice=None,
+        study_minutes=item.get("study_minutes"),
+        study_sessions=item.get("study_sessions"),
+        weather_code=item.get("weather_code"),
+        weather_temp_max_c=item.get("weather_temp_max_c"),
+        weather_temp_min_c=item.get("weather_temp_min_c"),
+        expense_f_count=item.get("expense_f_count"),
+        expense_f_total=item.get("expense_f_total"),
+        expense_f_merchants=item.get("expense_f_merchants"),
+        expense_f_categories=item.get("expense_f_categories"),
+        f_risk_score=item.get("f_risk_score"),
+        f_risk_reason=item.get("f_risk_reason"),
+        f_risk_input_hash=item.get("f_risk_input_hash"),
+        notes_stress_flag=item.get("notes_stress_flag"),
+        notes_sleep_issue_flag=item.get("notes_sleep_issue_flag"),
+        notes_fatigue_flag=item.get("notes_fatigue_flag"),
+    )
 
 
 def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:
