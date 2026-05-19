@@ -22,6 +22,10 @@ class _Response:
             exc.response = self  # type: ignore[attr-defined]
             raise exc
 
+    @property
+    def content(self) -> bytes:
+        return b"{}"
+
 
 def test_fetch_json_retries_429_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = {"count": 0}
@@ -85,3 +89,25 @@ def test_fetch_json_missing_schema_fails_without_retry(monkeypatch: pytest.Monke
     assert sleeps == []
     assert "non_retryable_request_exception" in caplog.text
     assert "fetch_json retrying" not in caplog.text
+
+
+def test_post_json_retries_429_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    class _Session:
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object], timeout: object) -> _Response:
+            del url, headers, json, timeout
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                return _Response(429, {"error": "rate_limited"}, headers={"Retry-After": "0"})
+            return _Response(200, {"ok": True})
+
+    monkeypatch.setattr(http_client, "FETCH_RETRY_MAX_RETRIES", 3)
+    monkeypatch.setattr(http_client, "_session", lambda: _Session())
+    monkeypatch.setattr(http_client.time, "sleep", lambda sec: sleeps.append(sec))
+
+    payload = http_client.post_json("https://example.com/api/save", {"a": 1}, bearer_token=None)
+    assert payload == {"ok": True}
+    assert attempts["count"] == 2
+    assert sleeps == [0.0]

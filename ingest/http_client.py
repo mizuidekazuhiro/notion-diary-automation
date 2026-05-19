@@ -219,20 +219,69 @@ def post_json(url: str, payload: Dict[str, Any], bearer_token: Optional[str]) ->
         headers["Authorization"] = f"Bearer {bearer_token}"
     body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    try:
-        resp = _session().post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
-        resp.raise_for_status()
-        if not resp.content:
-            return {}
-        return resp.json()
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(
-            _build_http_error_message(
-                method="POST",
-                url=url,
-                headers=headers,
-                body_bytes=body_bytes,
-                timeout=DEFAULT_TIMEOUT,
-                exc=e,
+    for retry_count in range(FETCH_RETRY_MAX_RETRIES + 1):
+        try:
+            resp = _session().post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
+        except requests.exceptions.RequestException as e:
+            if retry_count < FETCH_RETRY_MAX_RETRIES:
+                wait_seconds = min(
+                    FETCH_RETRY_BACKOFF_MAX_SECONDS,
+                    FETCH_RETRY_BACKOFF_BASE_SECONDS * (2 ** retry_count)
+                    + random.uniform(0.0, FETCH_RETRY_JITTER_MAX_SECONDS),
+                )
+                logging.warning(
+                    "post_json retrying request_exception retry=%s/%s wait_seconds=%.3f url=%s error=%s",
+                    retry_count + 1,
+                    FETCH_RETRY_MAX_RETRIES,
+                    wait_seconds,
+                    url,
+                    type(e).__name__,
+                )
+                time.sleep(wait_seconds)
+                continue
+            raise RuntimeError(
+                _build_http_error_message(
+                    method="POST",
+                    url=url,
+                    headers=headers,
+                    body_bytes=body_bytes,
+                    timeout=DEFAULT_TIMEOUT,
+                    exc=e,
+                )
+            ) from e
+
+        status = resp.status_code
+        if status < 400:
+            if not resp.content:
+                return {}
+            return resp.json()
+
+        retriable_status = status == 429 or 500 <= status <= 599
+        if retriable_status and retry_count < FETCH_RETRY_MAX_RETRIES:
+            wait_seconds = _compute_retry_wait_seconds(resp, retry_count + 1)
+            logging.warning(
+                "post_json retrying status_code=%s retry=%s/%s wait_seconds=%.3f url=%s",
+                status,
+                retry_count + 1,
+                FETCH_RETRY_MAX_RETRIES,
+                wait_seconds,
+                url,
             )
-        ) from e
+            time.sleep(wait_seconds)
+            continue
+
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(
+                _build_http_error_message(
+                    method="POST",
+                    url=url,
+                    headers=headers,
+                    body_bytes=body_bytes,
+                    timeout=DEFAULT_TIMEOUT,
+                    exc=e,
+                )
+            ) from e
+
+    raise RuntimeError(f"post_json failed: url={url}")

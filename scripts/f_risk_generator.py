@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from publish.read_daily_log import DailyLogSummary, read_daily_log
+from ingest.http_client import fetch_json
 from scripts.note_batch_labeler import label_notes_in_batches, neutral_label
 from scripts.openai_chat_utils import chat_completion
 from scripts.expense_f_aggregator import aggregate_expense_f_for_dates
@@ -103,7 +104,7 @@ def generate_f_risk(
         "forbidden_inputs_used": False,
     }
     history_days = max(60, int(os.getenv("F_RISK_HISTORY_DAYS", "365") or "365"))
-    histories = _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=training_end_date, days=history_days)
+    histories = _load_histories_with_bulk_fallback(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=training_end_date, days=history_days)
     histories = _hydrate_expense_f_from_expenses_db(histories)
     logging.info(
         "f_risk_history_source source=expenses_db_direct target_date=%s history_days=%s",
@@ -447,6 +448,35 @@ def generate_f_risk(
     )
 
 
+
+
+def _load_histories_with_bulk_fallback(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:
+    base = datetime.strptime(target_date, "%Y-%m-%d")
+    start = (base - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    url = f"{daily_log_read_url.rstrip('/')}/history?start={start}&end={target_date}"
+    try:
+        payload = fetch_json(url, bearer_token)
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if isinstance(items, list):
+            histories: list[DailyLogSummary] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                day = str(item.get("target_date") or "").strip()
+                if not day:
+                    continue
+                summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
+                if summary:
+                    histories.append(summary)
+            if histories:
+                logging.info("f_risk_history_bulk_fetch_success count=%s", len(histories))
+                return histories
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("f_risk_history_bulk_fetch_failed error=%s", exc)
+
+    return _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=days)
+
+
 def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:
     base = datetime.strptime(target_date, "%Y-%m-%d")
     out: list[DailyLogSummary] = []
@@ -455,7 +485,11 @@ def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], tar
     )
     for offset in range(days):
         day = (base - timedelta(days=offset)).strftime("%Y-%m-%d")
-        summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
+        try:
+            summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("f_risk_history_single_fetch_failed date=%s error=%s", day, exc)
+            break
         if summary:
             out.append(summary)
         if fetch_interval_seconds > 0 and offset < (days - 1):

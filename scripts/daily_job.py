@@ -497,6 +497,12 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             )
         if attempt < max_attempts and backoff_seconds > 0:
             time.sleep(backoff_seconds)
+    logging.error(
+        "mail_sent_but_metadata_persist_failed=true target_date=%s expected_hash=%s expected_version=%s",
+        summary.target_date,
+        current_input_hash,
+        mail_version_to_save,
+    )
     raise RuntimeError(
         "mail metadata persistence verification failed after retries: "
         f"target_date={summary.target_date} expected_hash={current_input_hash} last_persisted_hash={last_persisted_hash or ''} "
