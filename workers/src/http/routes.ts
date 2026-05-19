@@ -3,6 +3,7 @@ export const ROUTES = {
   TASKS: "/api/tasks",
   TASKS_CLOSED: "/api/tasks/closed",
   DAILY_LOG_READ: "/api/daily_log",
+  DAILY_LOG_HISTORY: "/api/daily_log/history",
   DAILY_LOG_UPSERT: "/api/daily_log/upsert",
   DAILY_LOG_CONFIRM_UPSERT: "/confirm/daily_log/upsert",
   DAILY_LOG_EXECUTE_UPSERT: "/execute/api/daily_log/upsert",

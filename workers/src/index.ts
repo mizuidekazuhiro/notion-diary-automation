@@ -5280,6 +5280,81 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   );
 }
 
+function _historyNumber(properties: Record<string, any>, key: string): number | null {
+  const value = properties[key]?.number;
+  return typeof value === "number" ? value : null;
+}
+
+function _historyBool(properties: Record<string, any>, key: string): boolean | null {
+  const value = properties[key]?.checkbox;
+  return typeof value === "boolean" ? value : null;
+}
+
+async function handleDailyLogHistory(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return methodNotAllowed();
+  const authError = await requireBearerToken(request, env);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const end = (url.searchParams.get("end") || "").trim();
+  const start = (url.searchParams.get("start") || "").trim();
+  const daysRaw = (url.searchParams.get("days") || "").trim();
+  if (!end || !isValidDateString(end)) return badRequest("invalid or missing end");
+  let resolvedStart = start;
+  if (!resolvedStart) {
+    const days = Number.parseInt(daysRaw || "", 10);
+    if (!Number.isFinite(days) || days <= 0) return badRequest("start or valid days is required");
+    resolvedStart = addDaysToJstDate(end, -(days - 1));
+  }
+  if (!isValidDateString(resolvedStart)) return badRequest("invalid start");
+
+  const pages = await queryDatabaseAll(env, env.DAILY_LOG_DB_ID, {
+    and: [
+      { property: "Target Date", date: { on_or_after: resolvedStart } },
+      { property: "Target Date", date: { on_or_before: end } },
+    ],
+  });
+
+  const items = pages
+    .map((page: any) => {
+      const p = page.properties ?? {};
+      const targetDate = getDateStartFromProperty(p["Target Date"]);
+      if (!targetDate) return null;
+      return {
+        target_date: targetDate,
+        date: getDateStartFromProperty(p.Date),
+        page_id: page.id,
+        title: getPlainTextFromTitle(p[TITLE_PROPERTIES.dailyLog]) || "",
+        study_minutes: _historyNumber(p, "Study Minutes"),
+        study_sessions: _historyNumber(p, "Study Sessions"),
+        sleep_duration_min: _historyNumber(p, "Sleep Duration"),
+        sleep_score: _historyNumber(p, "Sleep Score"),
+        readiness_hrv: _historyNumber(p, "Readiness HRV"),
+        readiness_bpm: _historyNumber(p, "Readiness BPM"),
+        notes_stress_flag: _historyBool(p, "Notes Stress Flag"),
+        notes_sleep_issue_flag: _historyBool(p, "Notes Sleep Issue Flag"),
+        notes_fatigue_flag: _historyBool(p, "Notes Fatigue Flag"),
+        weather_code: _historyNumber(p, "Weather Code"),
+        weather_temp_max_c: _historyNumber(p, "Weather Temp Max C"),
+        weather_temp_min_c: _historyNumber(p, "Weather Temp Min C"),
+        f_risk_score: _historyNumber(p, "F Risk Score"),
+        f_risk_reason: getPlainTextFromRichText(p["F Risk Reason"]) || null,
+        f_risk_input_hash: getPlainTextFromRichText(p["F Risk Input Hash"]) || null,
+        expense_f_count: _historyNumber(p, "Expense F Count"),
+        expense_f_total: _historyNumber(p, "Expense F Total"),
+        expense_f_merchants: getPlainTextFromRichText(p["Expense F Merchants"]) || null,
+        expense_f_categories: getPlainTextFromRichText(p["Expense F Categories"]) || null,
+      };
+    })
+    .filter((item: any) => !!item)
+    .sort((a: any, b: any) => (a.target_date < b.target_date ? 1 : a.target_date > b.target_date ? -1 : 0));
+
+  return new Response(
+    JSON.stringify({ found: true, start: resolvedStart, end, count: items.length, items }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleTaskPromoteConfirm(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const pageId = url.searchParams.get("id");
@@ -5415,6 +5490,7 @@ export default {
         [ROUTES.TASKS]: () => handleTasks(request, env),
         [ROUTES.TASKS_CLOSED]: () => handleTasksClosed(request, env),
         [ROUTES.DAILY_LOG_READ]: () => handleDailyLogRead(request, env),
+        [ROUTES.DAILY_LOG_HISTORY]: () => handleDailyLogHistory(request, env),
         [ROUTES.DAILY_LOG_UPSERT]: () =>
           Promise.resolve(
             new Response(
