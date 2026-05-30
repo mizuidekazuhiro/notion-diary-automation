@@ -634,8 +634,8 @@
     },
     "2026-05-30": {
       "alert_text": null,
-      "generated_at": "2026-05-30T01:24:09Z",
-      "input_hash": "054da34f4dfffa2b7d10737438578301a5bb6fa256efdfa8b6593e515c03230b",
+      "generated_at": "2026-05-30T04:21:06Z",
+      "input_hash": "ef387dba160add27704c4c0a9ad9baa65d8aa7dafb51ee0a0311b4b33c75ab27",
       "matched_patterns": [
         "週末バイアス"
       ],
@@ -644,6 +644,6 @@
       "score": 0.32
     }
   },
-  "updated_at": "2026-05-30T04:16:43Z",
+  "updated_at": "2026-05-30T04:21:07Z",
   "version": 1
 }
