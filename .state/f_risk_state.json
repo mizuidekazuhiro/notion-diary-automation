@@ -625,8 +625,8 @@
     },
     "2026-05-29": {
       "alert_text": null,
-      "generated_at": "2026-05-30T01:21:24Z",
-      "input_hash": "49654e59475b6dd0be3124d5b29d0180da36f3ef34489e2978df9b123ffabec3",
+      "generated_at": "2026-05-30T04:16:42Z",
+      "input_hash": "a507f6c5c4fc946c34cb8017da84539be02e0ce7392b940dfe88f2a6cc9b437f",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
@@ -644,6 +644,6 @@
       "score": 0.32
     }
   },
-  "updated_at": "2026-05-30T01:24:09Z",
+  "updated_at": "2026-05-30T04:16:43Z",
   "version": 1
 }
