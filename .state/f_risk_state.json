@@ -683,14 +683,14 @@
     },
     "2026-06-04": {
       "alert_text": null,
-      "generated_at": "2026-06-03T23:29:46Z",
-      "input_hash": "5447a36fc10ac50d62576c67f9f9c9ec999fcb58dba5b08fff98b14a9aaefc62",
+      "generated_at": "2026-06-05T14:36:54Z",
+      "input_hash": "746409bc00ff9bc0b6727d0fa889a03471feee0fb55281ecf8d548884c14763a",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
     }
   },
-  "updated_at": "2026-06-03T23:29:46Z",
+  "updated_at": "2026-06-05T14:36:54Z",
   "version": 1
 }
