@@ -864,14 +864,14 @@
     },
     "2026-06-24": {
       "alert_text": null,
-      "generated_at": "2026-06-23T22:52:49Z",
-      "input_hash": "dc70456e3d9ea3dce3f4b30ed260c72f3c8002c2d26bbc6f0ba90006443c7b89",
+      "generated_at": "2026-06-24T23:10:36Z",
+      "input_hash": "c6af1b5bdb4c689b259b9356ca0657820b95822e651a0e5779a28f22da12f299",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
     }
   },
-  "updated_at": "2026-06-23T22:52:49Z",
+  "updated_at": "2026-06-24T23:10:36Z",
   "version": 1
 }
