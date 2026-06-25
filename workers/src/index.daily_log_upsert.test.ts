@@ -2,14 +2,53 @@ import assert from "node:assert/strict";
 import { __test__ } from "./index";
 
 const {
+  buildHealthIngestQueryBody,
   buildDailyLogProperties,
   buildDailyLogUpsertProperties,
+  getHealthPropertyNames,
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
   parseStudyPayload,
   applyStudyUpdateProperties,
 } = __test__;
+
+(() => {
+  const healthPropertyNames = getHealthPropertyNames({
+    HEALTH_DATE_PROPERTY_NAME: "Date",
+    HEALTH_SOURCE_PROPERTY_NAME: "Source",
+    HEALTH_SOURCE_VALUE: "healthkit",
+  } as any);
+  const body = buildHealthIngestQueryBody("2026-06-24", healthPropertyNames);
+
+  assert.deepEqual(body, {
+    page_size: 5,
+    filter: { property: "Date", date: { equals: "2026-06-24" } },
+    sorts: [{ timestamp: "created_time", direction: "descending" }],
+  });
+  assert.equal(JSON.stringify(body).includes("Source"), false);
+  assert.equal(JSON.stringify(body).includes("healthkit"), false);
+})();
+
+(() => {
+  const healthPropertyNames = getHealthPropertyNames({
+    HEALTH_DATE_PROPERTY_NAME: "Date",
+    HEALTH_SOURCE_PROPERTY_NAME: "Source",
+  } as any);
+  const body = buildHealthIngestQueryBody("2026-06-24", healthPropertyNames);
+  const sourceName = "Mitsui_iPhone";
+  const healthPage = {
+    properties: {
+      Date: { date: { start: "2026-06-24" } },
+      Source: { select: { name: sourceName } },
+      sleep_duration_min: { number: 297 },
+    },
+  };
+
+  assert.deepEqual(body.filter, { property: "Date", date: { equals: "2026-06-24" } });
+  assert.equal((healthPage.properties.Source as any).select.name, "Mitsui_iPhone");
+  assert.equal((healthPage.properties.sleep_duration_min as any).number, 297);
+})();
 
 (() => {
   const schema = buildDailyLogProperties({} as any);
