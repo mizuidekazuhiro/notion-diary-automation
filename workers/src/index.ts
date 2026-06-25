@@ -1567,6 +1567,14 @@ function getHealthPropertyNames(env: Env): HealthPropertyNames {
   };
 }
 
+function buildHealthIngestQueryBody(targetDate: string, healthPropertyNames: HealthPropertyNames): Record<string, any> {
+  return {
+    page_size: 5,
+    filter: { property: healthPropertyNames.date, date: { equals: targetDate } },
+    sorts: [{ timestamp: "created_time", direction: "descending" }],
+  };
+}
+
 function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
   return {
     protein: env.DAILY_LOG_PROTEIN_PROPERTY_NAME || "Protein",
@@ -2580,7 +2588,6 @@ async function handleDailyLogHealthIngest(
 
   const healthPropertyNames = getHealthPropertyNames(env);
   const dailyLogHealthPropertyNames = getDailyLogHealthPropertyNames(env);
-  const healthSourceValue = env.HEALTH_SOURCE_VALUE || "healthkit";
 
   const healthDbProperties = await getDatabaseProperties(env, env.HEALTH_DB_ID);
   if (!hasPropertyType(healthDbProperties, healthPropertyNames.date, "date")) {
@@ -2593,36 +2600,15 @@ async function handleDailyLogHealthIngest(
     );
   }
 
-  const filterParts: Record<string, any>[] = [
-    { property: healthPropertyNames.date, date: { equals: targetDate } },
-  ];
-  const hasSourceProperty = hasPropertyType(
-    healthDbProperties,
-    healthPropertyNames.source,
-    "select",
+  console.log(
+    `Health ingest: querying Health DB by Date only for ${targetDate}; Source filtering is disabled.`,
   );
-  if (hasSourceProperty) {
-    filterParts.push({
-      property: healthPropertyNames.source,
-      select: { equals: healthSourceValue },
-    });
-  } else {
-    console.warn(
-      `Health DB missing Source select property "${healthPropertyNames.source}", skipping source filter.`,
-    );
-  }
-
-  const filter = filterParts.length === 1 ? filterParts[0] : { and: filterParts };
   const queryResponse = await notionFetch(
     env,
     `/databases/${env.HEALTH_DB_ID}/query`,
     {
       method: "POST",
-      body: JSON.stringify({
-        page_size: 5,
-        filter,
-        sorts: [{ timestamp: "created_time", direction: "descending" }],
-      }),
+      body: JSON.stringify(buildHealthIngestQueryBody(targetDate, healthPropertyNames)),
     },
   );
 
@@ -5569,8 +5555,10 @@ export default {
 };
 
 export const __test__ = {
+  buildHealthIngestQueryBody,
   buildDailyLogProperties,
   extractMailMetadataFromProperties,
+  getHealthPropertyNames,
   normalizeFilesFromProperty,
   getFileUrlsFromProperty,
   resolveLocationSummaryFields,
