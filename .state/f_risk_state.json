@@ -873,14 +873,14 @@
     },
     "2026-06-25": {
       "alert_text": null,
-      "generated_at": "2026-06-24T23:12:58Z",
-      "input_hash": "13dfe927a1dbb992cb099279482f99836a5312fb486f29084d31dd1c16450e47",
+      "generated_at": "2026-06-25T02:06:54Z",
+      "input_hash": "21646bd4a363b3d32269fc6860d03f4fe7907072bc66a4788e21718b60407e3a",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
     }
   },
-  "updated_at": "2026-06-25T02:04:21Z",
+  "updated_at": "2026-06-25T02:06:54Z",
   "version": 1
 }
