@@ -882,8 +882,8 @@
     },
     "2026-06-26": {
       "alert_text": null,
-      "generated_at": "2026-06-26T00:11:15Z",
-      "input_hash": "1c59e7308331ee6bf9a52f8e53217542d5e5fc49dc5aa411c889838cfb288134",
+      "generated_at": "2026-06-27T13:48:43Z",
+      "input_hash": "423a21b8f83488e5041620f7daaeda2a89a03f50da65593fd93b0b897403f000",
       "matched_patterns": [
         "睡眠短縮が連続"
       ],
@@ -892,6 +892,6 @@
       "score": 0.32
     }
   },
-  "updated_at": "2026-06-26T00:11:15Z",
+  "updated_at": "2026-06-27T13:48:44Z",
   "version": 1
 }
