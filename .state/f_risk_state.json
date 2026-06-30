@@ -930,8 +930,19 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
+    },
+    "2026-07-01": {
+      "alert_text": null,
+      "generated_at": "2026-06-30T23:51:23Z",
+      "input_hash": "e38f5e2839ac3133ead17b6813d87da0a51ef0ce0a324c3b19568d6402ba6e24",
+      "matched_patterns": [
+        "睡眠短縮が連続"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.32
     }
   },
-  "updated_at": "2026-06-30T23:48:42Z",
+  "updated_at": "2026-06-30T23:51:23Z",
   "version": 1
 }
