@@ -463,3 +463,63 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - When duplicates are detected, the worker fills only **empty canonical fields** from duplicates.
 - The `2026-05-07` duplicate case is covered by automatic canonical merge logic.
 - Manual recovery should be used only as a last resort.
+
+## 過去7日 Daily Log 欠損バックフィル
+
+`Daily Diary 01 - Ingest Daily Log` は通常の前日 Phase A を実行したあと、直近7日間の Daily Log ページ欠損を自動確認します。目的は、GitHub Actions や外部起動が毎朝実行されなかった日があっても、次回起動時に Notion の Daily Log ページ自体が存在しない日だけを補完することです。
+
+### 対象期間と判定基準
+
+- 基準日は実行時の JST 日付です。
+- 終了日は JST の前日、開始日は終了日の6日前です（合計7日）。今日の日付は含めません。
+- 処理順は古い日付から新しい日付です。
+- 欠損判定は Workers の Daily Log read API（`read_daily_log()`）で対象日の Daily Log ページが存在するかどうかだけを見ます。
+- ページが存在する場合は `status=existing_skipped` として何も更新しません。Diary が空でも、既存ページは今回のバックフィル対象外です。
+- API エラー、通信エラー、認証エラー、レスポンス解析エラーは `status=check_failed` として失敗扱いにし、ページ不存在とは見なしません。通信失敗を欠損と誤判定して重複ページを作らないためです。
+
+### 通常処理との違い
+
+欠損ページだけ、明示的な `target_date` を渡して次の順番で処理します。
+
+1. Phase A: `python scripts/daily_job.py --phase ingest --target-date YYYY-MM-DD`
+2. Phase B: `python apps/location_summary_writer/src/main.py --target-date YYYY-MM-DD`
+3. Phase C: `python scripts/daily_job.py --phase notify_diary --target-date YYYY-MM-DD --backfill`
+
+Phase D（`--phase publish`）はバックフィルでは絶対に呼びません。そのため、過去日補完でメールが複数送信されることはありません。通常の前日メール配信は既存の workflow_run 連鎖（01 → 02 → 03 → 04）で従来どおり実行されます。
+
+### Weather の扱い
+
+バックフィル時の Phase C は Weather 生成をスキップし、`backfill_weather_skipped=true` をログに出します。通常の Weather 処理は実行日の最新 Location Log を使って地点解決するため、そのまま過去日へ適用すると過去の日記に現在地点の天気を保存する可能性があります。過去日時点の場所を正確に解決する実装がない限り、既存 Weather 値を上書きしない安全側の挙動にしています。通常の `notify_diary` では Weather 生成を従来どおり行います。
+
+### 手動実行
+
+```bash
+python scripts/backfill_missing_diaries.py
+python scripts/backfill_missing_diaries.py --days 7
+python scripts/backfill_missing_diaries.py --end-date 2026-07-12
+```
+
+確認だけ行い、Notion 更新や OpenAI 呼び出しを避ける場合は dry-run を使います。
+
+```bash
+python scripts/backfill_missing_diaries.py --days 7 --dry-run
+```
+
+`--days` の既定値は 7 です。`--end-date` を省略すると JST 前日を終了日として計算します。`--days` が 0 以下、または `--end-date` が `YYYY-MM-DD` ではない場合は明確なエラーで終了します。
+
+### GitHub Actions 上の動作
+
+`.github/workflows/ingest_daily_log.yml` では、通常の前日 Phase A の後にバックフィルステップを実行します。バックフィルステップは `continue-on-error: true` のため、過去日の補完失敗だけで通常の前日 workflow_run 連鎖を止めません。ただし、失敗内容と末尾ログは `$GITHUB_STEP_SUMMARY` に必ず出力します。同一ブランチでの重複実行を避けるため、Workflow に concurrency を設定しています。
+
+### ログの見方
+
+各日付について、次のいずれかの `status=` が出ます。
+
+- `status=existing_skipped`: Daily Log ページが既に存在したためスキップ。
+- `status=missing_detected`: ページ不存在を正常に確認し、補完処理を開始。
+- `status=backfill_success`: Phase A → B → C が成功。
+- `status=backfill_failed`: 欠損日補完中に失敗。
+- `status=dry_run_missing`: dry-run で欠損を検出（更新なし）。
+- `status=check_failed`: read API などの確認処理が失敗。欠損扱いにはしません。
+
+最後に `backfill_summary scan_count=... existing_count=... missing_count=... success_count=... failed_count=... dry_run_count=...` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。
