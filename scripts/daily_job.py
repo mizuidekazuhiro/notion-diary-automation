@@ -1944,11 +1944,22 @@ def _notify_phase_c(
     return {"sent": True, "already_marked": True}
 
 
-def run_notify_diary(config: Config, target_date: str, run_id: str) -> None:
-    logging.info("notify_diary_updates_only_no_mail target_date=%s run_id=%s", target_date, run_id)
+def run_notify_diary(config: Config, target_date: str, run_id: str, *, backfill: bool = False) -> None:
+    logging.info("notify_diary_updates_only_no_mail target_date=%s run_id=%s backfill=%s", target_date, run_id, backfill)
     deps = PhaseCDeps(
         refresh_summary=_refresh_daily_log_summary,
-        run_weather=lambda summary: _generate_and_save_weather(config, summary=summary, run_id=run_id),
+        run_weather=(
+            (
+                lambda summary: logging.info(
+                    "backfill_weather_skipped=true target_date=%s run_id=%s",
+                    summary.target_date,
+                    run_id,
+                )
+                or summary
+            )
+            if backfill
+            else (lambda summary: _generate_and_save_weather(config, summary=summary, run_id=run_id))
+        ),
         run_expense_f=lambda summary: _compute_expense_f_alert(summary=summary, run_id=run_id),
         run_sleep=lambda summary: _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id),
         run_notes_label=lambda summary: _ensure_notes_label_persisted(config, summary=summary, run_id=run_id),
@@ -1987,6 +1998,11 @@ def parse_args() -> argparse.Namespace:
         "--target-date",
         help="Target date in JST (YYYY-MM-DD). Default is yesterday; for notify_diary/all you can override via TODAY_ADVICE_TARGET_MODE=TODAY.",
     )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Run notify_diary in backfill-safe mode (currently skips Weather generation).",
+    )
     return parser.parse_args()
 
 
@@ -2021,7 +2037,11 @@ def main() -> None:
     if args.phase in ("publish", "all"):
         run_publish(config, target_date, run_id)
     if args.phase in ("notify_diary", "all"):
-        run_notify_diary(config, target_date, run_id)
+        backfill = bool(getattr(args, "backfill", False))
+        if backfill:
+            run_notify_diary(config, target_date, run_id, backfill=True)
+        else:
+            run_notify_diary(config, target_date, run_id)
 
 
 if __name__ == "__main__":

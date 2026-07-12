@@ -718,3 +718,20 @@ def test_diary_skip_does_not_mark_voice_notes_used(monkeypatch) -> None:
 
     daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
     assert called["marked"] == 0
+
+def test_backfill_mode_skips_weather(monkeypatch) -> None:
+    order: list[str] = []
+    summary = _summary()
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen", diary_mark_notified_url="mark")
+
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("weather should be skipped")))
+    monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: order.append("expense_f") or {"matched": False, "reasons": []})
+    monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: order.append("f_risk") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
+
+    daily_job.run_notify_diary(config, "2026-03-20", "run", backfill=True)
+
+    assert order == ["expense_f", "sleep", "f_risk", "advice", "diary"]

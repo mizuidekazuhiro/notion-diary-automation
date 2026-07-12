@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import logging
@@ -211,6 +212,27 @@ def log_effective_config(cfg: Config) -> None:
     )
 
 
+def compute_window_for_diary_date(
+    diary_date: str,
+    tz_name: str,
+    window_start_hour: int,
+) -> tuple[datetime, datetime, str]:
+    try:
+        diary_day = datetime.strptime(diary_date, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError(f"target date must be YYYY-MM-DD: {diary_date}") from exc
+    tz = ZoneInfo(tz_name)
+    window_start = datetime(
+        diary_day.year,
+        diary_day.month,
+        diary_day.day,
+        window_start_hour,
+        tzinfo=tz,
+    )
+    window_end = window_start + timedelta(days=1)
+    return window_start, window_end, diary_day.isoformat()
+
+
 def compute_window(now_utc: datetime, tz_name: str, window_start_hour: int) -> tuple[datetime, datetime, str]:
     tz = ZoneInfo(tz_name)
     local_now = now_utc.astimezone(tz)
@@ -218,10 +240,8 @@ def compute_window(now_utc: datetime, tz_name: str, window_start_hour: int) -> t
     if local_now < candidate_end:
         candidate_end -= timedelta(days=1)
 
-    window_end = candidate_end
-    window_start = window_end - timedelta(days=1)
-    diary_date = (window_end.date() - timedelta(days=1)).isoformat()
-    return window_start, window_end, diary_date
+    diary_date = (candidate_end.date() - timedelta(days=1)).isoformat()
+    return compute_window_for_diary_date(diary_date, tz_name, window_start_hour)
 
 
 def parse_datetime(v: str) -> datetime:
@@ -886,12 +906,23 @@ def build_summary_property(page: dict[str, Any], property_name: str, text: str) 
     raise TypeError(f"Property {property_name} type is unsupported for text update: {ptype}")
 
 
-def run() -> None:
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Write Location Summary to a Daily Log page.")
+    parser.add_argument("--target-date", help="Diary date in JST (YYYY-MM-DD). Defaults to current window behavior.")
+    return parser.parse_args()
+
+
+def run(target_date: str | None = None) -> None:
     cfg = load_config()
     os.environ["TZ"] = cfg.tz
     log_effective_config(cfg)
-    now = datetime.now(timezone.utc)
-    window_start, window_end, diary_date = compute_window(now, cfg.tz, cfg.window_start_hour)
+    if target_date:
+        window_start, window_end, diary_date = compute_window_for_diary_date(
+            target_date, cfg.tz, cfg.window_start_hour
+        )
+    else:
+        now = datetime.now(timezone.utc)
+        window_start, window_end, diary_date = compute_window(now, cfg.tz, cfg.window_start_hour)
 
     LOGGER.info("window=[%s, %s)", window_start.isoformat(), window_end.isoformat())
     LOGGER.info("target diary_date=%s", diary_date)
@@ -1004,7 +1035,8 @@ def run() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        run()
+        args = parse_args()
+        run(target_date=args.target_date)
     except ConfigError as exc:
         print(f"ERROR: {exc}")
         sys.exit(1)
