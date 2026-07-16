@@ -1,8 +1,10 @@
 export type NotionFileEntry = Record<string, any>;
 export type NotionPage = { id: string; created_time?: string; last_edited_time?: string; properties?: Record<string, any>; url?: string };
-const TITLE_REGEX = /^Daily\s*Log\s*(?:｜|\|)?\s*(\d{4}-\d{2}-\d{2})$/i;
+const TITLE_REGEX = /^Daily\s*Log\s*(?:｜|\||❘)?\s*(\d{4}-\d{2}-\d{2})$/i;
 export const DUPLICATE_MERGE_FIELDS = ["Location summary (GPT)","Meal Photos","Meal summary","Mood","Notes","Activity Summary","Weather","Weather Summary","Weather Location","Weather Temp Max C","Weather Temp Min C","Weather Code","Sleep Analysis JP","Today Condition Forecast JP","Sleep Start","Sleep End","Sleep Duration","Study Minutes","Study Sessions","Study Last Used At"];
+export function buildCanonicalDailyLogTitle(targetDate:string){return `Daily Log｜${targetDate}`;}
 export function extractDailyLogDateFromTitle(title?: string|null){const m=(title??"").trim().match(TITLE_REGEX);return m?m[1]:null;}
+export function normalizeDailyLogTitle(title?:string|null){const date=extractDailyLogDateFromTitle(title);return date?buildCanonicalDailyLogTitle(date):(title??"").trim();}
 export function getTitleFromPage(page:NotionPage){const p=page.properties??{};const t=(p["名前"]??p["Name"]??p["title"])?.title;return Array.isArray(t)&&t.length?((t[0]?.plain_text??t[0]?.text?.content??"").trim()):"";}
 const getDate=(p:NotionPage,k:string)=>{const s=p.properties?.[k]?.date?.start;return typeof s==="string"&&s?s.slice(0,10):null};
 const richText=(v:any)=>Array.isArray(v?.rich_text)?v.rich_text:[];
