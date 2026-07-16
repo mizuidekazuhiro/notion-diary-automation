@@ -466,20 +466,20 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 
 ## 過去7日 Daily Log 欠損バックフィル
 
-`Daily Diary 01 - Ingest Daily Log` は通常の前日 Phase A を実行したあと、直近7日間の Daily Log ページ欠損を自動確認します。目的は、GitHub Actions や外部起動が毎朝実行されなかった日があっても、次回起動時に Notion の Daily Log ページ自体が存在しない日だけを補完することです。
+Daily Log repair は通常の前日 Phase A とは独立した `Daily Log Repair` workflow で実行します。目的は、GitHub Actions や外部起動が毎朝実行されなかった日、または別同期がページだけを先に作った日でも、Daily Diary Phase A〜C の未完了ページを補完することです。
 
 ### 対象期間と判定基準
 
 - 基準日は実行時の JST 日付です。
 - 終了日は JST の前日、開始日は終了日の6日前です（合計7日）。今日の日付は含めません。
 - 処理順は古い日付から新しい日付です。
-- 欠損判定は Workers の Daily Log read API（`read_daily_log()`）で対象日の Daily Log ページが存在するかどうかだけを見ます。
-- ページが存在する場合は `status=existing_skipped` として何も更新しません。Diary が空でも、既存ページは今回のバックフィル対象外です。
-- API エラー、通信エラー、認証エラー、レスポンス解析エラーは `status=check_failed` として失敗扱いにし、ページ不存在とは見なしません。通信失敗を欠損と誤判定して重複ページを作らないためです。
+- 判定は Workers の Daily Log read API（`read_daily_log()`）で `missing` / `incomplete` / `complete` に分類します。
+- ページが存在しても `Target Date`、`Activity Summary`、`Mail ID`、`Today advice`、`Diary`、`Today Advice Generated At`、`Diary Generated At` のいずれかが欠ける場合は `incomplete` として修復対象です。
+- API エラー、通信エラー、認証エラー、レスポンス解析エラーは日付単位の `repair_failed` として記録し、他の日付の処理は継続します。
 
 ### 通常処理との違い
 
-欠損ページだけ、明示的な `target_date` を渡して次の順番で処理します。
+`missing` または `incomplete` の日付だけ、明示的な `target_date` を渡して次の順番で処理します。処理後はDaily Logを再取得し、`complete` になった場合だけ `repair_success` とします。
 
 1. Phase A: `python scripts/daily_job.py --phase ingest --target-date YYYY-MM-DD`
 2. Phase B: `python apps/location_summary_writer/src/main.py --target-date YYYY-MM-DD`
@@ -525,12 +525,21 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 
 ## Daily Log repair workflow（欠損・不完全ページ修復）
 
-`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立して、毎日 `7 3 * * *`（03:07 UTC / 12:07 JST）に実行されます。既定では JST の昨日を終了日として直近 7 日間を走査します。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。
+`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立しています。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。schedule は `7 3 * * *`（03:07 UTC / 12:07 JST）ですが、初期状態では Repository Variable `DAILY_LOG_REPAIR_ENABLED` が未設定または `true` 以外なら実修復stepを実行しません。手動実行はこのVariableに関係なく可能です。
 
 修復判定は `missing` / `incomplete` / `complete` の 3 段階です。`Target Date`、`Activity Summary`、`Mail ID`、`Today advice`、`Diary`、`Today Advice Generated At`、`Diary Generated At` のいずれかが欠ける既存ページは `incomplete` とし、新規ページを作らず既存ページに対して Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。`Location summary (GPT)`、Weather、Meal Photos、Sleep、`Mail Sent At`、`Diary Notification Sent` は単独では incomplete 判定に使いません。バックフィルでは Phase D の publish / メール送信を実行せず、過去日に現在の天気を書かないため Weather 生成もスキップします。
 
 1 日でも修復に失敗した場合、他の日付の処理は継続したうえで最終終了コード 1 とし、Workflow は失敗します。全文ログ、JSON 結果、Markdown サマリーは常に artifact として保存されます。
 
-### Daily Log integrity audit / repair
+有効化手順は次の順序を推奨します。
 
-`python scripts/repair_daily_log_integrity.py --dry-run` は Daily Log のタイトル、`Date` / `Target Date`、タイトル日付、重複候補、Phase A〜C の不完全状態を監査するための CLI です。デフォルトは dry-run で、本番 Notion には書き込みません。安全な自動修正対象は区切り文字を `｜` に揃えるタイトル正規化、正式日付に合わせたタイトル修正、`Date` または `Target Date` の片方が空の場合の補完です。重複ページの統合・アーカイブは破壊的操作のため、`--merge-duplicates` / `--archive-duplicates` の明示指定なしには実行しません。
+1. PRをマージ。
+2. `dry_run=true` で手動実行。
+3. Artifact（全文ログ、JSON、Markdown）を確認。
+4. 少数日で `dry_run=false` を手動実行。
+5. Notion上の対象ページを確認。
+6. Repository Variable `DAILY_LOG_REPAIR_ENABLED=true` を設定してschedule修復を有効化。
+
+### Daily Log integrity offline audit
+
+`python scripts/repair_daily_log_integrity.py --input-json daily_logs.json --output-json audit.json --output-markdown audit.md` は、エクスポート済みNotionページJSONだけを読むオフライン監査CLIです。このPRのCLIは本番Notionからの取得、NotionへのSafe Fix適用、重複統合、重複アーカイブを実装していません。本番Notionは変更しません。将来のNotion修復機能は別PRの対象です。

@@ -1,13 +1,12 @@
 import { getJstDateString, getJstRangeForTargetDate } from "../utils/date_utils";
 import {
   create_page,
-  query_database,
   queryDatabaseAll,
   update_page_property,
 } from "../infrastructure/notion/client";
 import { getTaskPropertyNames, TaskPropertyNameEnv } from "../config/task_property_names";
 import { TITLE_PROPERTIES } from "../config/title_properties";
-import { buildCanonicalDailyLogTitle } from "../domain/daily_log_resolver";
+import { analyzeDailyLogPages, buildCanonicalDailyLogTitle, isAmbiguousPageRelatedToDate, isPageMatchedByDateOrTitle, resolveDailyLogOfficialDate } from "../domain/daily_log_resolver";
 
 export type DailyLogTaskRelationEnv = {
   NOTION_TOKEN: string;
@@ -133,16 +132,24 @@ async function findOrCreateDailyLogPage(
   env: DailyLogTaskRelationEnv,
   targetDate: string,
 ): Promise<{ pageId: string; created: boolean }> {
-  const queryData = await query_database(env, env.DAILY_LOG_DB_ID, {
-    page_size: 1,
-    filter: {
-      property: "Date",
-      date: { equals: targetDate },
-    },
-  });
-  const existingPage = (queryData.results ?? [])[0];
-  if (existingPage) {
-    return { pageId: existingPage.id, created: false };
+  const [byDate, byTargetDate, byTitle] = await Promise.all([
+    queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: "Date", date: { equals: targetDate } }),
+    queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: "Target Date", date: { equals: targetDate } }),
+    queryDatabaseAll(env, env.DAILY_LOG_DB_ID, { property: TITLE_PROPERTIES.dailyLog, title: { contains: targetDate } }),
+  ]);
+  const byId = new Map<string, any>();
+  for (const page of [...byDate, ...byTargetDate, ...byTitle] as any[]) {
+    if (isPageMatchedByDateOrTitle(page, targetDate) || isAmbiguousPageRelatedToDate(page, targetDate)) {
+      byId.set(page.id, page);
+    }
+  }
+  const resolved = analyzeDailyLogPages(Array.from(byId.values()), targetDate);
+  if (resolved.ambiguousPages.length) {
+    console.warn(`DailyLog relations ambiguity: target_date=${targetDate} ambiguous_page_ids=${resolved.ambiguousPages.map((p:any)=>p.id).join(",")} details=${JSON.stringify(resolved.ambiguousPages.map((p:any)=>({id:p.id,date:resolveDailyLogOfficialDate(p).dateValue,target_date:resolveDailyLogOfficialDate(p).targetDateValue,title_date:resolveDailyLogOfficialDate(p).titleDate})))}`);
+    throw new Error("daily_log_date_ambiguity");
+  }
+  if (resolved.canonicalPage) {
+    return { pageId: resolved.canonicalPage.id, created: false };
   }
 
   const title = buildCanonicalDailyLogTitle(targetDate);

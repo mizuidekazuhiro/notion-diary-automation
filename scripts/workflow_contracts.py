@@ -74,6 +74,9 @@ def check_workflow_chain() -> list[str]:
             ("concurrency:", "repair workflow missing concurrency"),
             ("if: always()", "repair workflow must always summarize/upload artifacts"),
             ("actions/upload-artifact", "repair workflow missing artifact upload"),
+            ("DAILY_LOG_REPAIR_ENABLED", "repair workflow missing repository variable guard"),
+            ("github.event_name == 'workflow_dispatch'", "repair workflow manual dispatch must bypass variable guard"),
+            ("vars.DAILY_LOG_REPAIR_ENABLED == 'true'", "repair workflow schedule must require variable guard"),
         ]:
             if needle not in repair_text:
                 issues.append(msg)

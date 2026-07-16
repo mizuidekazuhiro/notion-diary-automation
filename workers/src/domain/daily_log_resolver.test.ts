@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildCanonicalDailyLogTitle, buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle, normalizeDailyLogTitle, resolveDailyLogOfficialDate } from "./daily_log_resolver";
+import { analyzeDailyLogPages, buildCanonicalDailyLogTitle, buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle, normalizeDailyLogTitle, resolveDailyLogOfficialDate } from "./daily_log_resolver";
 
 assert.equal(extractDailyLogDateFromTitle("Daily Log｜2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log | 2026-05-07"), "2026-05-07");
@@ -19,10 +19,15 @@ assert.equal(resolveDailyLogOfficialDate(targetOnly).date,"2026-07-15");
 const ambiguous:any={id:"a",properties:{Date:{date:{start:"2026-07-15"}},"Target Date":{date:{start:"2026-07-16"}}}};
 assert.equal(resolveDailyLogOfficialDate(ambiguous).ambiguous,true);
 assert.equal(isPageMatchedByDateOrTitle(ambiguous,"2026-07-15"),false);
+assert.deepEqual(analyzeDailyLogPages([ambiguous], "2026-07-15").ambiguousPages.map((p:any)=>p.id), ["a"]);
 
 const pageA: any = { id: "a", properties: { Date: { date: { start: "2026-05-07" } }, "Target Date": { date: { start: "2026-05-07" } }, "名前": title("Daily Log｜2026-05-07"), Diary: { rich_text: [{ plain_text: "diary" }] }, "Today advice": { rich_text: [{ plain_text: "advice" }] }, "Done Tasks": { relation: [{id:"1"}] }, "Meal Photos": { files: [{ name: "a", external: { url: "https://dropbox.com/s/1.jpg?dl=0" } }] } } };
 const pageB: any = { id: "b", properties: { "Target Date": { date: { start: "2026-05-07" } }, "Done Tasks": { relation: [{id:"1"},{id:"2"}] }, "Meal Photos": { files: [{ name: "b", external: { url: "https://dropbox.com/s/1.jpg?raw=1" } }, { name: "c", external: { url: "https://example.com/c.jpg" } }] }, Mood: { select: { name: "Good" } }, Notes: { rich_text: [{ plain_text: "note" }] } } };
 assert.equal(chooseCanonicalDailyLogPage([pageB,pageA],"2026-05-07")?.id,"a");
+const analyzed = analyzeDailyLogPages([pageA,pageB,ambiguous], "2026-05-07");
+assert.equal(analyzed.canonicalPage?.id, "a");
+assert.equal(analyzed.duplicatePages.length, 1);
+assert.equal(analyzed.ambiguousPages.length, 0);
 const patch=buildDuplicateMergePatch(pageA,[pageB]);
 assert.ok(patch.mergedFields.includes("Done Tasks"));
 assert.ok(patch.mergedFields.includes("Meal Photos"));

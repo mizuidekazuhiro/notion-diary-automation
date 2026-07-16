@@ -100,6 +100,8 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         raise
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
+    if not (getattr(summary, "today_advice", "") or "").strip():
+        raise RuntimeError(f"PhaseC fail: Today advice is empty for target_date={summary.target_date}")
     try:
         summary = deps.run_diary(summary)
         step_status["diary"] = "success"
@@ -110,14 +112,9 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
     if not (summary.diary or "").strip():
-        logging.info(
-            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=no_daily_log",
-            summary.target_date,
-            run_id,
-        )
-        step_status["notify"] = "skipped"
+        step_status["diary"] = "failed"
         logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", summary.target_date, run_id, step_status)
-        return
+        raise RuntimeError(f"PhaseC fail: Diary is empty for target_date={summary.target_date}")
 
     if expense_f_alert.get("matched"):
         logging.info(

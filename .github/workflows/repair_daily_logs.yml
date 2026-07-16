@@ -42,6 +42,11 @@ jobs:
           python scripts/verify_requirements.py
 
       - name: Repair Daily Logs
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' ||
+            vars.DAILY_LOG_REPAIR_ENABLED == 'true'
+          }}
         env:
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
@@ -93,3 +98,4 @@ jobs:
             artifacts_daily_log_repair_full.log
             artifacts/daily_log_repair/daily_log_repair_result.json
             artifacts/daily_log_repair/daily_log_repair_summary.md
+          if-no-files-found: warn

@@ -80,7 +80,7 @@ def missing_phase_abc_fields(summary: DailyLogSummary) -> list[str]:
     for field_name in REQUIRED_PHASE_ABC_FIELDS:
         if not _is_present(getattr(summary, field_name, None)):
             missing.append(field_name)
-    if summary.target_date != summary.date and not _is_present(summary.target_date_value):
+    if not _is_present(getattr(summary, "target_date_value", None)) or getattr(summary, "target_date_property_present", True) is False:
         if "target_date_value" not in missing:
             missing.append("target_date_value")
     return missing
@@ -137,15 +137,30 @@ def run_backfill(*, days: int, end_date: str | None, dry_run: bool) -> BackfillS
             stats.dry_run_count += 1
             stats.results.append(BackfillDayResult(target_date=target_date, status=f"dry_run_{classification}", page_id=page_id, missing_fields=missing))
             continue
+        remaining_fields: list[str] = missing
         try:
             _repair_day(target_date)
+            verified_summary = read_daily_log(
+                daily_log_read_url=config.daily_log_read_url,
+                target_date=target_date,
+                bearer_token=config.bearer_token,
+            )
+            verified_classification, remaining_fields = classify_daily_log(verified_summary)
+            if verified_classification != "complete":
+                raise RuntimeError(
+                    "repair verification failed: "
+                    f"target_date={target_date} "
+                    f"classification={verified_classification} "
+                    f"remaining_fields={remaining_fields}"
+                )
         except Exception as exc:  # noqa: BLE001
             stats.failed_count += 1
-            stats.results.append(BackfillDayResult(target_date=target_date, status="repair_failed", page_id=page_id, missing_fields=missing, error=str(exc)))
+            stats.results.append(BackfillDayResult(target_date=target_date, status="repair_failed", page_id=page_id, missing_fields=remaining_fields, error=str(exc)))
             logging.exception("status=repair_failed target_date=%s exception_class=%s exception_message=%s", target_date, exc.__class__.__name__, str(exc))
             continue
         stats.repaired_count += 1
-        stats.results.append(BackfillDayResult(target_date=target_date, status="repair_success", page_id=page_id, missing_fields=missing))
+        verified_page_id = getattr(verified_summary, "page_id", page_id) if verified_summary else page_id
+        stats.results.append(BackfillDayResult(target_date=target_date, status="repair_success", page_id=verified_page_id, missing_fields=[]))
         logging.info("status=repair_success target_date=%s", target_date)
 
     logging.info("backfill_summary scan_count=%s missing_count=%s incomplete_count=%s complete_count=%s repaired_count=%s failed_count=%s dry_run_count=%s", stats.scan_count, stats.missing_count, stats.incomplete_count, stats.complete_count, stats.repaired_count, stats.failed_count, stats.dry_run_count)
@@ -173,13 +188,25 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = parse_args()
+    stats = BackfillStats()
+    exit_code = 0
     try:
         stats = run_backfill(days=args.days, end_date=args.end_date, dry_run=args.dry_run)
-        write_artifacts(stats, args.artifact_dir)
+        if stats.failed_count > 0:
+            exit_code = 1
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr); sys.exit(2)
-    if stats.failed_count > 0:
-        sys.exit(1)
+        stats.failed_count += 1
+        stats.results.append(BackfillDayResult(target_date="", status="repair_failed", error=str(exc)))
+        print(f"ERROR: {exc}", file=sys.stderr)
+        exit_code = 2
+    except Exception as exc:  # noqa: BLE001
+        stats.failed_count += 1
+        stats.results.append(BackfillDayResult(target_date="", status="repair_failed", error=str(exc)))
+        logging.exception("status=repair_failed target_date= exception_class=%s exception_message=%s", exc.__class__.__name__, str(exc))
+        exit_code = 1
+    finally:
+        write_artifacts(stats, args.artifact_dir)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
