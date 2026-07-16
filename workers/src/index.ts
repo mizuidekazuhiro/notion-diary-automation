@@ -569,6 +569,29 @@ function parseExpenseCreatedTimeMs(page: Record<string, any>): number {
   return Number.isNaN(timestampMs) ? Number.NaN : timestampMs;
 }
 
+function parseExpenseDatePropertyMs(
+  page: Record<string, any>,
+  expensesDatePropertyName: string,
+): number {
+  const raw = page.properties?.[expensesDatePropertyName]?.date?.start;
+  if (typeof raw !== "string" || !raw) {
+    return Number.NaN;
+  }
+  const timestampMs = Date.parse(raw);
+  return Number.isNaN(timestampMs) ? Number.NaN : timestampMs;
+}
+
+function parseExpenseTimestampMs(
+  page: Record<string, any>,
+  expensesDatePropertyName: string,
+): number {
+  const datePropertyMs = parseExpenseDatePropertyMs(page, expensesDatePropertyName);
+  if (Number.isFinite(datePropertyMs)) {
+    return datePropertyMs;
+  }
+  return parseExpenseCreatedTimeMs(page);
+}
+
 function isFamilyCardExpense(page: Record<string, any>): boolean {
   const familyCardProperty = page.properties?.FamilyCard;
   return (
@@ -3669,12 +3692,12 @@ async function handleDailyLogExpensesIngest(
   const filter = {
     and: [
       {
-        timestamp: "created_time",
-        created_time: { on_or_after: startJst },
+        property: expensesPropertyNames.date,
+        date: { on_or_after: startJst },
       },
       {
-        timestamp: "created_time",
-        created_time: { before: endJst },
+        property: expensesPropertyNames.date,
+        date: { before: endJst },
       },
     ],
   };
@@ -3697,7 +3720,7 @@ async function handleDailyLogExpensesIngest(
     if (isFamilyCardExpense(page)) {
       return false;
     }
-    const timestampMs = parseExpenseCreatedTimeMs(page);
+    const timestampMs = parseExpenseTimestampMs(page, expensesPropertyNames.date);
     return Number.isFinite(timestampMs) && timestampMs >= startMs && timestampMs < endMs;
   });
 
@@ -5568,4 +5591,6 @@ export const __test__ = {
   sanitizeMealPhotosPatchProperties,
   parseStudyPayload,
   applyStudyUpdateProperties,
+  resolveExpensesAggregationWindow,
+  parseExpenseTimestampMs,
 };
