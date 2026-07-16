@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, toNotionUpdateProperty } from "./daily_log_resolver";
+import { buildCanonicalDailyLogTitle, buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, normalizeDailyLogTitle, toNotionUpdateProperty } from "./daily_log_resolver";
 
 assert.equal(extractDailyLogDateFromTitle("Daily Log｜2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log | 2026-05-07"), "2026-05-07");
+assert.equal(extractDailyLogDateFromTitle("Daily Log ❘ 2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log 2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log｜ 2026-05-07"), "2026-05-07");
+assert.equal(buildCanonicalDailyLogTitle("2026-05-07"), "Daily Log｜2026-05-07");
+assert.equal(normalizeDailyLogTitle("Daily Log | 2026-05-07"), "Daily Log｜2026-05-07");
+assert.equal(normalizeDailyLogTitle("Daily Log ❘ 2026-05-07"), "Daily Log｜2026-05-07");
 
 const pageA: any = { id: "359dec27-c9aa-819d-adf0-eb09fa03f36d", properties: { Date: { date: { start: "2026-05-07" } }, "Target Date": { date: { start: "2026-05-07" } }, Diary: { rich_text: [{ plain_text: "diary" }] }, "Today advice": { rich_text: [{ plain_text: "advice" }] }, Weather: { rich_text: [{ plain_text: "weather" }] }, "Location summary (GPT)": { rich_text: [] }, "Meal Photos": { files: [] } } };
 const pageB: any = { id: "359dec27-c9aa-8157-af19-cb259a0a1b4e", properties: { "Target Date": { date: { start: "2026-05-07" } }, "Location summary (GPT)": { rich_text: [{ plain_text: "loc" }] }, "Meal Photos": { files: [{ name: "a", external: { url: "https://dropbox.com/s/1.jpg?dl=0" } }, { name: "b", external: { url: "https://dropbox.com/s/1.jpg?raw=1" } }] }, Mood: { select: { name: "Good" } }, Notes: { rich_text: [{ plain_text: "note" }] } } };
