@@ -515,11 +515,22 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 
 各日付について、次のいずれかの `status=` が出ます。
 
-- `status=existing_skipped`: Daily Log ページが既に存在したためスキップ。
 - `status=missing_detected`: ページ不存在を正常に確認し、補完処理を開始。
-- `status=backfill_success`: Phase A → B → C が成功。
-- `status=backfill_failed`: 欠損日補完中に失敗。
-- `status=dry_run_missing`: dry-run で欠損を検出（更新なし）。
-- `status=check_failed`: read API などの確認処理が失敗。欠損扱いにはしません。
+- `status=incomplete_detected`: 既存ページはあるが Phase A〜C の主要項目が不足しているため修復を開始。
+- `status=complete_skipped`: Phase A〜C 完了済みのためスキップ。
+- `status=repair_success`: Phase A → B → C の修復が成功。
+- `status=repair_failed`: 日付単位の修復に失敗。他の日付の処理は継続します。
 
-最後に `backfill_summary scan_count=... existing_count=... missing_count=... success_count=... failed_count=... dry_run_count=...` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。
+最後に `backfill_summary scan_count=... missing_count=... incomplete_count=... complete_count=... repaired_count=... failed_count=... dry_run_count=...` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。
+
+## Daily Log repair workflow（欠損・不完全ページ修復）
+
+`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立して、毎日 `7 3 * * *`（03:07 UTC / 12:07 JST）に実行されます。既定では JST の昨日を終了日として直近 7 日間を走査します。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。
+
+修復判定は `missing` / `incomplete` / `complete` の 3 段階です。`Target Date`、`Activity Summary`、`Mail ID`、`Today advice`、`Diary`、`Today Advice Generated At`、`Diary Generated At` のいずれかが欠ける既存ページは `incomplete` とし、新規ページを作らず既存ページに対して Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。`Location summary (GPT)`、Weather、Meal Photos、Sleep、`Mail Sent At`、`Diary Notification Sent` は単独では incomplete 判定に使いません。バックフィルでは Phase D の publish / メール送信を実行せず、過去日に現在の天気を書かないため Weather 生成もスキップします。
+
+1 日でも修復に失敗した場合、他の日付の処理は継続したうえで最終終了コード 1 とし、Workflow は失敗します。全文ログ、JSON 結果、Markdown サマリーは常に artifact として保存されます。
+
+### Daily Log integrity audit / repair
+
+`python scripts/repair_daily_log_integrity.py --dry-run` は Daily Log のタイトル、`Date` / `Target Date`、タイトル日付、重複候補、Phase A〜C の不完全状態を監査するための CLI です。デフォルトは dry-run で、本番 Notion には書き込みません。安全な自動修正対象は区切り文字を `｜` に揃えるタイトル正規化、正式日付に合わせたタイトル修正、`Date` または `Target Date` の片方が空の場合の補完です。重複ページの統合・アーカイブは破壊的操作のため、`--merge-duplicates` / `--archive-duplicates` の明示指定なしには実行しません。

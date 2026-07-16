@@ -63,6 +63,27 @@ def check_workflow_chain() -> list[str]:
         if workflow_name not in readme_text:
             issues.append(f"README missing workflow name: {workflow_name}")
 
+    repair = WORKFLOW_DIR / "repair_daily_logs.yml"
+    if not repair.exists():
+        issues.append("missing repair_daily_logs workflow")
+    else:
+        repair_text = repair.read_text(encoding="utf-8")
+        for needle, msg in [
+            ("workflow_dispatch:", "repair workflow missing workflow_dispatch"),
+            ('cron: "7 3 * * *"', "repair workflow missing 7 3 * * * cron"),
+            ("concurrency:", "repair workflow missing concurrency"),
+            ("if: always()", "repair workflow must always summarize/upload artifacts"),
+            ("actions/upload-artifact", "repair workflow missing artifact upload"),
+        ]:
+            if needle not in repair_text:
+                issues.append(msg)
+        repair_step = re.search(r"- name: Repair Daily Logs(?P<body>.*?)(?:\n\s+- name:|\Z)", repair_text, flags=re.S)
+        if repair_step and "continue-on-error" in repair_step.group("body"):
+            issues.append("repair command must not use continue-on-error")
+    ingest = WORKFLOW_DIR / "ingest_daily_log.yml"
+    if ingest.exists() and "backfill_missing_diaries.py" in ingest.read_text(encoding="utf-8"):
+        issues.append("old ingest workflow still contains backfill step")
+
     return issues
 
 

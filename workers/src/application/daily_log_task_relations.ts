@@ -149,6 +149,7 @@ async function findOrCreateDailyLogPage(
   const createdPage = await create_page(env, env.DAILY_LOG_DB_ID, {
     [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
     Date: createDateProperty(targetDate),
+    "Target Date": createDateProperty(targetDate),
   });
   return { pageId: createdPage.id, created: true };
 }
