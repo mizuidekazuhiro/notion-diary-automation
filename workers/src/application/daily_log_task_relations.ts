@@ -7,6 +7,7 @@ import {
 } from "../infrastructure/notion/client";
 import { getTaskPropertyNames, TaskPropertyNameEnv } from "../config/task_property_names";
 import { TITLE_PROPERTIES } from "../config/title_properties";
+import { buildCanonicalDailyLogTitle } from "../domain/daily_log_resolver";
 
 export type DailyLogTaskRelationEnv = {
   NOTION_TOKEN: string;
@@ -144,7 +145,7 @@ async function findOrCreateDailyLogPage(
     return { pageId: existingPage.id, created: false };
   }
 
-  const title = `${targetDate} Daily Log`;
+  const title = buildCanonicalDailyLogTitle(targetDate);
   const createdPage = await create_page(env, env.DAILY_LOG_DB_ID, {
     [TITLE_PROPERTIES.dailyLog]: createTitleProperty(title),
     Date: createDateProperty(targetDate),
