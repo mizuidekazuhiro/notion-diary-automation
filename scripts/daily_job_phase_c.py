@@ -50,14 +50,12 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
     step_status: dict[str, str] = {k: "not_applicable" for k in step_names}
     summary = deps.refresh_summary(config, target_date)
     if not summary:
-        logging.info(
-            "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]",
-            target_date,
-            run_id,
-            False,
-        )
+        step_status["diary"] = "failed"
         logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
-        return
+        raise RuntimeError(
+            "PhaseC fail: Daily_Log summary not found "
+            f"for target_date(JST)={target_date} run_id={run_id}"
+        )
 
     summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary

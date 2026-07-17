@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 
+import pytest
+
 from scripts.daily_job_phase_c import PhaseCDeps, run_phase_c
 
 
 def _deps(logs, *, diary_text="x", fail_today=False):
-    summary = SimpleNamespace(target_date="2026-03-20", diary=diary_text)
+    summary = SimpleNamespace(target_date="2026-03-20", today_advice="advice", diary=diary_text)
 
     def _refresh(_c, _d):
         return summary
@@ -46,9 +48,11 @@ def test_phase_c_no_pending_on_notify_skip(monkeypatch):
     logs = []
     deps, logger = _deps(logs, diary_text="")
     monkeypatch.setattr("scripts.daily_job_phase_c.logging", logger)
-    run_phase_c(SimpleNamespace(), target_date="2026-03-20", run_id="r", deps=deps)
+    with pytest.raises(RuntimeError, match="Diary is empty"):
+        run_phase_c(SimpleNamespace(), target_date="2026-03-20", run_id="r", deps=deps)
     assert logs
     assert "pending" not in set(logs[-1].values())
+    assert logs[-1]["diary"] == "failed"
 
 
 def test_phase_c_no_pending_on_today_advice_exception(monkeypatch):
@@ -62,3 +66,31 @@ def test_phase_c_no_pending_on_today_advice_exception(monkeypatch):
     assert logs
     assert "pending" not in set(logs[-1].values())
     assert logs[-1]["today_advice"] == "failed"
+
+
+def test_phase_c_raises_when_daily_log_is_missing():
+    deps, _ = _deps([])
+    deps = PhaseCDeps(
+        **{**deps.__dict__, "refresh_summary": lambda _config, _date: None},
+    )
+
+    with pytest.raises(RuntimeError, match="Daily_Log summary not found"):
+        run_phase_c(SimpleNamespace(), target_date="2026-03-20", run_id="r", deps=deps)
+
+
+def test_phase_c_raises_when_advice_or_diary_remains_empty():
+    summary = SimpleNamespace(target_date="2026-03-20", today_advice="", diary="")
+    deps, _ = _deps([])
+    deps = PhaseCDeps(
+        **{
+            **deps.__dict__,
+            "refresh_summary": lambda _config, _date: summary,
+            "run_today_advice": lambda item: item,
+        },
+    )
+    with pytest.raises(RuntimeError, match="Today advice is empty"):
+        run_phase_c(SimpleNamespace(), target_date="2026-03-20", run_id="r", deps=deps)
+
+    summary.today_advice = "advice"
+    with pytest.raises(RuntimeError, match="Diary is empty"):
+        run_phase_c(SimpleNamespace(), target_date="2026-03-20", run_id="r", deps=deps)

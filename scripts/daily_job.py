@@ -1940,13 +1940,6 @@ def _notify_phase_c(
 
 
 def run_notify_diary(config: Config, target_date: str, run_id: str, *, backfill: bool = False) -> None:
-    existing_summary = read_daily_log(
-        daily_log_read_url=config.daily_log_read_url,
-        target_date=target_date,
-        bearer_token=config.bearer_token,
-    )
-    if not existing_summary:
-        raise RuntimeError(f"PhaseC fail: Daily_Log summary not found for target_date(JST)={target_date} run_id={run_id}")
     logging.info("notify_diary_updates_only_no_mail target_date=%s run_id=%s backfill=%s", target_date, run_id, backfill)
     deps = PhaseCDeps(
         refresh_summary=_refresh_daily_log_summary,

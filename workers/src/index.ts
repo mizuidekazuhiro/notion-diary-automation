@@ -3627,6 +3627,22 @@ async function handleDailyLogIngest(
   const photos = await photosResponse.json();
   const location = await locationResponse.json();
 
+  const failedResponse = [healthResponse, photosResponse, locationResponse].find((response) => !response.ok);
+  if (failedResponse) {
+    const failedPayload = !healthResponse.ok ? health : !photosResponse.ok ? photos : location;
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        target_date: targetDate,
+        error: failedPayload?.error ?? "daily_log_ingest_failed",
+        health,
+        photos,
+        location,
+      }),
+      { status: failedResponse.status || 500, headers: jsonHeaders },
+    );
+  }
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -4817,6 +4833,12 @@ async function resolveDailyLogPageForDate(env: Env, targetDate: string, options:
   const candidates = await queryDailyLogCandidatesForDate(env, targetDate);
   const analyzed = analyzeDailyLogPages(candidates, targetDate);
   const { canonicalPage, duplicatePages, ambiguousPages } = analyzed;
+  // Ambiguous date metadata is an audit error, not a merge candidate.  This
+  // check intentionally precedes patch construction so every caller can
+  // return 409 without changing Notion.
+  if (ambiguousPages.length > 0) {
+    return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: [], mergeCompleted: false, mergeSkippedReason: "date_ambiguity", duplicateFieldsPresent: emptyDuplicateFieldsPresent() };
+  }
   if (!canonicalPage) return { canonicalPage: null, duplicatePages: [], ambiguousPages, mergedFields: [], mergeCompleted: false, duplicateFieldsPresent: emptyDuplicateFieldsPresent() };
   if (!duplicatePages.length) return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: emptyDuplicateFieldsPresent() };
   const patch = buildDuplicateMergePatch(canonicalPage, duplicatePages);

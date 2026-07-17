@@ -24,10 +24,13 @@ assert.deepEqual(analyzeDailyLogPages([ambiguous], "2026-07-15").ambiguousPages.
 const pageA: any = { id: "a", properties: { Date: { date: { start: "2026-05-07" } }, "Target Date": { date: { start: "2026-05-07" } }, "名前": title("Daily Log｜2026-05-07"), Diary: { rich_text: [{ plain_text: "diary" }] }, "Today advice": { rich_text: [{ plain_text: "advice" }] }, "Done Tasks": { relation: [{id:"1"}] }, "Meal Photos": { files: [{ name: "a", external: { url: "https://dropbox.com/s/1.jpg?dl=0" } }] } } };
 const pageB: any = { id: "b", properties: { "Target Date": { date: { start: "2026-05-07" } }, "Done Tasks": { relation: [{id:"1"},{id:"2"}] }, "Meal Photos": { files: [{ name: "b", external: { url: "https://dropbox.com/s/1.jpg?raw=1" } }, { name: "c", external: { url: "https://example.com/c.jpg" } }] }, Mood: { select: { name: "Good" } }, Notes: { rich_text: [{ plain_text: "note" }] } } };
 assert.equal(chooseCanonicalDailyLogPage([pageB,pageA],"2026-05-07")?.id,"a");
-const analyzed = analyzeDailyLogPages([pageA,pageB,ambiguous], "2026-05-07");
+// An ambiguous page related to the requested date remains visible alongside a
+// canonical page and a duplicate.  Callers must stop before merging it.
+const ambiguousSameTarget:any={id:"ambiguous-05-07",properties:{Date:{date:{start:"2026-05-07"}},"Target Date":{date:{start:"2026-05-08"}},"名前":title("Daily Log｜2026-05-07")}};
+const analyzed = analyzeDailyLogPages([pageA,pageB,ambiguousSameTarget], "2026-05-07");
 assert.equal(analyzed.canonicalPage?.id, "a");
 assert.equal(analyzed.duplicatePages.length, 1);
-assert.equal(analyzed.ambiguousPages.length, 0);
+assert.deepEqual(analyzed.ambiguousPages.map((p:any)=>p.id), ["ambiguous-05-07"]);
 const patch=buildDuplicateMergePatch(pageA,[pageB]);
 assert.ok(patch.mergedFields.includes("Done Tasks"));
 assert.ok(patch.mergedFields.includes("Meal Photos"));
