@@ -110,6 +110,10 @@ curl -X POST "https://<worker-host>/execute/api/study/session" \
 }
 ```
 
+## Validation
+
+Workerテストでは、午前4時境界、時間計算、既定値、終了時刻が開始時刻以前の場合の拒否を確認します。CIではテストに加えてTypeScript型検査を実行します。
+
 ## Operational note
 
 Notionは `Session ID` にデータベース上の一意制約を設定できないため、APIは登録前に重複照会を行います。通常のPCアプリ再送には対応できますが、完全に同時刻の並行リクエストまで厳密に排除するものではありません。
