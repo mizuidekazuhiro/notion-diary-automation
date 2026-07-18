@@ -37,6 +37,7 @@ import { TITLE_PROPERTIES } from "./config/title_properties";
 import { dispatchRoute } from "./http/router";
 import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle } from "./domain/daily_log_resolver";
 import { ROUTES } from "./http/routes";
+import { handleStudySession } from "./application/study_session";
 
 interface Env {
   NOTION_TOKEN: string;
@@ -5503,6 +5504,7 @@ export default {
         [ROUTES.MOOD_NOTES_EXECUTE]: () => handleMoodNotesExecute(request, env),
         [ROUTES.MOOD_NOTES_INGEST]: () => handleMoodNotesIngest(request, env),
         [ROUTES.DAILY_LOG_ENSURE]: () => handleDailyLogEnsure(request, env),
+        [ROUTES.STUDY_SESSION]: () => handleStudySession(request, env),
         [ROUTES.TASKS_PROMOTE_CONFIRM]: () =>
           request.method === "GET"
             ? handleTaskPromoteConfirm(request)

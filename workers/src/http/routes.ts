@@ -15,6 +15,7 @@ export const ROUTES = {
   DAILY_LOG_GENERATE_DIARY: "/execute/api/daily_log/generate_diary",
   DAILY_LOG_MARK_DIARY_NOTIFIED: "/execute/api/daily_log/mark_diary_notified",
   DAILY_LOG_ENSURE: "/execute/api/daily_log/ensure",
+  STUDY_SESSION: "/execute/api/study/session",
   MOOD_NOTES_CONFIRM: "/confirm/mood-notes",
   MOOD_NOTES_EXECUTE: "/execute/mood-notes",
   MOOD_NOTES_INGEST: "/ingest/mood-notes",
