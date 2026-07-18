@@ -1,0 +1,57 @@
+name: Apply study session route patch
+
+on:
+  push:
+    branches:
+      - agent/study-session-api
+    paths:
+      - .github/workflows/_apply_study_session_patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: agent/study-session-api
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Patch existing Worker route
+        run: python scripts/_apply_study_session_patch.py
+
+      - name: Install Worker dependencies
+        working-directory: workers
+        run: npm install
+
+      - name: Run Worker tests
+        working-directory: workers
+        run: npm test
+
+      - name: Typecheck Worker
+        working-directory: workers
+        run: npx tsc --noEmit
+
+      - name: Remove temporary patch files
+        run: rm scripts/_apply_study_session_patch.py .github/workflows/_apply_study_session_patch.yml
+
+      - name: Commit verified patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add workers/src/index.ts scripts/_apply_study_session_patch.py .github/workflows/_apply_study_session_patch.yml
+          git commit -m "Connect study session API to existing Worker"
+          git push origin HEAD:agent/study-session-api
