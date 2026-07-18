@@ -8,7 +8,7 @@ PC用タイマーなどから、勉強1回ごとのセッションを既存のNo
 POST /execute/api/study/session
 ```
 
-既存の `notion-diary-automation` Cloudflare Worker内に実装します。別Workerや新しいNotion DBは作成しません。
+既存の `notion-diary-automation` Cloudflare Worker内に実装します。別Workerや新しいNotion DBは作成しません。既存DBのIDは実装上の既定値を使用し、必要な場合だけ `APP_USAGE_SESSIONS_DB_ID` 環境変数で上書きできます。
 
 ## Authentication
 
@@ -39,7 +39,7 @@ Content-Type: application/json
 | `ended_at` | Yes | 学習終了日時（ISO 8601） |
 | `app` | No | `Itojuku` または `Anki`。省略時は `Itojuku` |
 | `device` | No | 端末名。省略時は `Windows PC` |
-| `source` | No | 記録元。省略時は `shortcut` |
+| `source` | No | 記録元。省略時は既存選択肢の `shortcut` |
 
 ## Processing
 
