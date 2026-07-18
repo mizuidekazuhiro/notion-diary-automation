@@ -37,7 +37,7 @@ Content-Type: application/json
 | `session_id` | Yes | 再送時の二重登録を防ぐ一意のID |
 | `started_at` | Yes | 学習開始日時（ISO 8601） |
 | `ended_at` | Yes | 学習終了日時（ISO 8601） |
-| `app` | No | `Itojuku` または `Anki`。省略時は `Itojuku` |
+| `app` | No | 既存DBの選択肢 `Itojuku` または `Anki`。省略時は `Itojuku` |
 | `device` | No | 端末名。省略時は `Windows PC` |
 | `source` | No | 記録元。省略時は既存選択肢の `shortcut` |
 
@@ -54,7 +54,7 @@ Content-Type: application/json
 
 ## Notion properties
 
-既存の `App Usage Sessions` DBの以下のプロパティを使用します。
+既存の `App Usage Sessions` DBの以下のプロパティをそのまま使用します。
 
 - `Name`
 - `Session ID`
