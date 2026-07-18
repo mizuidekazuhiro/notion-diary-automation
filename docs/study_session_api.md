@@ -1,6 +1,6 @@
-# 司法試験 Study API
+# 司法試験 Study Session API
 
-PC用タイマーなどから、NotionのDaily Logへ司法試験の勉強時間を登録するための専用URLです。
+PC用タイマーなどから、勉強1回ごとのセッションを既存のNotion `App Usage Sessions` DBへ登録するAPIです。
 
 ## Endpoint
 
@@ -8,7 +8,7 @@ PC用タイマーなどから、NotionのDaily Logへ司法試験の勉強時間
 POST /execute/api/study/session
 ```
 
-このURLは既存のDaily Log更新処理へ安全にルーティングされるため、既存と同じBearer認証、日付検証、Notionプロパティ型検証が適用されます。
+既存の `notion-diary-automation` Cloudflare Worker内に実装します。別Workerや新しいNotion DBは作成しません。
 
 ## Authentication
 
@@ -17,38 +17,64 @@ Authorization: Bearer <WORKERS_BEARER_TOKEN>
 Content-Type: application/json
 ```
 
-トークンをソースコードやGitHubへコミットしないでください。PC側では環境変数またはローカルの `.env` に保存します。
+トークンはGitHubへコミットせず、PC側の環境変数またはローカル設定に保存します。
 
 ## Request body
 
 ```json
 {
-  "target_date": "2026-07-18",
-  "study_minutes": 125,
-  "study_sessions": 3,
-  "study_last_used_at": "2026-07-18T12:45:00+09:00"
+  "session_id": "windows-20260718-120000-7b9f",
+  "started_at": "2026-07-18T12:00:00+09:00",
+  "ended_at": "2026-07-18T12:30:00+09:00",
+  "app": "Itojuku",
+  "device": "Windows PC",
+  "source": "shortcut"
 }
 ```
 
-| Field | Type | Meaning |
+| Field | Required | Meaning |
 | --- | --- | --- |
-| `target_date` | `YYYY-MM-DD` | Daily Logの対象日 |
-| `study_minutes` | number | 対象日の累計勉強時間（分） |
-| `study_sessions` | number | 対象日の累計セッション数 |
-| `study_last_used_at` | ISO 8601 | 最後に学習を終了した日時 |
+| `session_id` | Yes | 再送時の二重登録を防ぐ一意のID |
+| `started_at` | Yes | 学習開始日時（ISO 8601） |
+| `ended_at` | Yes | 学習終了日時（ISO 8601） |
+| `app` | No | `Itojuku` または `Anki`。省略時は `Itojuku` |
+| `device` | No | 端末名。省略時は `Windows PC` |
+| `source` | No | 記録元。省略時は `shortcut` |
 
-## Important: values are cumulative totals
+## Processing
 
-現行のv1 APIは加算値ではなく、対象日の**累計値**を保存します。
+1. Bearer Tokenを検証する。
+2. `session_id` が既に存在するか確認する。
+3. 未登録なら `App Usage Sessions` DBへ1ページ追加する。
+4. 終了時刻から午前4時境界の `Target Date` をAPI側で計算する。
+5. 同日のセッションを再集計する。
+6. Daily Logの `Study Minutes`、`Study Sessions`、`Study Last Used At`を更新する。
 
-PCタイマーは次の順序で使用します。
+同じ `session_id` を再送した場合、新しいページは作成せず、既存セッションを基に日次合計だけを再同期します。
 
-1. `GET /api/daily_log?date=YYYY-MM-DD` で現在値を取得する。
-2. 今回のセッション時間を `study_minutes` に加える。
-3. `study_sessions` を1増やす。
-4. 新しい累計値を `POST /execute/api/study/session` に送る。
+## Notion properties
 
-例：現在120分・2セッションで、今回30分勉強した場合は、`study_minutes: 150`、`study_sessions: 3` を送ります。
+既存の `App Usage Sessions` DBの以下のプロパティを使用します。
+
+- `Name`
+- `Session ID`
+- `Start At`
+- `End At`
+- `Duration Min`
+- `Target Date`
+- `App`
+- `Device`
+- `Source`
+
+## Date boundary
+
+学習日の境界は日本時間の午前4時です。
+
+```text
+Target Date = date(ended_at in Asia/Tokyo - 4 hours)
+```
+
+午前0時から3時59分に終了したセッションは前日の学習として扱います。
 
 ## curl example
 
@@ -57,23 +83,33 @@ curl -X POST "https://<worker-host>/execute/api/study/session" \
   -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "target_date": "2026-07-18",
-    "study_minutes": 150,
-    "study_sessions": 3,
-    "study_last_used_at": "2026-07-18T12:45:00+09:00"
+    "session_id": "windows-20260718-120000-7b9f",
+    "started_at": "2026-07-18T12:00:00+09:00",
+    "ended_at": "2026-07-18T12:30:00+09:00",
+    "app": "Itojuku",
+    "device": "Windows PC"
   }'
 ```
 
-## Date boundary
+## Response outline
 
-PCアプリ側では午前4時を学習日の境界として扱います。
-
-```text
-study_date = date(now in Asia/Tokyo - 4 hours)
+```json
+{
+  "ok": true,
+  "created": true,
+  "duplicate": false,
+  "session_id": "windows-20260718-120000-7b9f",
+  "target_date": "2026-07-18",
+  "duration_min": 30,
+  "daily_totals": {
+    "study_minutes": 150,
+    "study_sessions": 3,
+    "study_last_used_at": "2026-07-18T03:30:00.000Z"
+  },
+  "daily_log_updated": true
+}
 ```
 
-午前0時から3時59分に終了したセッションは、前日のDaily Logへ登録します。
+## Operational note
 
-## Current limitation
-
-GETとPOSTの間に別端末から更新が入ると、後から送った累計値で上書きされます。PCアプリとiPhoneショートカットを同時に終了させない通常運用では問題になりにくいですが、将来はセッションID付きの原子的な加算APIへ拡張します。
+Notionは `Session ID` にデータベース上の一意制約を設定できないため、APIは登録前に重複照会を行います。通常のPCアプリ再送には対応できますが、完全に同時刻の並行リクエストまで厳密に排除するものではありません。
