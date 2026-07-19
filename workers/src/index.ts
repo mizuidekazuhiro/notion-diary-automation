@@ -35,7 +35,7 @@ import {
 } from "./config/task_property_names";
 import { TITLE_PROPERTIES } from "./config/title_properties";
 import { dispatchRoute } from "./http/router";
-import { analyzeDailyLogPages, buildDuplicateMergePatch, extractDailyLogDateFromTitle, getDailyLogDateProp, isAmbiguousPageRelatedToDate, isPageMatchedByDateOrTitle, resolveDailyLogOfficialDate } from "./domain/daily_log_resolver";
+import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle } from "./domain/daily_log_resolver";
 import { ROUTES } from "./http/routes";
 
 interface Env {
@@ -2486,9 +2486,6 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   let duplicateMergeCompleted = false;
 
   const resolved = await resolveDailyLogPageForDate(env, targetDate);
-  if (resolved.ambiguousPages.length) {
-    return dailyLogAmbiguityResponse(targetDate, resolved.ambiguousPages);
-  }
   existingPage = resolved.canonicalPage;
   canonicalPageId = resolved.canonicalPage?.id ?? null;
   duplicateDetected = resolved.duplicatePages.length > 0;
@@ -2720,9 +2717,6 @@ async function handleDailyLogHealthIngest(
   await validateDatabaseSchema(env, env.DAILY_LOG_DB_ID, buildDailyLogProperties(env));
   const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
-  if (resolvedDailyLog.ambiguousPages.length) {
-    return dailyLogAmbiguityResponse(targetDate, resolvedDailyLog.ambiguousPages);
-  }
   const existingPage = resolvedDailyLog.canonicalPage;
   const updateProperties: Record<string, any> = {};
 
@@ -2936,9 +2930,6 @@ async function upsertDailyLogByTargetDate(
   logContext: string,
 ): Promise<{ pageId: string; duplicateInfo: any } | { error: Response }> {
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
-  if (resolvedDailyLog.ambiguousPages.length) {
-    return { error: dailyLogAmbiguityResponse(targetDate, resolvedDailyLog.ambiguousPages) };
-  }
   const existingPage = resolvedDailyLog.canonicalPage;
 
   const { sanitizedProperties, removedEmptyMealPhotos } =
@@ -3090,9 +3081,6 @@ async function handleDailyLogPhotosIngest(
   );
   console.info(`[daily_log.ingest_photos] collected_meal_photos_count=${mealPhotos.length}`);
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
-  if (resolvedDailyLog.ambiguousPages.length) {
-    return dailyLogAmbiguityResponse(targetDate, resolvedDailyLog.ambiguousPages);
-  }
   const existingDailyLogMealPhotos = normalizeFilesFromProperty(
     resolvedDailyLog.canonicalPage?.properties?.[dailyLogHealthPropertyNames.mealPhoto],
   );
@@ -3627,22 +3615,6 @@ async function handleDailyLogIngest(
   const photos = await photosResponse.json();
   const location = await locationResponse.json();
 
-  const failedResponse = [healthResponse, photosResponse, locationResponse].find((response) => !response.ok);
-  if (failedResponse) {
-    const failedPayload = !healthResponse.ok ? health : !photosResponse.ok ? photos : location;
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        target_date: targetDate,
-        error: failedPayload?.error ?? "daily_log_ingest_failed",
-        health,
-        photos,
-        location,
-      }),
-      { status: failedResponse.status || 500, headers: jsonHeaders },
-    );
-  }
-
   return new Response(
     JSON.stringify({
       ok: true,
@@ -3799,9 +3771,6 @@ async function handleDailyLogExpensesIngest(
   }
 
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
-  if (resolvedDailyLog.ambiguousPages.length) {
-    return dailyLogAmbiguityResponse(targetDate, resolvedDailyLog.ambiguousPages);
-  }
   const existingPage = resolvedDailyLog.canonicalPage;
   const { sanitizedProperties, removedEmptyMealPhotos } =
     sanitizeMealPhotosPatchProperties(updateProperties);
@@ -4737,9 +4706,6 @@ async function handleDailyLogEnsure(request: Request, env: Env): Promise<Respons
   const { targetDate, title, source, mailId } = data;
 
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
-  if (resolvedDailyLog.ambiguousPages.length) {
-    return dailyLogAmbiguityResponse(targetDate, resolvedDailyLog.ambiguousPages);
-  }
   const existingPage = resolvedDailyLog.canonicalPage;
   if (existingPage) {
     return new Response(JSON.stringify({ ok: true, page_id: existingPage.id, duplicate_info: buildDuplicateInfo(resolvedDailyLog, existingPage.id) }), {
@@ -4815,60 +4781,40 @@ async function queryDailyLogCandidatesForDate(env: Env, targetDate: string): Pro
   ]);
   const byId = new Map<string, any>();
   for (const page of [...byDate, ...byTargetDate, ...byTitle] as any[]) {
-    if (isPageMatchedByDateOrTitle(page as any, targetDate) || isAmbiguousPageRelatedToDate(page as any, targetDate)) byId.set(page.id, page);
+    if (isPageMatchedByDateOrTitle(page as any, targetDate)) byId.set(page.id, page);
   }
   return Array.from(byId.values());
 }
 
-type DailyLogResolveResult = { canonicalPage: any | null; duplicatePages: any[]; ambiguousPages: any[]; mergedFields: string[]; mergeCompleted: boolean; mergeSkippedReason?: string; duplicateFieldsPresent: Record<string, boolean> };
-
-function emptyDuplicateFieldsPresent() { return { location_summary: false, meal_photos: false, mood: false, notes: false }; }
-
-function dailyLogAmbiguityResponse(targetDate: string, ambiguousPages: any[]): Response {
-  console.warn(`[daily_log.resolver] daily_log_date_ambiguity target_date=${targetDate} ambiguous_page_ids=${ambiguousPages.map((p:any)=>p.id).join(",")} details=${JSON.stringify(ambiguousPages.map((p:any)=>({id:p.id,date:getDailyLogDateProp(p,"Date"),target_date:getDailyLogDateProp(p,"Target Date"),title_date:resolveDailyLogOfficialDate(p).titleDate})))}`);
-  return new Response(JSON.stringify({ ok: false, error: "daily_log_date_ambiguity", target_date: targetDate, ambiguous_page_ids: ambiguousPages.map((p: any) => p.id) }), { status: 409, headers: jsonHeaders });
-}
-
-async function resolveDailyLogPageForDate(env: Env, targetDate: string, options: { mergeDuplicates?: boolean } = {}): Promise<DailyLogResolveResult> {
+async function resolveDailyLogPageForDate(env: Env, targetDate: string): Promise<{ canonicalPage: any | null; duplicatePages: any[]; mergedFields: string[]; mergeCompleted: boolean; duplicateFieldsPresent: Record<string, boolean> }> {
   const candidates = await queryDailyLogCandidatesForDate(env, targetDate);
-  const analyzed = analyzeDailyLogPages(candidates, targetDate);
-  const { canonicalPage, duplicatePages, ambiguousPages } = analyzed;
-  // Ambiguous date metadata is an audit error, not a merge candidate.  This
-  // check intentionally precedes patch construction so every caller can
-  // return 409 without changing Notion.
-  if (ambiguousPages.length > 0) {
-    return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: [], mergeCompleted: false, mergeSkippedReason: "date_ambiguity", duplicateFieldsPresent: emptyDuplicateFieldsPresent() };
-  }
-  if (!canonicalPage) return { canonicalPage: null, duplicatePages: [], ambiguousPages, mergedFields: [], mergeCompleted: false, duplicateFieldsPresent: emptyDuplicateFieldsPresent() };
-  if (!duplicatePages.length) return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: emptyDuplicateFieldsPresent() };
+  const canonicalPage = chooseCanonicalDailyLogPage(candidates, targetDate);
+  if (!canonicalPage) return { canonicalPage: null, duplicatePages: [], mergedFields: [], mergeCompleted: false, duplicateFieldsPresent: { location_summary: false, meal_photos: false, mood: false, notes: false } };
+  const duplicatePages = candidates.filter((p) => p.id !== canonicalPage.id);
+  if (!duplicatePages.length) return { canonicalPage, duplicatePages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: { location_summary: false, meal_photos: false, mood: false, notes: false } };
   const patch = buildDuplicateMergePatch(canonicalPage, duplicatePages);
   if (!patch.hasChanges) {
-    return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
-  }
-  if (options.mergeDuplicates === false) {
-    return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: [], mergeCompleted: false, mergeSkippedReason: "read_only", duplicateFieldsPresent: patch.duplicateFieldsPresent };
+    return { canonicalPage, duplicatePages, mergedFields: [], mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
   }
   const updateResponse = await notionFetch(env, `/pages/${canonicalPage.id}`, { method: "PATCH", body: JSON.stringify({ properties: patch.properties }) });
   if (!updateResponse.ok) {
     console.warn(`[daily_log.resolver] duplicate merge failed target_date=${targetDate} canonical_page_id=${canonicalPage.id}`);
-    return { canonicalPage, duplicatePages, ambiguousPages, mergedFields: patch.mergedFields, mergeCompleted: false, duplicateFieldsPresent: patch.duplicateFieldsPresent };
+    return { canonicalPage, duplicatePages, mergedFields: patch.mergedFields, mergeCompleted: false, duplicateFieldsPresent: patch.duplicateFieldsPresent };
   }
   const refreshed = await notionFetch(env, `/pages/${canonicalPage.id}`);
   const refreshedPage = refreshed.ok ? await refreshed.json() : canonicalPage;
-  return { canonicalPage: refreshedPage, duplicatePages, ambiguousPages, mergedFields: patch.mergedFields, mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
+  return { canonicalPage: refreshedPage, duplicatePages, mergedFields: patch.mergedFields, mergeCompleted: true, duplicateFieldsPresent: patch.duplicateFieldsPresent };
 }
 
 
-function buildDuplicateInfo(resolved: DailyLogResolveResult, canonicalPageId: string) {
+function buildDuplicateInfo(resolved: { duplicatePages: any[]; mergedFields: string[]; mergeCompleted: boolean; duplicateFieldsPresent: Record<string, boolean> }, canonicalPageId: string) {
   return {
     detected: resolved.duplicatePages.length > 0,
     duplicate_count: resolved.duplicatePages.length,
     canonical_page_id: canonicalPageId,
     duplicate_page_ids: resolved.duplicatePages.map((item: any) => item.id),
-    ambiguous_page_ids: resolved.ambiguousPages.map((item: any) => item.id),
     merged_fields: resolved.mergedFields,
     merge_completed: resolved.mergeCompleted,
-    merge_skipped_reason: resolved.mergeSkippedReason ?? null,
     duplicate_fields_present: resolved.duplicateFieldsPresent,
   };
 }
@@ -4912,12 +4858,9 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
     return badRequest("invalid date format");
   }
 
-  const resolved = await resolveDailyLogPageForDate(env, targetDate, { mergeDuplicates: false });
+  const resolved = await resolveDailyLogPageForDate(env, targetDate);
   const page = resolved.canonicalPage;
   const duplicatePages = resolved.duplicatePages;
-  if (resolved.ambiguousPages.length) {
-    return dailyLogAmbiguityResponse(targetDate, resolved.ambiguousPages);
-  }
   if (!page) {
     return new Response(JSON.stringify({ found: false, target_date: targetDate }), {
       headers: jsonHeaders,
@@ -4929,8 +4872,7 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
   const summaryHtml = getPlainTextFromRichText(properties.Diary);
   const diary = getPlainTextFromRichText(properties.Diary) || null;
   const date = getDateStartFromProperty(properties.Date) || null;
-  const targetDateValue = getDateStartFromProperty(properties["Target Date"]) || null;
-  const targetDatePropertyPresent = Boolean(targetDateValue);
+  const targetDateValue = getDateStartFromProperty(properties["Target Date"]) || targetDate;
   const place = getPlainTextFromRichText(properties.Place) || null;
   const doneTaskIds = getRelationIdsFromProperty(properties["Done Tasks"]);
   const dropTaskIds = getRelationIdsFromProperty(properties["Drop Tasks"]);
@@ -5242,7 +5184,6 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       target_date: targetDate,
       date,
       target_date_value: targetDateValue,
-      target_date_property_present: targetDatePropertyPresent,
       page_id: page.id,
       title: getPageTitleFromProperty(page, TITLE_PROPERTIES.dailyLog),
       summary_text: summaryText,

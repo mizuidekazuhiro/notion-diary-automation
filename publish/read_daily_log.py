@@ -367,7 +367,6 @@ class DailyLogSummary:
     payload_has_location_summary_gpt: bool = False
     payload_has_meal_photos_raw: bool = False
     duplicate_info: Mapping[str, Any] = field(default_factory=dict)
-    target_date_property_present: bool = True
 
 
 def read_daily_log(
@@ -457,7 +456,6 @@ def read_daily_log(
         target_date=_safe_text(payload.get("target_date")) or target_date,
         date=_safe_text(payload.get("date")),
         target_date_value=_safe_text(payload.get("target_date_value")),
-        target_date_property_present=_safe_bool(payload.get("target_date_property_present")) is not False,
         page_id=_safe_text(payload.get("page_id")) or "",
         title=_safe_text(payload.get("title")) or "",
         summary_text=_safe_text(payload.get("summary_text")) or "",

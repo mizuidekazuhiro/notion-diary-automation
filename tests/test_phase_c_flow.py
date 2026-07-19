@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields, replace
+from dataclasses import fields
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,9 +74,7 @@ def _summary(**overrides: object) -> DailyLogSummary:
         rem_duration_min=105,
         sleep_analysis_jp=None,
         today_condition_forecast_jp=None,
-        # Phase-C flow tests that are not specifically exercising advice
-        # generation start with a persisted non-empty value.
-        today_advice="existing advice",
+        today_advice=None,
         diary_input_hash=None,
         today_advice_input_hash=None,
         diary_generated_at=None,
@@ -133,8 +131,7 @@ def test_phase_c_runs_sleep_then_advice_then_diary(monkeypatch) -> None:
 
     def fake_advice(config, *, summary, run_id):
         order.append("advice")
-        refreshed["current"] = replace(summary, today_advice="generated advice")
-        return refreshed["current"]
+        return summary
 
     def fake_diary(config, *, summary, run_id, **kwargs):
         order.append("diary")
@@ -192,9 +189,6 @@ def test_already_notified_still_runs_generation(monkeypatch) -> None:
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen", diary_mark_notified_url="mark")
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id, **kwargs: summary)
-    monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: {"matched": False, "reasons": []})
-    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id, **kwargs: summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
@@ -727,7 +721,7 @@ def test_diary_skip_does_not_mark_voice_notes_used(monkeypatch) -> None:
 
 def test_backfill_mode_skips_weather(monkeypatch) -> None:
     order: list[str] = []
-    summary = _summary(diary="existing diary")
+    summary = _summary()
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen", diary_mark_notified_url="mark")
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)

@@ -41,12 +41,12 @@ jobs:
           pip install -r requirements.txt
           python scripts/verify_requirements.py
 
+      - name: Prepare artifact directories
+        run: |
+          mkdir -p artifacts/daily_log_repair
+          : > artifacts_daily_log_repair_full.log
+
       - name: Repair Daily Logs
-        if: >-
-          ${{
-            github.event_name == 'workflow_dispatch' ||
-            vars.DAILY_LOG_REPAIR_ENABLED == 'true'
-          }}
         env:
           TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
           DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}

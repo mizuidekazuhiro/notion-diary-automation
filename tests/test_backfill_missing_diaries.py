@@ -13,10 +13,7 @@ def summary(**overrides):
     base = dict(
         target_date="2026-07-12",
         date="2026-07-12",
-        target_date_value="2026-07-12",
-        target_date_property_present=True,
         activity_summary="summary",
-        mail_id="run-id",
         today_advice="advice",
         diary="diary",
         today_advice_generated_at="2026-07-12T07:00:00+09:00",
@@ -28,9 +25,9 @@ def summary(**overrides):
 
 
 def test_generate_target_dates_jst_example() -> None:
-    assert backfill.default_end_date(datetime(2026, 7, 13, 8, tzinfo=ZoneInfo("Asia/Tokyo"))) == "2026-07-12"
-    assert backfill.generate_target_dates(end_date="2026-07-12", days=7) == [
-        "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12",
+    assert backfill.default_end_date(datetime(2026, 7, 20, 12, 7, tzinfo=ZoneInfo("Asia/Tokyo"))) == "2026-07-19"
+    assert backfill.generate_target_dates(end_date="2026-07-19", days=7) == [
+        "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18", "2026-07-19",
     ]
 
 
@@ -40,18 +37,16 @@ def test_classification_missing_incomplete_complete() -> None:
     assert backfill.classify_daily_log(summary(diary=""))[0] == "incomplete"
 
 
-def test_study_only_page_is_incomplete() -> None:
-    item = summary(target_date_value="", activity_summary="", mail_id="", today_advice="", diary="", today_advice_generated_at="", diary_generated_at="", study_minutes=30)
-    classification, missing = backfill.classify_daily_log(item)
+def test_diary_generated_at_missing_is_incomplete() -> None:
+    classification, missing = backfill.classify_daily_log(summary(diary_generated_at=""))
     assert classification == "incomplete"
-    assert "target_date_value" in missing
-    assert "diary" in missing
+    assert "diary_generated_at" in missing
 
 
-def test_target_date_property_absent_is_incomplete() -> None:
-    classification, missing = backfill.classify_daily_log(summary(target_date_value=None, target_date_property_present=False))
-    assert classification == "incomplete"
-    assert "target_date_value" in missing
+def test_activity_summary_empty_can_still_be_complete() -> None:
+    classification, missing = backfill.classify_daily_log(summary(activity_summary="", notes="", expenses=[]))
+    assert classification == "complete"
+    assert missing == []
 
 
 def test_dry_run_missing_does_not_run_phases(monkeypatch) -> None:

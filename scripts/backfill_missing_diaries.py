@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -19,17 +18,10 @@ from publish.read_daily_log import DailyLogSummary, read_daily_log
 from scripts.daily_job import load_config
 
 JST = ZoneInfo("Asia/Tokyo")
-REQUIRED_PHASE_ABC_FIELDS = (
-    "target_date_value",
-    "activity_summary",
-    "mail_id",
-    "today_advice",
+REQUIRED_DIARY_FIELDS = (
     "diary",
-    "today_advice_generated_at",
     "diary_generated_at",
 )
-
-
 @dataclass
 class BackfillDayResult:
     target_date: str
@@ -75,21 +67,19 @@ def _is_present(value: object) -> bool:
     return True
 
 
-def missing_phase_abc_fields(summary: DailyLogSummary) -> list[str]:
-    missing: list[str] = []
-    for field_name in REQUIRED_PHASE_ABC_FIELDS:
-        if not _is_present(getattr(summary, field_name, None)):
-            missing.append(field_name)
-    if not _is_present(getattr(summary, "target_date_value", None)) or getattr(summary, "target_date_property_present", True) is False:
-        if "target_date_value" not in missing:
-            missing.append("target_date_value")
-    return missing
+def missing_diary_fields(summary: DailyLogSummary) -> list[str]:
+    """Return fields that prove the diary itself has not been generated yet.
+
+    Activity, notes, location, meal, task, and expense fields are intentionally
+    excluded because they can be legitimately empty on days with no source data.
+    """
+    return [field_name for field_name in REQUIRED_DIARY_FIELDS if not _is_present(getattr(summary, field_name, None))]
 
 
 def classify_daily_log(summary: DailyLogSummary | None) -> tuple[str, list[str]]:
     if summary is None:
         return "missing", []
-    missing = missing_phase_abc_fields(summary)
+    missing = missing_diary_fields(summary)
     return ("incomplete", missing) if missing else ("complete", [])
 
 
@@ -135,7 +125,9 @@ def run_backfill(*, days: int, end_date: str | None, dry_run: bool) -> BackfillS
 
         if dry_run:
             stats.dry_run_count += 1
-            stats.results.append(BackfillDayResult(target_date=target_date, status=f"dry_run_{classification}", page_id=page_id, missing_fields=missing))
+            dry_run_status = "dry_run_missing" if classification == "missing" else "dry_run_incomplete"
+            logging.info("status=%s target_date=%s page_id=%s missing_fields=%s", dry_run_status, target_date, page_id, ",".join(missing))
+            stats.results.append(BackfillDayResult(target_date=target_date, status=dry_run_status, page_id=page_id, missing_fields=missing))
             continue
         remaining_fields: list[str] = missing
         try:

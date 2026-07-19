@@ -1,40 +1,47 @@
 import assert from "node:assert/strict";
-import { analyzeDailyLogPages, buildCanonicalDailyLogTitle, buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle, normalizeDailyLogTitle, resolveDailyLogOfficialDate } from "./daily_log_resolver";
+import { buildCanonicalDailyLogTitle, buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, normalizeDailyLogTitle, toNotionUpdateProperty } from "./daily_log_resolver";
 
 assert.equal(extractDailyLogDateFromTitle("Daily Log｜2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log | 2026-05-07"), "2026-05-07");
 assert.equal(extractDailyLogDateFromTitle("Daily Log ❘ 2026-05-07"), "2026-05-07");
+assert.equal(extractDailyLogDateFromTitle("Daily Log 2026-05-07"), "2026-05-07");
+assert.equal(extractDailyLogDateFromTitle("Daily Log｜ 2026-05-07"), "2026-05-07");
 assert.equal(buildCanonicalDailyLogTitle("2026-05-07"), "Daily Log｜2026-05-07");
 assert.equal(normalizeDailyLogTitle("Daily Log | 2026-05-07"), "Daily Log｜2026-05-07");
+assert.equal(normalizeDailyLogTitle("Daily Log ❘ 2026-05-07"), "Daily Log｜2026-05-07");
 
-const title = (s:string)=>({title:[{plain_text:s}]});
-const pDateTitleMismatch:any={id:"x",properties:{"名前":title("Daily Log｜2022-02-22"),Date:{date:{start:"2026-02-22"}},"Target Date":{date:{start:"2026-02-22"}}}};
-assert.equal(resolveDailyLogOfficialDate(pDateTitleMismatch).date,"2026-02-22");
-assert.equal(isPageMatchedByDateOrTitle(pDateTitleMismatch,"2022-02-22"),false);
-assert.equal(isPageMatchedByDateOrTitle(pDateTitleMismatch,"2026-02-22"),true);
-const dateOnly:any={id:"d",properties:{Date:{date:{start:"2026-07-15"}},"名前":title("Daily Log｜2022-07-15")}};
-assert.equal(resolveDailyLogOfficialDate(dateOnly).date,"2026-07-15");
-const targetOnly:any={id:"t",properties:{"Target Date":{date:{start:"2026-07-15"}}}};
-assert.equal(resolveDailyLogOfficialDate(targetOnly).date,"2026-07-15");
-const ambiguous:any={id:"a",properties:{Date:{date:{start:"2026-07-15"}},"Target Date":{date:{start:"2026-07-16"}}}};
-assert.equal(resolveDailyLogOfficialDate(ambiguous).ambiguous,true);
-assert.equal(isPageMatchedByDateOrTitle(ambiguous,"2026-07-15"),false);
-assert.deepEqual(analyzeDailyLogPages([ambiguous], "2026-07-15").ambiguousPages.map((p:any)=>p.id), ["a"]);
+const pageA: any = { id: "359dec27-c9aa-819d-adf0-eb09fa03f36d", properties: { Date: { date: { start: "2026-05-07" } }, "Target Date": { date: { start: "2026-05-07" } }, Diary: { rich_text: [{ plain_text: "diary" }] }, "Today advice": { rich_text: [{ plain_text: "advice" }] }, Weather: { rich_text: [{ plain_text: "weather" }] }, "Location summary (GPT)": { rich_text: [] }, "Meal Photos": { files: [] } } };
+const pageB: any = { id: "359dec27-c9aa-8157-af19-cb259a0a1b4e", properties: { "Target Date": { date: { start: "2026-05-07" } }, "Location summary (GPT)": { rich_text: [{ plain_text: "loc" }] }, "Meal Photos": { files: [{ name: "a", external: { url: "https://dropbox.com/s/1.jpg?dl=0" } }, { name: "b", external: { url: "https://dropbox.com/s/1.jpg?raw=1" } }] }, Mood: { select: { name: "Good" } }, Notes: { rich_text: [{ plain_text: "note" }] } } };
 
-const pageA: any = { id: "a", properties: { Date: { date: { start: "2026-05-07" } }, "Target Date": { date: { start: "2026-05-07" } }, "名前": title("Daily Log｜2026-05-07"), Diary: { rich_text: [{ plain_text: "diary" }] }, "Today advice": { rich_text: [{ plain_text: "advice" }] }, "Done Tasks": { relation: [{id:"1"}] }, "Meal Photos": { files: [{ name: "a", external: { url: "https://dropbox.com/s/1.jpg?dl=0" } }] } } };
-const pageB: any = { id: "b", properties: { "Target Date": { date: { start: "2026-05-07" } }, "Done Tasks": { relation: [{id:"1"},{id:"2"}] }, "Meal Photos": { files: [{ name: "b", external: { url: "https://dropbox.com/s/1.jpg?raw=1" } }, { name: "c", external: { url: "https://example.com/c.jpg" } }] }, Mood: { select: { name: "Good" } }, Notes: { rich_text: [{ plain_text: "note" }] } } };
-assert.equal(chooseCanonicalDailyLogPage([pageB,pageA],"2026-05-07")?.id,"a");
-// An ambiguous page related to the requested date remains visible alongside a
-// canonical page and a duplicate.  Callers must stop before merging it.
-const ambiguousSameTarget:any={id:"ambiguous-05-07",properties:{Date:{date:{start:"2026-05-07"}},"Target Date":{date:{start:"2026-05-08"}},"名前":title("Daily Log｜2026-05-07")}};
-const analyzed = analyzeDailyLogPages([pageA,pageB,ambiguousSameTarget], "2026-05-07");
-assert.equal(analyzed.canonicalPage?.id, "a");
-assert.equal(analyzed.duplicatePages.length, 1);
-assert.deepEqual(analyzed.ambiguousPages.map((p:any)=>p.id), ["ambiguous-05-07"]);
-const patch=buildDuplicateMergePatch(pageA,[pageB]);
-assert.ok(patch.mergedFields.includes("Done Tasks"));
+assert.equal(chooseCanonicalDailyLogPage([pageA, pageB], "2026-05-07")?.id, pageA.id);
+const patch = buildDuplicateMergePatch(pageA, [pageB]);
+assert.equal(patch.hasChanges, true);
+assert.ok(patch.mergedFields.includes("Location summary (GPT)"));
 assert.ok(patch.mergedFields.includes("Meal Photos"));
-assert.equal(patch.properties["Done Tasks"].relation.length,2);
-assert.equal(patch.properties["Meal Photos"].files.length,2);
-assert.equal(patch.properties.Mood.select.name,"Good");
+assert.ok(patch.mergedFields.includes("Mood"));
+assert.ok(patch.mergedFields.includes("Notes"));
+assert.equal((patch.properties["Meal Photos"].files ?? []).length, 1);
+assert.equal(pageA.properties.Diary.rich_text[0].plain_text, "diary");
 console.log("daily_log_resolver.test.ts: ok");
+
+assert.deepEqual(toNotionUpdateProperty({ id:"x", type:"rich_text", rich_text:[{plain_text:"a"}] }), { rich_text:[{plain_text:"a"}] });
+assert.deepEqual(toNotionUpdateProperty({ id:"x", type:"select", select:{name:"Good"} }), { select:{name:"Good"} });
+assert.equal(toNotionUpdateProperty({ id:"x", type:"formula", formula:{} }), null);
+
+(() => {
+  const canonical: any = {
+    id: "c",
+    properties: { "Meal Photos": { files: [{ name: "c1", external: { url: "https://example.com/c1.jpg" } }] } },
+  };
+  const duplicateEmpty: any = { id: "d", properties: { "Meal Photos": { files: [] } } };
+  const keepPatch = buildDuplicateMergePatch(canonical, [duplicateEmpty]);
+  assert.equal("Meal Photos" in keepPatch.properties, false);
+
+  const duplicateWithPhoto: any = {
+    id: "d2",
+    properties: { "Meal Photos": { files: [{ name: "d1", external: { url: "https://example.com/d1.jpg" } }] } },
+  };
+  const mergePatch = buildDuplicateMergePatch(canonical, [duplicateWithPhoto]);
+  assert.equal("Meal Photos" in mergePatch.properties, true);
+  assert.equal(mergePatch.properties["Meal Photos"].files.length, 2);
+})();

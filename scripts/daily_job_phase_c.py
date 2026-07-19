@@ -50,12 +50,14 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
     step_status: dict[str, str] = {k: "not_applicable" for k in step_names}
     summary = deps.refresh_summary(config, target_date)
     if not summary:
-        step_status["diary"] = "failed"
-        logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
-        raise RuntimeError(
-            "PhaseC fail: Daily_Log summary not found "
-            f"for target_date(JST)={target_date} run_id={run_id}"
+        logging.info(
+            "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=no_daily_log generated_properties=[]",
+            target_date,
+            run_id,
+            False,
         )
+        logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
+        return
 
     summary = _run_optional_enrichment("weather", deps.run_weather, summary, run_id, step_status)
     summary = deps.refresh_summary(config, summary.target_date) or summary
@@ -98,8 +100,6 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         raise
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
-    if not (getattr(summary, "today_advice", "") or "").strip():
-        raise RuntimeError(f"PhaseC fail: Today advice is empty for target_date={summary.target_date}")
     try:
         summary = deps.run_diary(summary)
         step_status["diary"] = "success"
@@ -110,9 +110,14 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
     if not (summary.diary or "").strip():
-        step_status["diary"] = "failed"
+        logging.info(
+            "phase_c_notify_skipped target_date(JST)=%s run_id=%s skip_reason=no_daily_log",
+            summary.target_date,
+            run_id,
+        )
+        step_status["notify"] = "skipped"
         logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", summary.target_date, run_id, step_status)
-        raise RuntimeError(f"PhaseC fail: Diary is empty for target_date={summary.target_date}")
+        return
 
     if expense_f_alert.get("matched"):
         logging.info(

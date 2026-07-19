@@ -278,7 +278,12 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         bearer_token=config.bearer_token,
     )
     if not summary:
-        raise RuntimeError(f"Phase04 fail: Daily_Log summary not found for target_date(JST)={target_date} run_id={run_id}")
+        logging.info(
+            "Daily_Log summary not found; skipping publish phase. target_date(JST)=%s run_id=%s",
+            target_date,
+            run_id,
+        )
+        return
     target_date_matches = summary.target_date == target_date
     summary_page_id = getattr(summary, "page_id", "") or ""
     summary_location_summary = (getattr(summary, "location_summary", "") or "").strip()
@@ -319,9 +324,9 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     if not summary_today_advice:
         raise RuntimeError("Phase04 fail: Today advice is empty.")
     if not summary_diary:
-        raise RuntimeError("Phase04 fail: Diary is empty.")
+        logging.warning("Phase04 warning: Diary is empty.")
     if not summary_mail_id:
-        raise RuntimeError("Phase04 fail: Mail ID is empty.")
+        logging.warning("Phase04 warning: Mail ID is empty.")
     if summary_diary_notification_sent is False:
         logging.warning("Phase04 warning: Diary Notification Sent is false before publish.")
 

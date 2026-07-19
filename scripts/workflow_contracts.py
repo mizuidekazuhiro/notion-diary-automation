@@ -74,12 +74,12 @@ def check_workflow_chain() -> list[str]:
             ("concurrency:", "repair workflow missing concurrency"),
             ("if: always()", "repair workflow must always summarize/upload artifacts"),
             ("actions/upload-artifact", "repair workflow missing artifact upload"),
-            ("DAILY_LOG_REPAIR_ENABLED", "repair workflow missing repository variable guard"),
-            ("github.event_name == 'workflow_dispatch'", "repair workflow manual dispatch must bypass variable guard"),
-            ("vars.DAILY_LOG_REPAIR_ENABLED == 'true'", "repair workflow schedule must require variable guard"),
+            ("python scripts/backfill_missing_diaries.py", "repair workflow missing backfill command"),
         ]:
             if needle not in repair_text:
                 issues.append(msg)
+        if "DAILY_LOG_REPAIR_ENABLED" in repair_text or "vars.DAILY_LOG_REPAIR_ENABLED" in repair_text:
+            issues.append("repair workflow schedule must run without repository variable guard")
         repair_step = re.search(r"- name: Repair Daily Logs(?P<body>.*?)(?:\n\s+- name:|\Z)", repair_text, flags=re.S)
         if repair_step and "continue-on-error" in repair_step.group("body"):
             issues.append("repair command must not use continue-on-error")

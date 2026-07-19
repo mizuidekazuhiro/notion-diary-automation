@@ -474,7 +474,7 @@ Daily Log repair は通常の前日 Phase A とは独立した `Daily Log Repair
 - 終了日は JST の前日、開始日は終了日の6日前です（合計7日）。今日の日付は含めません。
 - 処理順は古い日付から新しい日付です。
 - 判定は Workers の Daily Log read API（`read_daily_log()`）で `missing` / `incomplete` / `complete` に分類します。
-- ページが存在しても `Target Date`、`Activity Summary`、`Mail ID`、`Today advice`、`Diary`、`Today Advice Generated At`、`Diary Generated At` のいずれかが欠ける場合は `incomplete` として修復対象です。
+- ページが存在しても `Diary` または `Diary Generated At` が欠ける場合は `incomplete` として修復対象です。`Today advice` / `Today Advice Generated At` は補助情報として確認できますが、`Activity Summary`、Notes、Location、Meal、Tasks、Expenses はデータが存在しない日に正当に空になるため、それだけを理由に incomplete とは判定しません。
 - API エラー、通信エラー、認証エラー、レスポンス解析エラーは日付単位の `repair_failed` として記録し、他の日付の処理は継続します。
 
 ### 通常処理との違い
@@ -509,7 +509,7 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 
 ### GitHub Actions 上の動作
 
-`.github/workflows/ingest_daily_log.yml` では、通常の前日 Phase A の後にバックフィルステップを実行します。バックフィルステップは `continue-on-error: true` のため、過去日の補完失敗だけで通常の前日 workflow_run 連鎖を止めません。ただし、失敗内容と末尾ログは `$GITHUB_STEP_SUMMARY` に必ず出力します。同一ブランチでの重複実行を避けるため、Workflow に concurrency を設定しています。
+`.github/workflows/ingest_daily_log.yml` からバックフィルステップは削除し、通常の前日 Phase A と過去日修復を分離しています。Phase A が起動しない日でも、独立した `Daily Log Repair` workflow が schedule で起動できます。通常の Phase A → B → C → D の workflow_run 連鎖は従来どおり維持します。
 
 ### ログの見方
 
@@ -525,21 +525,8 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 
 ## Daily Log repair workflow（欠損・不完全ページ修復）
 
-`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立しています。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。schedule は `7 3 * * *`（03:07 UTC / 12:07 JST）ですが、初期状態では Repository Variable `DAILY_LOG_REPAIR_ENABLED` が未設定または `true` 以外なら実修復stepを実行しません。手動実行はこのVariableに関係なく可能です。
+`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立しています。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。schedule は `7 3 * * *`（03:07 UTC / 12:07 JST）で、repository variable によるガードなしで毎日実修復を起動します。
 
-修復判定は `missing` / `incomplete` / `complete` の 3 段階です。`Target Date`、`Activity Summary`、`Mail ID`、`Today advice`、`Diary`、`Today Advice Generated At`、`Diary Generated At` のいずれかが欠ける既存ページは `incomplete` とし、新規ページを作らず既存ページに対して Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。`Location summary (GPT)`、Weather、Meal Photos、Sleep、`Mail Sent At`、`Diary Notification Sent` は単独では incomplete 判定に使いません。バックフィルでは Phase D の publish / メール送信を実行せず、過去日に現在の天気を書かないため Weather 生成もスキップします。
+修復判定は `missing` / `incomplete` / `complete` の 3 段階です。既存ページで `Diary` または `Diary Generated At` が欠ける場合は `incomplete` とし、新規ページを作らず既存ページに対して Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。`Activity Summary`、Notes、Location、Meal、Tasks、Expenses、Weather、Sleep、`Mail Sent At`、`Diary Notification Sent` は単独では incomplete 判定に使いません。バックフィルでは Phase D の publish / メール送信を実行せず、過去日に現在の天気を書かないため Weather 生成もスキップします。
 
 1 日でも修復に失敗した場合、他の日付の処理は継続したうえで最終終了コード 1 とし、Workflow は失敗します。全文ログ、JSON 結果、Markdown サマリーは常に artifact として保存されます。
-
-有効化手順は次の順序を推奨します。
-
-1. PRをマージ。
-2. `dry_run=true` で手動実行。
-3. Artifact（全文ログ、JSON、Markdown）を確認。
-4. 少数日で `dry_run=false` を手動実行。
-5. Notion上の対象ページを確認。
-6. Repository Variable `DAILY_LOG_REPAIR_ENABLED=true` を設定してschedule修復を有効化。
-
-### Daily Log integrity offline audit
-
-`python scripts/repair_daily_log_integrity.py --input-json daily_logs.json --output-json audit.json --output-markdown audit.md` は、エクスポート済みNotionページJSONだけを読むオフライン監査CLIです。このPRのCLIは本番Notionからの取得、NotionへのSafe Fix適用、重複統合、重複アーカイブを実装していません。本番Notionは変更しません。将来のNotion修復機能は別PRの対象です。
