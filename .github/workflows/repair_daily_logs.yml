@@ -1,0 +1,101 @@
+name: Daily Log Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Number of days to scan"
+        required: false
+        default: "7"
+      end_date:
+        description: "Last JST diary date to scan (YYYY-MM-DD); default is yesterday"
+        required: false
+        default: ""
+      dry_run:
+        description: "Do not update Notion or call OpenAI"
+        required: false
+        default: "false"
+        type: boolean
+  schedule:
+    - cron: "7 3 * * *"
+
+concurrency:
+  group: daily-log-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python scripts/verify_requirements.py
+
+      - name: Prepare artifact directories
+        run: |
+          mkdir -p artifacts/daily_log_repair
+          : > artifacts_daily_log_repair_full.log
+
+      - name: Repair Daily Logs
+        env:
+          TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
+          DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
+          WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          STAY_SESSIONS_DB_ID: ${{ secrets.STAY_SESSIONS_DB_ID }}
+          TASK_DB_ID: ${{ secrets.TASK_DB_ID }}
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
+          DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
+          DAILY_LOG_GPT_LOCATION_SUMMARY_PROP: "Location summary (GPT)"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PROMPT_DB_ID: ${{ secrets.PROMPT_DB_ID }}
+          PROMPT_TARGET: "location_summary_writer"
+          PROMPT_VARIANT: "default"
+          PROMPT_LANGUAGE: "ja"
+          INBOX_JSON_URL: ${{ secrets.INBOX_JSON_URL }}
+          TASKS_JSON_URL: ${{ secrets.TASKS_JSON_URL }}
+          VOICE_DIARY_NOTES_DB_ID: ${{ secrets.VOICE_DIARY_NOTES_DB_ID }}
+          LOCATION_LOG_DB_ID: ${{ secrets.LOCATION_LOG_DB_ID }}
+          LOCATION_LOG_TIME_PROP: ${{ secrets.LOCATION_LOG_TIME_PROP }}
+          LOCATION_LOG_PLACE_PROP: ${{ secrets.LOCATION_LOG_PLACE_PROP }}
+          EXPENSE_F_PROP: ${{ secrets.EXPENSE_F_PROP }}
+          OPENAI_MODEL: gpt-4.1-mini
+          TZ: "Asia/Tokyo"
+        run: |
+          set -o pipefail
+          DAYS="${{ inputs.days || '7' }}"
+          END_DATE="${{ inputs.end_date }}"
+          DRY_RUN="${{ inputs.dry_run || 'false' }}"
+          ARGS=(--days "$DAYS" --artifact-dir artifacts/daily_log_repair)
+          if [ -n "$END_DATE" ]; then ARGS+=(--end-date "$END_DATE"); fi
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          python scripts/backfill_missing_diaries.py "${ARGS[@]}" 2>&1 | tee artifacts_daily_log_repair_full.log
+
+      - name: Summarize repair result
+        if: always()
+        run: |
+          echo "## Daily Log Repair" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/daily_log_repair/daily_log_repair_summary.md ]; then
+            cat artifacts/daily_log_repair/daily_log_repair_summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload repair artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-log-repair-artifacts
+          path: |
+            artifacts_daily_log_repair_full.log
+            artifacts/daily_log_repair/daily_log_repair_result.json
+            artifacts/daily_log_repair/daily_log_repair_summary.md
+          if-no-files-found: warn

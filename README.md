@@ -466,20 +466,20 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 
 ## 過去7日 Daily Log 欠損バックフィル
 
-`Daily Diary 01 - Ingest Daily Log` は通常の前日 Phase A を実行したあと、直近7日間の Daily Log ページ欠損を自動確認します。目的は、GitHub Actions や外部起動が毎朝実行されなかった日があっても、次回起動時に Notion の Daily Log ページ自体が存在しない日だけを補完することです。
+Daily Log repair は通常の前日 Phase A とは独立した `Daily Log Repair` workflow で実行します。目的は、GitHub Actions や外部起動が毎朝実行されなかった日、または別同期がページだけを先に作った日でも、Daily Diary Phase A〜C の未完了ページを補完することです。
 
 ### 対象期間と判定基準
 
 - 基準日は実行時の JST 日付です。
 - 終了日は JST の前日、開始日は終了日の6日前です（合計7日）。今日の日付は含めません。
 - 処理順は古い日付から新しい日付です。
-- 欠損判定は Workers の Daily Log read API（`read_daily_log()`）で対象日の Daily Log ページが存在するかどうかだけを見ます。
-- ページが存在する場合は `status=existing_skipped` として何も更新しません。Diary が空でも、既存ページは今回のバックフィル対象外です。
-- API エラー、通信エラー、認証エラー、レスポンス解析エラーは `status=check_failed` として失敗扱いにし、ページ不存在とは見なしません。通信失敗を欠損と誤判定して重複ページを作らないためです。
+- 判定は Workers の Daily Log read API（`read_daily_log()`）で `missing` / `incomplete` / `complete` に分類します。
+- ページが存在しても `Diary` または `Diary Generated At` が欠ける場合は `incomplete` として修復対象です。`Today advice` / `Today Advice Generated At` は補助情報として確認できますが、`Activity Summary`、Notes、Location、Meal、Tasks、Expenses はデータが存在しない日に正当に空になるため、それだけを理由に incomplete とは判定しません。
+- API エラー、通信エラー、認証エラー、レスポンス解析エラーは日付単位の `repair_failed` として記録し、他の日付の処理は継続します。
 
 ### 通常処理との違い
 
-欠損ページだけ、明示的な `target_date` を渡して次の順番で処理します。
+`missing` または `incomplete` の日付だけ、明示的な `target_date` を渡して次の順番で処理します。処理後はDaily Logを再取得し、`complete` になった場合だけ `repair_success` とします。
 
 1. Phase A: `python scripts/daily_job.py --phase ingest --target-date YYYY-MM-DD`
 2. Phase B: `python apps/location_summary_writer/src/main.py --target-date YYYY-MM-DD`
@@ -509,17 +509,24 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 
 ### GitHub Actions 上の動作
 
-`.github/workflows/ingest_daily_log.yml` では、通常の前日 Phase A の後にバックフィルステップを実行します。バックフィルステップは `continue-on-error: true` のため、過去日の補完失敗だけで通常の前日 workflow_run 連鎖を止めません。ただし、失敗内容と末尾ログは `$GITHUB_STEP_SUMMARY` に必ず出力します。同一ブランチでの重複実行を避けるため、Workflow に concurrency を設定しています。
+`.github/workflows/ingest_daily_log.yml` からバックフィルステップは削除し、通常の前日 Phase A と過去日修復を分離しています。Phase A が起動しない日でも、独立した `Daily Log Repair` workflow が schedule で起動できます。通常の Phase A → B → C → D の workflow_run 連鎖は従来どおり維持します。
 
 ### ログの見方
 
 各日付について、次のいずれかの `status=` が出ます。
 
-- `status=existing_skipped`: Daily Log ページが既に存在したためスキップ。
 - `status=missing_detected`: ページ不存在を正常に確認し、補完処理を開始。
-- `status=backfill_success`: Phase A → B → C が成功。
-- `status=backfill_failed`: 欠損日補完中に失敗。
-- `status=dry_run_missing`: dry-run で欠損を検出（更新なし）。
-- `status=check_failed`: read API などの確認処理が失敗。欠損扱いにはしません。
+- `status=incomplete_detected`: 既存ページはあるが Phase A〜C の主要項目が不足しているため修復を開始。
+- `status=complete_skipped`: Phase A〜C 完了済みのためスキップ。
+- `status=repair_success`: Phase A → B → C の修復が成功。
+- `status=repair_failed`: 日付単位の修復に失敗。他の日付の処理は継続します。
 
-最後に `backfill_summary scan_count=... existing_count=... missing_count=... success_count=... failed_count=... dry_run_count=...` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。
+最後に `backfill_summary scan_count=... missing_count=... incomplete_count=... complete_count=... repaired_count=... failed_count=... dry_run_count=...` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。
+
+## Daily Log repair workflow（欠損・不完全ページ修復）
+
+`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立しています。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。schedule は `7 3 * * *`（03:07 UTC / 12:07 JST）で、repository variable によるガードなしで毎日実修復を起動します。
+
+修復判定は `missing` / `incomplete` / `complete` の 3 段階です。既存ページで `Diary` または `Diary Generated At` が欠ける場合は `incomplete` とし、新規ページを作らず既存ページに対して Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。`Activity Summary`、Notes、Location、Meal、Tasks、Expenses、Weather、Sleep、`Mail Sent At`、`Diary Notification Sent` は単独では incomplete 判定に使いません。バックフィルでは Phase D の publish / メール送信を実行せず、過去日に現在の天気を書かないため Weather 生成もスキップします。
+
+1 日でも修復に失敗した場合、他の日付の処理は継続したうえで最終終了コード 1 とし、Workflow は失敗します。全文ログ、JSON 結果、Markdown サマリーは常に artifact として保存されます。
