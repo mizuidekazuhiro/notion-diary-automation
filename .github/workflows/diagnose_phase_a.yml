@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - diagnose/phase-a-failure
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
