@@ -29,10 +29,17 @@ def extract_workflow_name(content: str) -> str:
 
 
 def extract_workflow_run_sources(content: str) -> list[str]:
-    match = re.search(r"workflow_run:\s*\n\s*workflows:\s*\n((?:\s*-\s*.+\n)+)", content)
+    match = re.search(
+        r"workflow_run:\s*\n\s*workflows:\s*\n((?:\s*-\s*.+\n)+)",
+        content,
+    )
     if not match:
         return []
-    return [line.strip()[2:].strip().strip('"').strip("'") for line in match.group(1).splitlines() if line.strip().startswith("-")]
+    return [
+        line.strip()[2:].strip().strip('"').strip("'")
+        for line in match.group(1).splitlines()
+        if line.strip().startswith("-")
+    ]
 
 
 def check_workflow_chain() -> list[str]:
@@ -51,7 +58,10 @@ def check_workflow_chain() -> list[str]:
             continue
         if expected_source not in sources:
             issues.append(
-                f"workflow_dependency_mismatch workflow={workflow_name} expected_source={expected_source} actual_sources={sources}"
+                "workflow_dependency_mismatch "
+                f"workflow={workflow_name} "
+                f"expected_source={expected_source} "
+                f"actual_sources={sources}"
             )
 
     deploy_sources = name_to_sources.get("Deploy Cloudflare Workers", [])
@@ -76,15 +86,40 @@ def check_workflow_chain() -> list[str]:
             ("concurrency:", "repair workflow missing concurrency"),
             ("if: always()", "repair workflow must always summarize/upload artifacts"),
             ("actions/upload-artifact", "repair workflow missing artifact upload"),
-            ("python scripts/backfill_missing_diaries.py", "repair workflow missing backfill command"),
+            (
+                "python scripts/backfill_missing_diaries.py",
+                "repair workflow missing backfill command",
+            ),
+            ("send_mail:", "repair workflow missing send_mail input"),
+            ("--send-mail", "repair workflow missing historical mail flag"),
+            (
+                "github.event_name",
+                "repair workflow must guard historical mail by event type",
+            ),
+            ("GMAIL_APP_PASSWORD", "repair workflow missing mail credentials"),
         ]:
             if needle not in repair_text:
                 issues.append(msg)
-        if "DAILY_LOG_REPAIR_ENABLED" in repair_text or "vars.DAILY_LOG_REPAIR_ENABLED" in repair_text:
-            issues.append("repair workflow schedule must run without repository variable guard")
-        repair_step = re.search(r"- name: Repair Daily Logs(?P<body>.*?)(?:\n\s+- name:|\Z)", repair_text, flags=re.S)
+        if (
+            "DAILY_LOG_REPAIR_ENABLED" in repair_text
+            or "vars.DAILY_LOG_REPAIR_ENABLED" in repair_text
+        ):
+            issues.append(
+                "repair workflow schedule must run without repository variable guard"
+            )
+        repair_step = re.search(
+            r"- name: Repair Daily Logs(?P<body>.*?)(?:\n\s+- name:|\Z)",
+            repair_text,
+            flags=re.S,
+        )
         if repair_step and "continue-on-error" in repair_step.group("body"):
             issues.append("repair command must not use continue-on-error")
+        if repair_step:
+            repair_body = repair_step.group("body")
+            if "workflow_dispatch" not in repair_body or "--send-mail" not in repair_body:
+                issues.append(
+                    "historical mail must be enabled only inside the manual repair step"
+                )
 
     ingest = WORKFLOW_DIR / "ingest_daily_log.yml"
     if not ingest.exists():
