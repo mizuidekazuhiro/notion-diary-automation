@@ -13,6 +13,8 @@ EXPECTED_CHAIN = {
     "Daily Diary 04 - Publish Daily Mail": "Daily Diary 03 - Generate Diary & Sleep Insights",
 }
 CI_WORKFLOW_NAME = "CI - Test & Requirements Gate"
+INGEST_CRON = 'cron: "0 3 * * *"'
+REPAIR_CRON = 'cron: "0 5 * * *"'
 
 
 def _read_workflow(path: Path) -> str:
@@ -70,7 +72,7 @@ def check_workflow_chain() -> list[str]:
         repair_text = repair.read_text(encoding="utf-8")
         for needle, msg in [
             ("workflow_dispatch:", "repair workflow missing workflow_dispatch"),
-            ('cron: "7 3 * * *"', "repair workflow missing 7 3 * * * cron"),
+            (REPAIR_CRON, "repair workflow missing 0 5 * * * cron"),
             ("concurrency:", "repair workflow missing concurrency"),
             ("if: always()", "repair workflow must always summarize/upload artifacts"),
             ("actions/upload-artifact", "repair workflow missing artifact upload"),
@@ -83,9 +85,18 @@ def check_workflow_chain() -> list[str]:
         repair_step = re.search(r"- name: Repair Daily Logs(?P<body>.*?)(?:\n\s+- name:|\Z)", repair_text, flags=re.S)
         if repair_step and "continue-on-error" in repair_step.group("body"):
             issues.append("repair command must not use continue-on-error")
+
     ingest = WORKFLOW_DIR / "ingest_daily_log.yml"
-    if ingest.exists() and "backfill_missing_diaries.py" in ingest.read_text(encoding="utf-8"):
-        issues.append("old ingest workflow still contains backfill step")
+    if not ingest.exists():
+        issues.append("missing ingest_daily_log workflow")
+    else:
+        ingest_text = ingest.read_text(encoding="utf-8")
+        if "workflow_dispatch:" not in ingest_text:
+            issues.append("ingest workflow missing workflow_dispatch")
+        if INGEST_CRON not in ingest_text:
+            issues.append("ingest workflow missing 0 3 * * * cron")
+        if "backfill_missing_diaries.py" in ingest_text:
+            issues.append("old ingest workflow still contains backfill step")
 
     return issues
 
