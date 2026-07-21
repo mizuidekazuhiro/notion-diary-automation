@@ -12,12 +12,18 @@ on:
         required: false
         default: ""
       dry_run:
-        description: "Do not update Notion or call OpenAI"
+        description: "Do not update Notion, call OpenAI, or send mail"
         required: false
         default: "false"
         type: boolean
+      send_mail:
+        description: "Send each complete or repaired historical diary by email"
+        required: false
+        default: "true"
+        type: boolean
   schedule:
     # Run after the noon JST Phase A-D chain to avoid repairing the same date concurrently.
+    # Scheduled repair never sends historical mail.
     # GitHub Actions cron is UTC. 05:00 UTC = 14:00 JST.
     - cron: "0 5 * * *"
 
@@ -71,6 +77,20 @@ jobs:
           LOCATION_LOG_TIME_PROP: ${{ secrets.LOCATION_LOG_TIME_PROP }}
           LOCATION_LOG_PLACE_PROP: ${{ secrets.LOCATION_LOG_PLACE_PROP }}
           EXPENSE_F_PROP: ${{ secrets.EXPENSE_F_PROP }}
+          EXPENSE_DATE_PROP: ${{ secrets.EXPENSE_DATE_PROP }}
+          EXPENSE_RECEIVED_AT_PROP: ${{ secrets.EXPENSE_RECEIVED_AT_PROP }}
+          EXPENSE_MERCHANT_PROP: ${{ secrets.EXPENSE_MERCHANT_PROP }}
+          EXPENSE_AMOUNT_PROP: ${{ secrets.EXPENSE_AMOUNT_PROP }}
+          EXPENSE_CATEGORY_PROP: ${{ secrets.EXPENSE_CATEGORY_PROP }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_CC: ${{ secrets.MAIL_CC }}
+          MAIL_BCC: ${{ secrets.MAIL_BCC }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+          MAIL_LINK_SECRET: ${{ secrets.MAIL_LINK_SECRET }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           OPENAI_MODEL: gpt-4.1-mini
           TZ: "Asia/Tokyo"
         run: |
@@ -81,6 +101,9 @@ jobs:
           ARGS=(--days "$DAYS" --artifact-dir artifacts/daily_log_repair)
           if [ -n "$END_DATE" ]; then ARGS+=(--end-date "$END_DATE"); fi
           if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.send_mail }}" = "true" ]; then
+            ARGS+=(--send-mail)
+          fi
           python scripts/backfill_missing_diaries.py "${ARGS[@]}" 2>&1 | tee artifacts_daily_log_repair_full.log
 
       - name: Summarize repair result
