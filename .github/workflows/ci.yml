@@ -50,3 +50,33 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest -vv --maxfail=1 --durations=20 --timeout=120
+
+  phase-a-diagnostic:
+    if: github.head_ref == 'diagnose/phase-a-failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reproduce Phase A with concise logs
+        env:
+          TASKS_CLOSED_URL: ${{ secrets.TASKS_CLOSED_URL }}
+          DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
+          WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          set +e
+          git clone --quiet --depth 1 --branch diagnose/phase-a-failure \
+            https://github.com/mizuidekazuhiro/notion-diary-automation.git repo
+          cd repo
+          python3 -m pip install --quiet -r requirements.txt > /tmp/pip.log 2>&1
+          pip_status=$?
+          if [ "$pip_status" -ne 0 ]; then
+            echo "DIAGNOSTIC_STAGE=pip_install"
+            tail -n 80 /tmp/pip.log
+            exit "$pip_status"
+          fi
+          python3 scripts/daily_job.py --phase ingest --target-date 2026-07-21 > /tmp/phase_a.log 2>&1
+          phase_status=$?
+          echo "DIAGNOSTIC_STAGE=phase_a"
+          echo "DIAGNOSTIC_EXIT_CODE=$phase_status"
+          tail -n 100 /tmp/phase_a.log
+          exit "$phase_status"
