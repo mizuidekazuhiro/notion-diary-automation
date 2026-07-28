@@ -1129,14 +1129,14 @@
     },
     "2026-07-27": {
       "alert_text": null,
-      "generated_at": "2026-07-27T06:39:32Z",
-      "input_hash": "6d3dd648dc1c29cb532a1978f89d583e2c0161aaf6d0da626a640efa101e0402",
+      "generated_at": "2026-07-28T05:53:54Z",
+      "input_hash": "4fe898df3431999540390386d7fb2ff0b691358c8ad98a6903ee526b8db0430c",
       "matched_patterns": [],
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
     }
   },
-  "updated_at": "2026-07-27T06:39:32Z",
+  "updated_at": "2026-07-28T05:53:54Z",
   "version": 1
 }
