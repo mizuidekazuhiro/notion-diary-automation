@@ -1171,8 +1171,19 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
+    },
+    "2026-08-01": {
+      "alert_text": null,
+      "generated_at": "2026-08-01T06:08:03Z",
+      "input_hash": "e6a8b2b1b004eb39d48cd975fa8eafdedf9322cf757736f863e99740413c6884",
+      "matched_patterns": [
+        "週末バイアス"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.32
     }
   },
-  "updated_at": "2026-08-01T06:05:32Z",
+  "updated_at": "2026-08-01T06:08:04Z",
   "version": 1
 }
