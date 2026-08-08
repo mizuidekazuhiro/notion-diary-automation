@@ -1238,8 +1238,19 @@
       "no_alert_reason": "case_similarity_weak",
       "reason": "no_alert:case_similarity_weak",
       "score": 0.32
+    },
+    "2026-08-08": {
+      "alert_text": null,
+      "generated_at": "2026-08-08T04:17:44Z",
+      "input_hash": "1ddcda7bf128452629204a0a807efa3480f15e7713d9cff480551196d9409654",
+      "matched_patterns": [
+        "週末バイアス"
+      ],
+      "no_alert_reason": "case_similarity_weak",
+      "reason": "no_alert:case_similarity_weak",
+      "score": 0.32
     }
   },
-  "updated_at": "2026-08-08T04:15:28Z",
+  "updated_at": "2026-08-08T04:17:45Z",
   "version": 1
 }
