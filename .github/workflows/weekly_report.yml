@@ -2,7 +2,7 @@ name: Weekly Diary Report
 
 on:
   schedule:
-    - cron: '0 12 * * 0' # 21:00 JST Sunday
+    - cron: '0 12 * * SUN' # 21:00 JST Sunday
   workflow_dispatch:
 
 jobs:
