@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     # GitHub Actions cron is UTC. 03:00 UTC = 12:00 JST.
-    - cron: "0 3 * * 0-6"
+    - cron: "0 3 * * *"
 
 concurrency:
   group: daily-diary-01-ingest-${{ github.ref }}
