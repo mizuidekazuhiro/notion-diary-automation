@@ -30,6 +30,7 @@ DEFAULT_CREDENTIAL_PATH = Path(
 ) / "AnkiNotionSync" / "config.json"
 DEFAULT_LOG_DIR = DEFAULT_CREDENTIAL_PATH.parent / "logs"
 ANKI_DAILY_PATH = "/execute/api/study/anki-daily"
+WORKER_USER_AGENT = "AnkiNotionSync/1.0 (+Windows)"
 
 
 class SyncError(RuntimeError):
@@ -436,6 +437,8 @@ def post_aggregate(config: RuntimeConfig, aggregate: DailyAggregate) -> dict[str
         headers={
             "Authorization": f"Bearer {config.worker_token}",
             "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+            "User-Agent": WORKER_USER_AGENT,
         },
         method="POST",
     )

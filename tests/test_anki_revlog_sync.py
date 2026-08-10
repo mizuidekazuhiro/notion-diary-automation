@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from io import BytesIO
 import sqlite3
 from urllib.error import URLError
 
@@ -78,6 +79,36 @@ def test_worker_url_accepts_existing_daily_log_endpoint() -> None:
     assert sync.normalize_worker_url(
         "https://example.workers.dev/execute/api/daily_log/upsert"
     ) == "https://example.workers.dev/execute/api/study/anki-daily"
+
+
+def test_worker_request_uses_cloudflare_safe_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return BytesIO(b'{"ok": true}')
+
+    monkeypatch.setattr(sync, "urlopen", fake_urlopen)
+    config = sync.RuntimeConfig(
+        worker_url="https://example.workers.dev/execute/api/study/anki-daily",
+        worker_token="secret",
+        anki_connect_key=None,
+        anki_executable=None,
+        profile=None,
+        backfill_days=7,
+        session_gap_minutes=10,
+        max_answer_seconds=300,
+    )
+    aggregate = sync.aggregate_reviews([], date(2026, 8, 10))
+
+    assert sync.post_aggregate(config, aggregate) == {"ok": True}
+    headers = dict(captured["request"].header_items())
+    assert headers["User-agent"] == sync.WORKER_USER_AGENT
+    assert headers["Accept"] == "application/json"
+    assert captured["timeout"] == 90
 
 
 def test_ankiconnect_stopped_has_actionable_error(monkeypatch: pytest.MonkeyPatch) -> None:
