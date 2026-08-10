@@ -1,5 +1,11 @@
 # notion-diary-automation
 
+## Anki PC Automatic Study Tracking
+
+Windows PC版Ankiの実レビュー履歴（`revlog.time`）を午前4時区切りで自動集計し、既存Notion Daily Logの `Study Minutes` / `Study Sessions` / `Study Last Used At` へ反映します。日記・メールの「司法試験 Study」の表示構成は変更しません。
+
+初回セットアップ、AnkiのMaximum answer seconds = 300秒、AnkiConnect、Windowsタスク、backfill、iPhone側で止めるautomation、ログと復旧手順は [docs/anki_pc_automatic_study_tracking.md](docs/anki_pc_automatic_study_tracking.md) を参照してください。
+
 Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/update → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成・Notion更新のみを担当します。既定の `target_date` は JST 前日ですが、Phase C は `--target-date` または `TODAY_ADVICE_TARGET_MODE=TODAY` で当日朝レビューにも切り替えられます。
 
 ## Workflow 名と依存関係

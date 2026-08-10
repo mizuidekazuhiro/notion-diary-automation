@@ -8,6 +8,7 @@
     "test": "node --experimental-specifier-resolution=node --loader ts-node/esm src/application/study_session.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/meal_summary.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/daily_log_ingest.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/location_summary.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/index.daily_log_read.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/index.daily_log_upsert.test.ts && node --experimental-specifier-resolution=node --loader ts-node/esm src/domain/daily_log_resolver.test.ts"
   },
   "devDependencies": {
+    "@types/node": "^24.13.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4",
     "wrangler": "^3.64.0"

@@ -102,6 +102,7 @@ class Config:
     diary_mark_notified_url: str
     bearer_token: Optional[str]
     openai_model: str
+    study_reconcile_url: str = ""
     mail_cc: List[str] = field(default_factory=list)
     mail_bcc: List[str] = field(default_factory=list)
 
@@ -114,6 +115,7 @@ WORKER_ENDPOINTS = {
     "generate_diary": f"{WORKER_EXECUTE_BASE_PATH}/generate_diary",
     "mark_diary_notified": f"{WORKER_EXECUTE_BASE_PATH}/mark_diary_notified",
     "read": "/api/daily_log",
+    "study_reconcile": "/execute/api/study/reconcile",
 }
 
 
@@ -163,6 +165,9 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
         ),
         bearer_token=os.getenv("WORKERS_BEARER_TOKEN"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        study_reconcile_url=build_worker_url(
+            daily_log_upsert_url, WORKER_ENDPOINTS["study_reconcile"]
+        ),
     )
 
 
@@ -256,6 +261,28 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         bearer_token=config.bearer_token,
     )
     _readback("ensure")
+
+    if config.study_reconcile_url:
+        try:
+            reconcile_result = post_json(
+                config.study_reconcile_url,
+                {"target_date": target_date},
+                config.bearer_token,
+            )
+            logging.info(
+                "study_reconcile target_date(JST)=%s updated=%s authoritative_anki=%s",
+                target_date,
+                reconcile_result.get("daily_log_updated"),
+                (reconcile_result.get("daily_totals") or {}).get("anki_revlog_authoritative"),
+            )
+        except Exception as exc:
+            logging.warning(
+                "study_reconcile_failed target_date(JST)=%s exception_class=%s exception_message=%s",
+                target_date,
+                exc.__class__.__name__,
+                str(exc),
+            )
+    _readback("study_reconcile")
 
     ingest_sources(
         target_date=target_date,

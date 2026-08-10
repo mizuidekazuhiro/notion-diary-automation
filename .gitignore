@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+.venv/
+.cache/
+.runtime/
+debug/
+workers/node_modules/
+workers/pnpm-lock.yaml
+workers/pnpm-workspace.yaml
+*.log
