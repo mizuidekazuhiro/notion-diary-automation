@@ -1,25 +1,19 @@
-# 司法試験 Study Session API
+# 司法試験 Study API
 
-PC用タイマーなどから、勉強1回ごとのセッションを既存のNotion `App Usage Sessions` DBへ登録するAPIです。
-
-## Endpoint
-
-```text
-POST /execute/api/study/session
-```
-
-既存の `notion-diary-automation` Cloudflare Worker内に実装します。別Workerや新しいNotion DBは作成しません。既存DBのIDは実装上の既定値を使用し、必要な場合だけ `APP_USAGE_SESSIONS_DB_ID` 環境変数で上書きできます。
-
-## Authentication
+既存Cloudflare Worker内で、Notion `App Usage Sessions` とDaily LogのStudy値を更新します。認証はいずれも次のBearer tokenです。
 
 ```http
 Authorization: Bearer <WORKERS_BEARER_TOKEN>
 Content-Type: application/json
 ```
 
-トークンはGitHubへコミットせず、PC側の環境変数またはローカル設定に保存します。
+## 通常セッション
 
-## Request body
+```text
+POST /execute/api/study/session
+```
+
+Itojukuなど1回ごとのセッションを登録します。
 
 ```json
 {
@@ -32,88 +26,65 @@ Content-Type: application/json
 }
 ```
 
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `session_id` | Yes | 再送時の二重登録を防ぐ一意のID |
-| `started_at` | Yes | 学習開始日時（ISO 8601） |
-| `ended_at` | Yes | 学習終了日時（ISO 8601） |
-| `app` | No | 既存DBの選択肢 `Itojuku` または `Anki`。省略時は `Itojuku` |
-| `device` | No | 端末名。省略時は `Windows PC` |
-| `source` | No | 記録元。省略時は既存選択肢の `shortcut` |
+`session_id` が既にあればページを増やさず、日次合計だけを再計算します。学習日は終了時刻をAsia/Tokyoへ変換し、4時間引いた日付です。
 
-## Processing
-
-1. Bearer Tokenを検証する。
-2. `session_id` が既に存在するか確認する。
-3. 未登録なら `App Usage Sessions` DBへ1ページ追加する。
-4. 終了時刻から午前4時境界の `Target Date` をAPI側で計算する。
-5. 同日のセッションを再集計する。
-6. Daily Logの `Study Minutes`、`Study Sessions`、`Study Last Used At`を更新する。
-
-同じ `session_id` を再送した場合、新しいページは作成せず、既存セッションを基に日次合計だけを再同期します。
-
-## Notion properties
-
-既存の `App Usage Sessions` DBの以下のプロパティをそのまま使用します。
-
-- `Name`
-- `Session ID`
-- `Start At`
-- `End At`
-- `Duration Min`
-- `Target Date`
-- `App`
-- `Device`
-- `Source`
-
-## Date boundary
-
-学習日の境界は日本時間の午前4時です。
+## Anki日次aggregate
 
 ```text
-Target Date = date(ended_at in Asia/Tokyo - 4 hours)
+POST /execute/api/study/anki-daily
 ```
-
-午前0時から3時59分に終了したセッションは前日の学習として扱います。
-
-## curl example
-
-```bash
-curl -X POST "https://<worker-host>/execute/api/study/session" \
-  -H "Authorization: Bearer $WORKERS_BEARER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "windows-20260718-120000-7b9f",
-    "started_at": "2026-07-18T12:00:00+09:00",
-    "ended_at": "2026-07-18T12:30:00+09:00",
-    "app": "Itojuku",
-    "device": "Windows PC"
-  }'
-```
-
-## Response outline
 
 ```json
 {
-  "ok": true,
-  "created": true,
-  "duplicate": false,
-  "session_id": "windows-20260718-120000-7b9f",
-  "target_date": "2026-07-18",
-  "duration_min": 30,
+  "target_date": "2026-08-10",
+  "study_minutes": 90.17,
+  "study_sessions": 8,
+  "first_review_at": "2026-08-10T04:05:00+09:00",
+  "last_review_at": "2026-08-11T01:20:00+09:00",
+  "review_count": 137,
+  "max_time_review_count": 3,
+  "source": "anki_revlog"
+}
+```
+
+Workerは `Session ID = anki-revlog:<target_date>` を生成します。同じ日を再送すると、既存ページの値を上書きします。追加されるApp Usage Sessionsプロパティは次の3つだけです。
+
+- `Session Count` (`number`)
+- `Review Count` (`number`)
+- `Max Time Review Count` (`number`)
+
+`Source` selectには `anki_revlog` を追加します。
+
+レビューが0件の日は、minutes/sessions/review_count/max_time_review_countを0、first/lastをnullにします。レビューがある場合、first/lastは対象日の `04:00:00 JST` 以上、翌日 `04:00:00 JST` 未満でなければ400です。
+
+PC revlogページが存在する日は、それだけをAnkiの正本とし、同日の旧iPhone Anki行をDaily Log合計から除外します。Anki以外は従来どおり加算します。
+
+## Daily Log再集計
+
+```text
+POST /execute/api/study/reconcile
+```
+
+```json
+{
+  "target_date": "2026-08-10"
+}
+```
+
+App Usage Sessionsの保存済み値だけでDaily Logを再計算します。Daily Log作成直後に `scripts/daily_job.py` が呼ぶため、Anki aggregateの方が先に届いても値を失いません。Daily Logがまだない場合は200で `daily_log_updated=false` を返します。
+
+## 集計結果
+
+```json
+{
   "daily_totals": {
-    "study_minutes": 150,
-    "study_sessions": 3,
-    "study_last_used_at": "2026-07-18T03:30:00.000Z"
+    "study_minutes": 120.17,
+    "study_sessions": 9,
+    "study_last_used_at": "2026-08-11T01:20:00.000Z",
+    "anki_revlog_authoritative": true
   },
   "daily_log_updated": true
 }
 ```
 
-## Validation
-
-Workerテストでは、午前4時境界、時間計算、既定値、終了時刻が開始時刻以前の場合の拒否を確認します。CIではテストに加えてTypeScript型検査を実行します。
-
-## Operational note
-
-Notionは `Session ID` にデータベース上の一意制約を設定できないため、APIは登録前に重複照会を行います。通常のPCアプリ再送には対応できますが、完全に同時刻の並行リクエストまで厳密に排除するものではありません。
+詳細なPCセットアップは [Anki PC Automatic Study Tracking](anki_pc_automatic_study_tracking.md) を参照してください。
