@@ -419,26 +419,17 @@ def read_daily_log(
     strict_optional_sections = (os.getenv("DAILY_MAIL_STRICT_OPTIONAL_SECTIONS", "false").strip().lower() == "true")
     payload_keys = sorted([str(key) for key in payload.keys() if isinstance(key, str)])
     payload_has_location_summary_gpt = bool(_safe_text(_get_case_insensitive_value(payload, "Location summary (GPT)")))
-    payload_has_meal_photos_raw = isinstance(_get_case_insensitive_value(payload, "Meal Photos", "meal_photos"), list)
-    if not payload_has_location_summary_gpt:
-        print("WARNING read_daily_log payload_missing_location_summary_gpt")
-    if not payload_has_meal_photos_raw:
-        print("WARNING read_daily_log payload_missing_meal_photos")
-    if not location_summary:
+    raw_meal_photos = _get_case_insensitive_value(payload, "Meal Photos", "meal_photos")
+    payload_has_meal_photos_raw = isinstance(raw_meal_photos, list) and bool(raw_meal_photos)
+    if payload_has_location_summary_gpt and not location_summary:
         print("WARNING read_daily_log location_summary_mapping_missing")
-    if not meal_photos:
+    if payload_has_meal_photos_raw and not meal_photos:
         print("WARNING read_daily_log meal_photos_mapping_missing")
     strict_violations: list[str] = []
-    if not payload_has_location_summary_gpt:
-        strict_violations.append("payload_has_location_summary_gpt=false")
-    if not payload_has_meal_photos_raw:
-        strict_violations.append("payload_has_meal_photos_raw=false")
-    if not location_summary:
-        strict_violations.append("location_summary=empty")
-    if not meal_photos:
-        strict_violations.append("meal_photos=empty")
-    if location_summary_source == "empty":
-        strict_violations.append("location_summary_source=empty")
+    if payload_has_location_summary_gpt and not location_summary:
+        strict_violations.append("location_summary_mapping_missing")
+    if payload_has_meal_photos_raw and not meal_photos:
+        strict_violations.append("meal_photos_mapping_missing")
     if strict_optional_sections and strict_violations:
         raise RuntimeError(
             "Daily mail strict optional sections violation: "

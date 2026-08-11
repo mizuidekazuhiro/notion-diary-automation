@@ -155,6 +155,32 @@ def check_workflow_chain() -> list[str]:
         )
         if gate_step and "continue-on-error" in gate_step.group("body"):
             issues.append("final daily quality gate must not use continue-on-error")
+        export_step = re.search(
+            r"- name: Export daily mail quality artifacts(?P<body>.*?)(?:\n\s+- name:|\Z)",
+            publish_text,
+            flags=re.S,
+        )
+        if not export_step:
+            issues.append("publish workflow missing daily mail quality export step")
+        else:
+            export_body = export_step.group("body")
+            for env_name in (
+                "NOTION_TOKEN",
+                "EXPENSES_DB_ID",
+                "EXPENSE_F_PROP",
+                "EXPENSE_DATE_PROP",
+                "EXPENSE_RECEIVED_AT_PROP",
+                "EXPENSE_MERCHANT_PROP",
+                "EXPENSE_AMOUNT_PROP",
+                "EXPENSE_CATEGORY_PROP",
+            ):
+                if f"{env_name}:" not in export_body:
+                    issues.append(f"publish quality export missing {env_name}")
+
+        for workflow_name in ("diary_notify.yml", "publish_daily_mail.yml"):
+            workflow_text = _read_workflow(WORKFLOW_DIR / workflow_name)
+            if "actions/cache@v4" not in workflow_text or ".cache/notes_labels" not in workflow_text:
+                issues.append(f"{workflow_name} missing persisted Notes label cache")
 
     canary = WORKFLOW_DIR / "notion_readonly_canary.yml"
     if not canary.exists():

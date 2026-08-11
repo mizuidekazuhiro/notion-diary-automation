@@ -253,7 +253,7 @@ def test_notify_diary_continues_when_f_risk_raises(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         daily_job,
         "_generate_and_save_f_risk",
-        lambda config, *, summary, run_id: (_ for _ in ()).throw(RuntimeError("f risk failed")),
+        lambda config, *, summary, run_id, **kwargs: (_ for _ in ()).throw(RuntimeError("f risk failed")),
     )
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)

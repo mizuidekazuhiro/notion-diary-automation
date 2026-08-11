@@ -69,6 +69,29 @@ def _cfg():
     return daily_job.Config(mail_from="a@example.com", mail_to=["b@example.com"], gmail_app_password="x", tasks_closed_url="", daily_log_upsert_url="", daily_log_ensure_url="", health_ingest_url="", expenses_ingest_url="", daily_log_read_url="", diary_generate_url="", diary_mark_notified_url="", bearer_token=None, openai_model="")
 
 
+def test_oversized_persisted_snapshot_stays_valid_json() -> None:
+    snapshot = {
+        "target_date": "2026-04-01",
+        "meal_photos": ["https://example.com/photo.jpg"],
+        "location_summary": "x" * 3000,
+    }
+    raw = daily_job.snapshot_json(snapshot)
+
+    persisted, truncated = daily_job._build_persisted_mail_snapshot(
+        input_snapshot=snapshot,
+        input_snapshot_raw=raw,
+        input_hash="abc123",
+    )
+
+    parsed = daily_job.json.loads(persisted)
+    assert truncated is True
+    assert len(persisted) <= daily_job.MAIL_INPUT_SNAPSHOT_MAX_CHARS
+    assert parsed["_truncated"] is True
+    assert parsed["_full_sha256"] == "abc123"
+    assert parsed["meal_photos"]["count"] == 1
+    assert parsed["location_summary"]["present"] is True
+
+
 def test_publish_first_send(monkeypatch):
     sent = []
     updated = []

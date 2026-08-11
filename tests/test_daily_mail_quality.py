@@ -149,12 +149,51 @@ def test_snapshot_fields_present_pass() -> None:
     assert "mail_snapshot_missing_location_summary" not in _codes(report)
 
 
-def test_quality_detects_missing_payload_optional_keys() -> None:
+def test_quality_accepts_empty_optional_payload_fields() -> None:
     summary = _summary(payload_has_location_summary_gpt=False, payload_has_meal_photos_raw=False)
     report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary", mail_html="<html></html>")
     codes = _codes(report)
-    assert "payload_missing_location_summary_gpt" in codes
-    assert "payload_missing_meal_photos" in codes
+    assert "payload_missing_location_summary_gpt" not in codes
+    assert "payload_missing_meal_photos" not in codes
+    assert "meal_photos_mapping_missing" not in codes
+
+
+def test_quality_warns_instead_of_failing_for_truncated_snapshot() -> None:
+    summary = _summary(
+        location_summary="loc",
+        meal_photos=["https://example.com/a.jpg"],
+        payload_has_location_summary_gpt=True,
+        payload_has_meal_photos_raw=True,
+        mail_input_snapshot_json='{"target_date":"2026-05-08","meal_photos":[',
+    )
+    report = build_quality_report(
+        summary,
+        mail_plain_text="Daily Log\nToday advice\nSleep & Condition\nDiary\nLocation summary: loc\n- https://example.com/a.jpg",
+        mail_html='<img src="https://example.com/a.jpg" />',
+    )
+    codes = _codes(report)
+    assert "mail_snapshot_truncated_or_invalid" in codes
+    assert "mail_snapshot_missing_meal_photos" not in codes
+    assert "mail_snapshot_missing_location_summary" not in codes
+    assert report["status"] != "fail"
+
+
+def test_quality_requires_nonempty_optional_values_in_valid_snapshot() -> None:
+    summary = _summary(
+        location_summary="loc",
+        meal_photos=["https://example.com/a.jpg"],
+        payload_has_location_summary_gpt=True,
+        payload_has_meal_photos_raw=True,
+        mail_input_snapshot_json='{"target_date":"2026-05-08"}',
+    )
+    report = build_quality_report(
+        summary,
+        mail_plain_text="Daily Log\nToday advice\nDiary\nLocation summary: loc\n- https://example.com/a.jpg",
+        mail_html='<img src="https://example.com/a.jpg" />',
+    )
+    codes = _codes(report)
+    assert "mail_snapshot_missing_meal_photos" in codes
+    assert "mail_snapshot_missing_location_summary" in codes
 
 
 def test_quality_gate_warns_but_does_not_fail_when_health_is_empty() -> None:
