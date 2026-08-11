@@ -9,6 +9,7 @@ import {
   parseStudySessionPayload,
   resolveStudyTargetDate,
 } from "./study_session";
+import { resolveJstDayKey } from "../utils/date_utils";
 
 assert.equal(parseStudyDayStartHour(undefined), 4);
 assert.equal(parseStudyDayStartHour("0"), 0);
@@ -229,3 +230,6 @@ assert.equal(aggregateUpdateCount, 1);
 assert.equal(dailyUpdateCount, 2);
 
 console.log("study_session.test.ts: ok");
+assert.equal(resolveJstDayKey("2026-08-11T04:59:59+09:00", 5), "2026-08-10");
+assert.equal(resolveJstDayKey("2026-08-11T05:00:00+09:00", 5), "2026-08-11");
+assert.equal(resolveJstDayKey("2026-08-11T05:00:01+09:00", 5), "2026-08-11");

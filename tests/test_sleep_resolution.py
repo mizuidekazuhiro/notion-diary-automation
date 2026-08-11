@@ -4,8 +4,11 @@ from scripts.sleep_utils import (
     resolve_canonical_sleep_metrics,
     resolve_sleep_duration_minutes,
     resolve_sleep_target_date,
+    resolve_sleep_for_target_date,
     validate_generated_sleep_text,
 )
+from types import SimpleNamespace
+from scripts.today_advice_renderer import render_today_advice_from_analysis
 
 
 def test_resolve_sleep_duration_from_start_end() -> None:
@@ -45,6 +48,41 @@ def test_resolve_sleep_target_date_with_0500_jst_boundary() -> None:
         fallback_date="2026-03-27",
     )
     assert got == "2026-03-26"
+
+
+def test_day_boundary_exact_and_adjacent(monkeypatch) -> None:
+    monkeypatch.setenv("SLEEP_DAY_BOUNDARY_HOUR", "5")
+    assert resolve_sleep_target_date(sleep_start="2026-03-27T04:59:59+09:00", sleep_end=None) == "2026-03-26"
+    assert resolve_sleep_target_date(sleep_start="2026-03-27T05:00:00+09:00", sleep_end=None) == "2026-03-27"
+    assert resolve_sleep_target_date(sleep_start="2026-03-27T05:00:01+09:00", sleep_end=None) == "2026-03-27"
+
+
+def test_today_sleep_never_falls_back_to_old_374_minutes() -> None:
+    today = SimpleNamespace(target_date="2026-08-10", sleep_start=None, sleep_end=None, sleep_duration_min=None, sleep_score=None)
+    old = SimpleNamespace(target_date="2026-07-20", sleep_start=None, sleep_end=None, sleep_duration_min=374, sleep_score=None)
+    _, selected, source = resolve_sleep_for_target_date(
+        target_date="2026-08-10", today_summary=today, history_summaries=[old]
+    )
+    assert selected is None
+    assert source == "no_valid_candidate"
+
+    body = render_today_advice_from_analysis(
+        analysis_json={
+            "today_sleep_context": {
+                "sleep_available": selected is not None,
+                "sleep_hours": None,
+                "sleep_score": None,
+                "sleep_invalid_reason": source,
+            },
+            "matched_patterns_count": 0,
+            "recent_7d_summary": {"behavior_trend": []},
+            "primary_focus": "focus",
+        },
+        model="unused",
+        chat_completion=lambda **_: (_ for _ in ()).throw(AssertionError("LLM must not be called")),
+    )
+    assert "6.23" not in body
+    assert "374" not in body
 
 
 def test_resolve_canonical_sleep_metrics_with_text() -> None:

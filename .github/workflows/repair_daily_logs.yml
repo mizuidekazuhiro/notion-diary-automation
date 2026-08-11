@@ -19,7 +19,7 @@ on:
       send_mail:
         description: "Send each complete or repaired historical diary by email"
         required: false
-        default: "true"
+        default: "false"
         type: boolean
   schedule:
     # Run after the noon JST Phase A-D chain to avoid repairing the same date concurrently.

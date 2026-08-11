@@ -6,8 +6,9 @@ import re
 from typing import Any, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from scripts.day_key import boundary_hour, resolve_day_key
+
 JST = ZoneInfo("Asia/Tokyo")
-DAILY_BOUNDARY_HOUR = 5
 
 
 def _safe_float(value: object) -> Optional[float]:
@@ -116,8 +117,7 @@ def resolve_sleep_target_date(
     base = parse_sleep_datetime(sleep_start) or parse_sleep_datetime(sleep_end)
     if base is None:
         return fallback_date
-    attributed = (base - timedelta(hours=DAILY_BOUNDARY_HOUR)).date()
-    return attributed.isoformat()
+    return resolve_day_key(base, domain="sleep", hour=boundary_hour("sleep"))
 
 
 def build_sleep_candidate(
@@ -195,12 +195,6 @@ def resolve_sleep_for_target_date(
         selected = dict(same_target_valid[0])
         selected["selection_reason"] = "match_target_date_with_05_boundary"
         return candidates, selected, "history_target_date_match"
-
-    fallback_valid = [c for c in candidates if c.get("candidate_valid_flag")]
-    if fallback_valid:
-        selected = dict(fallback_valid[0])
-        selected["selection_reason"] = "fallback_any_valid_candidate"
-        return candidates, selected, "fallback_any_valid"
 
     return candidates, None, "no_valid_candidate"
 

@@ -32,6 +32,9 @@ class BackfillDayResult:
     missing_fields: list[str] = field(default_factory=list)
     mail_status: str = ""
     error: str = ""
+    content_complete: bool = False
+    source_complete: bool = False
+    analysis_complete: bool = False
 
 
 @dataclass
@@ -89,6 +92,32 @@ def classify_daily_log(summary: DailyLogSummary | None) -> tuple[str, list[str]]
     if summary is None:
         return "missing", []
     missing = missing_diary_fields(summary)
+    health_fields = (
+        "sleep_duration_min",
+        "sleep_score",
+        "readiness_hrv",
+        "readiness_bpm",
+        "kcal",
+        "protein",
+        "fat",
+        "carb",
+    )
+    if any(hasattr(summary, name) for name in health_fields) and not any(_is_present(getattr(summary, name, None)) for name in health_fields):
+        missing.append("source:health")
+    if (getattr(summary, "expense_f_data_status", None) or "").strip() in {
+        "query_failed",
+        "schema_unresolved",
+        "schema_unavailable",
+        "expenses_data_unavailable",
+    }:
+        missing.append(f"source:expense_f:{getattr(summary, 'expense_f_data_status', None)}")
+    if not _is_present(summary.today_advice):
+        missing.append("analysis:today_advice")
+    if any(hasattr(summary, name) for name in ("f_risk_generated_at", "f_risk_reason", "f_risk_input_hash")) and not any(
+        _is_present(value)
+        for value in (getattr(summary, "f_risk_generated_at", None), getattr(summary, "f_risk_reason", None), getattr(summary, "f_risk_input_hash", None))
+    ):
+        missing.append("analysis:f_risk")
     return ("incomplete", missing) if missing else ("complete", [])
 
 
@@ -240,6 +269,9 @@ def run_backfill(
             continue
 
         page_id = getattr(summary, "page_id", "") if summary else ""
+        content_complete = not any(item in REQUIRED_DIARY_FIELDS for item in missing)
+        source_complete = not any(item.startswith("source:") for item in missing)
+        analysis_complete = not any(item.startswith("analysis:") for item in missing)
 
         if classification == "complete":
             stats.complete_count += 1
@@ -251,6 +283,9 @@ def run_backfill(
                         status="dry_run_complete",
                         page_id=page_id,
                         mail_status="would_process" if send_mail else "",
+                        content_complete=True,
+                        source_complete=True,
+                        analysis_complete=True,
                     )
                 )
                 continue
@@ -268,6 +303,9 @@ def run_backfill(
                         target_date=target_date,
                         status="complete_skipped",
                         page_id=page_id,
+                        content_complete=True,
+                        source_complete=True,
+                        analysis_complete=True,
                     )
                 )
                 logging.info(
@@ -308,7 +346,29 @@ def run_backfill(
                     page_id=page_id,
                     missing_fields=missing,
                     mail_status="would_process" if send_mail else "",
+                    content_complete=content_complete,
+                    source_complete=source_complete,
+                    analysis_complete=analysis_complete,
                 )
+            )
+            continue
+
+        if not source_complete:
+            stats.results.append(
+                BackfillDayResult(
+                    target_date=target_date,
+                    status="source_missing",
+                    page_id=page_id,
+                    missing_fields=missing,
+                    content_complete=content_complete,
+                    source_complete=False,
+                    analysis_complete=analysis_complete,
+                )
+            )
+            logging.warning(
+                "status=source_missing target_date=%s missing_sources=%s repair_skipped=true",
+                target_date,
+                [item for item in missing if item.startswith("source:")],
             )
             continue
 

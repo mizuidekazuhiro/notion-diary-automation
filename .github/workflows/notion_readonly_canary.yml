@@ -1,0 +1,26 @@
+name: Notion Read-only Canary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install requests==2.32.3
+      - name: Validate Notion reads without writes
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
+          HEALTH_DB_ID: ${{ secrets.HEALTH_DB_ID }}
+          DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
+        run: python scripts/notion_readonly_canary.py

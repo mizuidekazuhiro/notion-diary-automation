@@ -48,3 +48,36 @@ def test_bulk_history_failure_falls_back_to_single_day_loader(monkeypatch: pytes
         days=30,
     )
     assert len(out) == 1
+
+
+def test_bulk_history_maps_feature_builder_contract() -> None:
+    summary = f_risk_generator._build_summary_from_history_item(
+        {
+            "target_date": "2026-03-10",
+            "page_id": "p1",
+            "title": "d1",
+            "activity_summary": "done",
+            "notes": "note",
+            "location_summary": "location",
+            "meal_summary": "meal",
+            "kcal": 2000,
+            "protein": 100,
+            "fat": 60,
+            "carb": 220,
+            "done_count": 3,
+            "drop_count": 1,
+            "expenses_total": 5000,
+            "sleep_duration_min": 420,
+            "weather_precip_probability_max": 40,
+            "notes_social_load_flag": True,
+        }
+    )
+    assert summary is not None
+    assert summary.notes == "note"
+    assert summary.location_summary == "location"
+    assert summary.meal_summary == "meal"
+    assert (summary.kcal, summary.protein, summary.fat, summary.carb) == (2000, 100, 60, 220)
+    assert (summary.done_count, summary.drop_count, summary.expenses_total) == (3, 1, 5000)
+    assert summary.resolved_sleep_duration_hours == 7.0
+    assert summary.weather_precip_probability_max == 40
+    assert summary.notes_social_load_flag is True

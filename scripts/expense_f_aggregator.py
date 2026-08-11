@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -27,6 +28,34 @@ class ExpenseFAggregate:
 
 def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": "Bearer " + token, "Notion-Version": NOTION_VERSION}
+
+
+def _sanitize_error_text(value: object, *, limit: int = 300) -> str:
+    """Return a single-line, bounded Notion error message safe for public CI logs."""
+    text = " ".join(str(value or "").split())
+    return text[:limit]
+
+
+def _notion_error_summary(response: requests.Response, *, filter_strategy: str) -> dict[str, Any]:
+    notion_code: Optional[str] = None
+    response_message = "Notion request failed"
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            notion_code = _sanitize_error_text(body.get("code")) or None
+            response_message = _sanitize_error_text(body.get("message")) or response_message
+    except (ValueError, TypeError):
+        response_message = "Notion returned a non-JSON error response"
+    return {
+        "http_status": response.status_code,
+        "status": response.status_code,  # backwards-compatible debug key
+        "notion_error_code": notion_code,
+        "exception_class": "HTTPError",
+        "query_exception_class": "HTTPError",
+        "response_message": response_message,
+        "query_exception_message": response_message,
+        "filter_strategy": filter_strategy,
+    }
 
 
 def aggregate_daily_expense_f(target_date: str) -> ExpenseFAggregate:
@@ -125,7 +154,9 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
     family_prop = _resolve_prop_name(env_value=_env_or_none("EXPENSE_FAMILY_CARD_PROP"), aliases=["FamilyCard"], schema=schema)[0]
     filter_terms = [{"property": names["f"], "checkbox": {"equals": True}}, *date_filter]
     if family_prop:
-        filter_terms.append({"or": [{"property": family_prop, "checkbox": {"equals": False}}, {"property": family_prop, "checkbox": {"is_empty": True}}]})
+        # Notion checkbox filters support equals/does_not_equal, not is_empty.
+        # Unchecked (including the default value) is represented by equals=false.
+        filter_terms.append({"property": family_prop, "checkbox": {"equals": False}})
     filter_payload = {"and": filter_terms}
     payload = {"filter": filter_payload, "sorts": [{"timestamp": "created_time", "direction": "ascending"}], "page_size": 100}
 
@@ -145,7 +176,16 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 timeout=20,
             )
             if resp.status_code >= 400:
-                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"status": resp.status_code, "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}, "query_exception_class": "HTTPError", "query_exception_message": f"status_code={resp.status_code}"}, "expenses_data_unavailable")
+                error_summary = _notion_error_summary(resp, filter_strategy=filter_strategy)
+                logging.warning(
+                    "expense_f_query_failed http_status=%s notion_error_code=%s exception_class=%s response_message=%s filter_strategy=%s",
+                    error_summary["http_status"],
+                    error_summary["notion_error_code"],
+                    error_summary["exception_class"],
+                    error_summary["response_message"],
+                    error_summary["filter_strategy"],
+                )
+                unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {**error_summary, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
                 return {d: unavailable for d in target_dates}
             data = resp.json()
             pages.extend(data.get("results", []))
@@ -199,7 +239,16 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
             )
         return result
     except Exception as exc:  # noqa: BLE001
-        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"query_exception_class": exc.__class__.__name__, "query_exception_message": str(exc), "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
+        message = _sanitize_error_text(exc)
+        logging.warning(
+            "expense_f_query_failed http_status=%s notion_error_code=%s exception_class=%s response_message=%s filter_strategy=%s",
+            None,
+            None,
+            exc.__class__.__name__,
+            message,
+            filter_strategy,
+        )
+        unavailable = ExpenseFAggregate(False, 0, 0.0, [], None, None, "query_failed", {"http_status": None, "notion_error_code": None, "exception_class": exc.__class__.__name__, "response_message": message, "query_exception_class": exc.__class__.__name__, "query_exception_message": message, "filter_strategy": filter_strategy, "resolved_props": {k: {"resolved_name": v[0], **v[1]} for k, v in resolved_props.items()}}, "expenses_data_unavailable")
         return {d: unavailable for d in target_dates}
 
 

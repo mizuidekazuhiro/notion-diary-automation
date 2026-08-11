@@ -4,6 +4,25 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
+PHASE_STATUSES = {"success", "degraded", "skipped", "failed"}
+
+
+class PhaseSemanticDegradation(RuntimeError):
+    """A recoverable semantic failure: the pipeline may continue but is not healthy."""
+
+
+def semantic_status(result: Any) -> str:
+    if not isinstance(result, dict):
+        return "success"
+    status = str(result.get("status") or result.get("data_status") or "").strip().lower()
+    if status == "failed":
+        return "failed"
+    if status in {"query_failed", "schema_unresolved", "schema_unavailable", "degraded", "stale", "no_data"}:
+        return "degraded"
+    if result.get("fallback_used") or result.get("skip_reason"):
+        return "degraded"
+    return "success"
+
 
 @dataclass(frozen=True)
 class PhaseCDeps:
@@ -28,8 +47,18 @@ def _run_optional_enrichment(
 ) -> Any:
     try:
         out = fn(summary)
-        step_status[step_name] = "success"
+        step_status[step_name] = semantic_status(out)
         return out
+    except PhaseSemanticDegradation as exc:
+        logging.warning(
+            "phase_c_optional_step_degraded target_date(JST)=%s run_id=%s step=%s reason=%s",
+            getattr(summary, "target_date", "unknown"),
+            run_id,
+            step_name,
+            str(exc),
+        )
+        step_status[step_name] = "degraded"
+        return summary
     except Exception as exc:  # noqa: BLE001
         logging.exception(
             "phase_c_optional_step_failed target_date(JST)=%s run_id=%s step=%s exception_class=%s exception_message=%s failing_stage=%s",
@@ -47,7 +76,7 @@ def _run_optional_enrichment(
 def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps) -> None:
     logging.info("phase_c_start target_date(JST)=%s run_id=%s", target_date, run_id)
     step_names = ["weather", "expense_f", "sleep", "notes_label", "f_risk", "today_advice", "diary", "notify", "mail_metadata", "study"]
-    step_status: dict[str, str] = {k: "not_applicable" for k in step_names}
+    step_status: dict[str, str] = {k: "skipped" for k in step_names}
     summary = deps.refresh_summary(config, target_date)
     if not summary:
         logging.info(
@@ -81,7 +110,7 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
         }
         step_status["expense_f"] = "failed"
     else:
-        step_status["expense_f"] = "success"
+        step_status["expense_f"] = semantic_status(expense_f_alert)
 
     summary = deps.refresh_summary(config, summary.target_date) or summary
     summary = _run_optional_enrichment("sleep", deps.run_sleep, summary, run_id, step_status)
@@ -148,5 +177,10 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
     else:
         step_status["notify"] = "skipped"
 
-    logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", summary.target_date, run_id, step_status)
+    phase_status = (
+        "failed" if "failed" in step_status.values()
+        else "degraded" if "degraded" in step_status.values()
+        else "success"
+    )
+    logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s phase_status=%s step_status=%s", summary.target_date, run_id, phase_status, step_status)
     logging.info("phase_c_end target_date(JST)=%s run_id=%s", summary.target_date, run_id)
