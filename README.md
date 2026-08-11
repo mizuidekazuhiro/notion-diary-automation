@@ -12,6 +12,8 @@ Windows PC版Ankiの実レビュー履歴（`revlog.time`）を午前4時区切�
 
 Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → Phase B: publish source prep → Phase C: generate/update → Phase D: publish mail** とつなぐ自動化リポジトリです。現在の GitHub Actions では Phase B は `Location summary (GPT)` 更新として実装され、Phase C は sleep insights / Today advice / Diary の生成・Notion更新のみを担当します。既定の `target_date` は JST 前日ですが、Phase C は `--target-date` または `TODAY_ADVICE_TARGET_MODE=TODAY` で当日朝レビューにも切り替えられます。
 
+データ経路、Health復旧、互換項目、古いOpen PRの扱いは [Notion data flow](docs/notion-dataflow.md)、[Health recovery](docs/health-recovery.md)、[obsolete inventory](docs/obsolete-inventory.md)、[Open PR disposition](docs/open-pr-disposition-2026-08-11.md) を参照してください。
+
 ## Workflow 名と依存関係
 
 | Order | Workflow name | Trigger | 実責務 |
