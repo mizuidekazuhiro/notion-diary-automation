@@ -13,6 +13,7 @@ from publish.read_daily_log import read_daily_log
 from publish.render_mail import render_mail
 from scripts.daily_job import load_config, resolve_target_date
 from scripts.daily_mail_quality import build_markdown_report, build_quality_report, write_quality_artifacts
+from scripts.f_risk_state_store import FRiskStateStore
 
 
 def _run_url() -> str:
@@ -99,7 +100,17 @@ def main() -> int:
         print(build_markdown_report(report))
         return 0
 
-    report = build_quality_report(summary, mail_plain_text=mail.plain_text, mail_html=mail.html_body, run_id=run_id, run_url=run_url)
+    state_store = FRiskStateStore()
+    f_risk_state = state_store.get_for_date(target_date)
+    report = build_quality_report(
+        summary,
+        mail_plain_text=mail.plain_text,
+        mail_html=mail.html_body,
+        run_id=run_id,
+        run_url=run_url,
+        f_risk_state=f_risk_state,
+        f_risk_state_read_ok=state_store.meta.state_read_ok,
+    )
     write_quality_artifacts(report, artifact_dir=artifact_dir)
     print(build_markdown_report(report))
     return 0

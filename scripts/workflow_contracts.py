@@ -15,6 +15,7 @@ EXPECTED_CHAIN = {
 CI_WORKFLOW_NAME = "CI - Test & Requirements Gate"
 INGEST_CRON = 'cron: "0 3 * * *"'
 REPAIR_CRON = 'cron: "0 5 * * *"'
+CANARY_CRON = 'cron: "30 5 * * *"'
 
 
 def _read_workflow(path: Path) -> str:
@@ -133,6 +134,41 @@ def check_workflow_chain() -> list[str]:
             issues.append("ingest workflow missing 0 3 * * * cron")
         if "backfill_missing_diaries.py" in ingest_text:
             issues.append("old ingest workflow still contains backfill step")
+
+    publish = WORKFLOW_DIR / "publish_daily_mail.yml"
+    if not publish.exists():
+        issues.append("missing publish_daily_mail workflow")
+    else:
+        publish_text = publish.read_text(encoding="utf-8")
+        for needle, msg in [
+            ("Enforce final daily quality gate", "publish workflow missing final quality gate"),
+            ("python scripts/enforce_daily_quality_gate.py", "publish workflow missing quality gate command"),
+            ("--report artifacts/daily_mail/quality_report.json", "publish quality gate missing redacted report input"),
+            ("if: always()", "publish quality gate must run after earlier failures"),
+        ]:
+            if needle not in publish_text:
+                issues.append(msg)
+        gate_step = re.search(
+            r"- name: Enforce final daily quality gate(?P<body>.*?)(?:\n\s+- name:|\Z)",
+            publish_text,
+            flags=re.S,
+        )
+        if gate_step and "continue-on-error" in gate_step.group("body"):
+            issues.append("final daily quality gate must not use continue-on-error")
+
+    canary = WORKFLOW_DIR / "notion_readonly_canary.yml"
+    if not canary.exists():
+        issues.append("missing notion_readonly_canary workflow")
+    else:
+        canary_text = canary.read_text(encoding="utf-8")
+        for needle, msg in [
+            ("Daily Diary 04 - Publish Daily Mail", "canary must run after Daily Diary 04"),
+            (CANARY_CRON, "canary workflow missing 30 5 * * * fallback cron"),
+            ("permissions:\n  contents: read", "canary must remain read-only"),
+            ("python scripts/notion_readonly_canary.py", "canary workflow missing validator command"),
+        ]:
+            if needle not in canary_text:
+                issues.append(msg)
 
     return issues
 

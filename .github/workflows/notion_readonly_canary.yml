@@ -1,9 +1,19 @@
 name: Notion Read-only Canary
 
 on:
+  workflow_run:
+    workflows:
+      - Daily Diary 04 - Publish Daily Mail
+    types:
+      - completed
   workflow_dispatch:
   schedule:
-    - cron: "30 2 * * *"
+    # Fallback check after the normal Daily chain (05:30 UTC = 14:30 JST).
+    - cron: "30 5 * * *"
+
+concurrency:
+  group: notion-readonly-canary-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

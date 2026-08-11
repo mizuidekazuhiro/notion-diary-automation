@@ -53,10 +53,23 @@ def test_canary_marks_empty_latest_health_as_no_data(monkeypatch) -> None:
             return {"properties": {}}
         if "/expenses/query" in url or "/daily/query" in url:
             return {"results": [{"id": "redacted"}]}
-        return {"results": [{"properties": {"Date": {"type": "date", "date": {"start": "2026-08-10"}}}}]}
+        return {
+            "results": [
+                {"properties": {"Date": {"type": "date", "date": {"start": "2026-08-10"}}}},
+                {
+                    "last_edited_time": "2026-07-20T22:00:00.000Z",
+                    "properties": {
+                        "Date": {"type": "date", "date": {"start": "2026-07-20"}},
+                        "Sleep Score": {"type": "number", "number": 75},
+                    },
+                },
+            ]
+        }
 
     monkeypatch.setattr(canary, "_request", fake_request)
     results = canary.run_canary(token="secret", expenses_db_id="expenses", health_db_id="health", daily_log_db_id="daily")
     health = next(result for result in results if result.name == "health_latest_quality")
     assert health.status == "no_data"
     assert health.details["available_fields"] == []
+    assert health.details["last_valid_at"] == "2026-07-20T22:00:00.000Z"
+    assert health.details["error_code"] == "major_fields_empty"

@@ -111,3 +111,12 @@ jobs:
             gh issue create --title "$title" --body-file artifacts/daily_mail/issue_body.md
             echo "daily_mail_quality_issue_created title=$title"
           fi
+
+      - name: Enforce final daily quality gate
+        if: always()
+        env:
+          DAILY_QUALITY_GATE_FAIL_ON: fail
+        run: |
+          python scripts/enforce_daily_quality_gate.py \
+            --report artifacts/daily_mail/quality_report.json \
+            --markdown artifacts/daily_mail/quality_report.md
