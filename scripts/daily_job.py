@@ -1613,7 +1613,7 @@ def _compute_f_risk_alert_runtime(
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     task_details = []
-    for item in summary.done_tasks_detail or []:
+    for item in getattr(summary, "done_tasks_detail", None) or []:
         task_details.append(
             {
                 "title_digest": sensitive_digest(getattr(item, "title", None)),
