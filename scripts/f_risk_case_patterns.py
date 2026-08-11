@@ -59,6 +59,8 @@ def build_window_signature(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     signal_hits: list[str] = []
     sequence: list[list[str]] = []
     key_signals = [
+        ("f_cluster", lambda r: bool(r.get("f_event_cluster_flag"))),
+        ("recent_f", lambda r: 0 < float(r.get("days_since_last_f") or 999) <= 7),
         ("sleep_short", lambda r: float(r.get("sleep_short_streak") or 0) >= 2),
         ("stress", lambda r: bool(r.get("notes_stress_flag"))),
         ("fatigue", lambda r: bool(r.get("notes_fatigue_flag"))),

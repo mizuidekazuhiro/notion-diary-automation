@@ -5,6 +5,7 @@ from typing import Any
 from scripts.f_risk_case_patterns import FRiskEventCase
 
 FEATURE_KEYS = [
+    "days_since_last_f", "f_event_count_rolling_7d", "f_event_count_rolling_14d", "f_event_count_rolling_30d", "f_event_cluster_flag",
     "sleep_hours", "sleep_short_streak", "bedtime_min", "sleep_score", "sleep_hours_lag_1", "sleep_hours_rolling_mean_3d",
     "notes_stress_flag", "notes_fatigue_flag", "notes_social_load_flag", "notes_sleep_issue_flag", "notes_has_drinking",
     "notes_has_late_work", "notes_has_social", "notes_has_regret", "notes_has_conflict", "late_outing_flag", "multi_stop_flag",
@@ -146,6 +147,9 @@ def matched_feature_names(*, recent_rows: list[dict[str, Any]], pre_rows: list[d
     base = pre_rows[-1]
     names: list[str] = []
     labels = {
+        "days_since_last_f": "前回Fからの日数",
+        "f_event_count_rolling_7d": "直近7日のF回数",
+        "f_event_cluster_flag": "F集中期間",
         "sleep_short_streak": "短睡眠連続",
         "notes_social_load_flag": "social load",
         "notes_stress_flag": "stress",

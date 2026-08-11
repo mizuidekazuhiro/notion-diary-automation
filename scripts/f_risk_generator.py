@@ -19,6 +19,9 @@ from scripts.f_risk_case_similarity import compute_case_similarity
 from scripts.today_advice_feature_builder import build_daily_feature_table
 
 
+F_RECURRENCE_WINDOWS = (7, 14, 30)
+
+
 @dataclass(frozen=True)
 class FRiskResult:
     alert_text: Optional[str]
@@ -31,6 +34,74 @@ class FRiskResult:
 
 def _json_dumps(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _parse_feature_date(value: object):
+    text = str(value or "").strip()[:10]
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _is_f_event(value: object) -> bool:
+    if value is None:
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return bool(value)
+    return not math.isnan(number) and number > 0
+
+
+def _calculate_f_recurrence_features(rows: list[tuple[object, object]]) -> list[dict[str, Any]]:
+    """Build point-in-time-safe recurrence features from (date, F flag) rows.
+
+    An F event on the feature row's own date is deliberately excluded. This keeps
+    the prediction inputs limited to information that was known before that day.
+    """
+    parsed_rows = [(_parse_feature_date(date_value), _is_f_event(event_flag)) for date_value, event_flag in rows]
+    event_dates = sorted({date_value for date_value, is_event in parsed_rows if date_value is not None and is_event})
+    features: list[dict[str, Any]] = []
+    for current_date, _ in parsed_rows:
+        prior_events = [event_date for event_date in event_dates if current_date is not None and event_date < current_date]
+        days_since_last_f = (current_date - prior_events[-1]).days if prior_events else None
+        rolling_counts = {
+            window: sum(1 for event_date in prior_events if 0 < (current_date - event_date).days <= window)
+            for window in F_RECURRENCE_WINDOWS
+        } if current_date is not None else {window: 0 for window in F_RECURRENCE_WINDOWS}
+        features.append(
+            {
+                "days_since_last_f": days_since_last_f,
+                "f_event_count_rolling_7d": rolling_counts[7],
+                "f_event_count_rolling_14d": rolling_counts[14],
+                "f_event_count_rolling_30d": rolling_counts[30],
+                "f_event_cluster_flag": int(rolling_counts[7] >= 2 or rolling_counts[14] >= 3),
+            }
+        )
+    return features
+
+
+def _add_f_recurrence_features(work: Any) -> Any:
+    out = work.copy()
+    rows = list(zip(out["date"].tolist(), out["f_event_flag"].tolist()))
+    features = _calculate_f_recurrence_features(rows)
+    for name in (
+        "days_since_last_f",
+        "f_event_count_rolling_7d",
+        "f_event_count_rolling_14d",
+        "f_event_count_rolling_30d",
+        "f_event_cluster_flag",
+    ):
+        out.loc[:, name] = [item[name] for item in features]
+    return out
+
+
+def _prediction_f_recurrence_features(train: Any, *, prediction_date: str) -> dict[str, Any]:
+    rows = list(zip(train["date"].tolist(), train["f_event_flag"].tolist()))
+    return _calculate_f_recurrence_features([*rows, (prediction_date, 0)])[-1]
 
 
 def _render_f_risk_alert(*, risk_json: dict[str, Any], model: str) -> tuple[Optional[str], bool, Optional[str]]:
@@ -161,6 +232,7 @@ def generate_f_risk(
     df = build_daily_feature_table(histories, labels)
     work = df.copy().sort_values("date").reset_index(drop=True)
     work["f_event_flag"] = (work["expense_f_count"].fillna(0) > 0).astype(int)
+    work = _add_f_recurrence_features(work)
     train = work.copy()
     if len(train) < 12:
         risk_json["skipped_reason"] = "insufficient_samples"
@@ -306,7 +378,7 @@ def generate_f_risk(
             "model_used": {"recent": recent_model.get("model"), "long_term": longterm_model.get("model")},
             "history_count": len(train),
             "class_balance": float(train["f_event_flag"].mean()),
-            "used_feature_groups": ["lag", "rolling", "streak", "interaction", "notes", "sleep", "weather", "weekday"],
+            "used_feature_groups": ["f_history_recurrence", "lag", "rolling", "streak", "interaction", "notes", "sleep", "weather", "weekday"],
             "input_groups_available": availability["available_groups"],
             "input_groups_unavailable": availability["unavailable_groups"],
             "excluded_reasons": availability["excluded_reasons"],
@@ -359,6 +431,12 @@ def generate_f_risk(
             "f_risk_rule_hits": rule_meta.get("hits", []),
             "f_risk_rule_protective_hits": rule_meta.get("protective_hits", []),
             "f_risk_level": risk_level,
+            "days_since_last_f": _to_float(today.iloc[0].get("days_since_last_f")),
+            "f_event_count_rolling_7d": int(_to_float(today.iloc[0].get("f_event_count_rolling_7d")) or 0),
+            "f_event_count_rolling_14d": int(_to_float(today.iloc[0].get("f_event_count_rolling_14d")) or 0),
+            "f_event_count_rolling_30d": int(_to_float(today.iloc[0].get("f_event_count_rolling_30d")) or 0),
+            "f_event_cluster_flag": bool(today.iloc[0].get("f_event_cluster_flag")),
+            "f_event_cluster_definition": "rolling_7d>=2 or rolling_14d>=3",
             "forbidden_today_features_used": forbidden_used,
             "forbidden_today_features_used_detail": [name for name in forbidden_feature_names if name in prediction_feature_names],
             "prediction_feature_names": prediction_feature_names,
@@ -706,6 +784,8 @@ def _fit_model(train: Any, today_row: Any, *, sample_weight_mode: str = "uniform
 
 def _build_xy(train: Any, today_row: Any):
     features = [
+        "days_since_last_f", "f_event_count_rolling_7d", "f_event_count_rolling_14d",
+        "f_event_count_rolling_30d", "f_event_cluster_flag",
         "sleep_hours_lag_1", "sleep_short_streak", "social_load_streak", "late_work_streak", "exercise_streak",
         "sleep_short_x_social_load", "stress_x_late_work", "drinking_x_low_sleep", "high_carb_x_low_sleep",
         "weather_precip_probability_max_lag_1",
@@ -731,6 +811,14 @@ def _build_xy(train: Any, today_row: Any):
 
 def _derive_matched_features(today: dict[str, Any]) -> list[str]:
     matched: list[str] = []
+    days_since_last_f = _to_float(today.get("days_since_last_f"))
+    if days_since_last_f is not None and days_since_last_f <= 7:
+        matched.append(f"前回Fから{int(days_since_last_f)}日")
+    rolling_7d = int(_to_float(today.get("f_event_count_rolling_7d")) or 0)
+    if rolling_7d >= 2:
+        matched.append(f"直近7日でFが{rolling_7d}回")
+    if bool(today.get("f_event_cluster_flag")):
+        matched.append("F集中期間")
     if _to_float(today.get("sleep_short_streak")) and _to_float(today.get("sleep_short_streak")) >= 2:
         matched.append("睡眠短縮が連続")
     if bool(today.get("notes_stress_flag_lag_1")):
@@ -754,6 +842,9 @@ def _derive_matched_features(today: dict[str, Any]) -> list[str]:
 
 def _derive_protective_features(today: dict[str, Any]) -> list[str]:
     items: list[str] = []
+    days_since_last_f = _to_float(today.get("days_since_last_f"))
+    if days_since_last_f is not None and days_since_last_f >= 14:
+        items.append("前回Fから14日以上経過")
     if _to_float(today.get("exercise_streak")) and _to_float(today.get("exercise_streak")) >= 2:
         items.append("運動継続")
     if bool(today.get("notes_has_money_saved")):
@@ -765,6 +856,16 @@ def _score_rule_based_risk(today: dict[str, Any]) -> dict[str, Any]:
     score = 0
     hits: list[str] = []
     protective: list[str] = []
+    days_since_last_f = _to_float(today.get("days_since_last_f"))
+    if days_since_last_f is not None and days_since_last_f <= 3:
+        score += 2
+        hits.append("days_since_last_f<=3")
+    elif days_since_last_f is not None and days_since_last_f <= 7:
+        score += 1
+        hits.append("days_since_last_f<=7")
+    if bool(today.get("f_event_cluster_flag")):
+        score += 2
+        hits.append("f_event_cluster_flag")
     if (_to_float(today.get("sleep_hours_lag_1")) or 24) < 6:
         score += 2
         hits.append("sleep_hours_lag_1<6")
@@ -789,6 +890,9 @@ def _score_rule_based_risk(today: dict[str, Any]) -> dict[str, Any]:
     if (_to_float(today.get("study_consistency_score_7d")) or 0) >= 0.7:
         score -= 1
         protective.append("study_consistency_score_7d")
+    if days_since_last_f is not None and days_since_last_f >= 14:
+        score -= 1
+        protective.append("days_since_last_f>=14")
     return {"score": score, "hits": hits, "protective_hits": protective}
 
 
@@ -1047,6 +1151,9 @@ def _build_prediction_row(train: Any, *, prediction_date: str, daily_log_context
     for forbidden in ("spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"):
         if forbidden in row.columns:
             row.loc[:, forbidden] = None
+    recurrence = _prediction_f_recurrence_features(train, prediction_date=prediction_date)
+    for name, value in recurrence.items():
+        row.loc[:, name] = value
     return row
 
 
@@ -1111,6 +1218,7 @@ def _build_input_availability(work: Any) -> dict[str, Any]:
         "location": ["location_present_flag", "late_outing_flag", "multi_stop_flag"],
         "weather": ["weather_retrieved_flag", "weather_code", "weather_precip_probability_max"],
         "schedule": ["schedule_signal_available_flag", "schedule_same_day_event_count"],
+        "f_history": ["days_since_last_f", "f_event_count_rolling_7d", "f_event_count_rolling_14d", "f_event_count_rolling_30d", "f_event_cluster_flag"],
     }
     available: list[str] = []
     unavailable: list[str] = []
@@ -1159,6 +1267,8 @@ def _rule_based_fallback(today: dict[str, Any], *, availability: dict[str, Any])
     fatigue = bool(today.get("notes_fatigue_flag"))
     f_spend = (_to_float(today.get("expense_f_count")) or 0) > 0
     weekend_or_late = bool(today.get("is_weekend")) or late_outing
+    recent_f = (_to_float(today.get("days_since_last_f")) or 999) <= 7
+    recurrence_cluster = bool(today.get("f_event_cluster_flag"))
 
     if short_sleep and stress and late_outing:
         matches.append("短睡眠連続 + stress signal + late outing")
@@ -1168,6 +1278,8 @@ def _rule_based_fallback(today: dict[str, Any], *, availability: dict[str, Any])
         matches.append("支出スパイク + social load + fatigue")
     if f_spend and short_sleep and weekend_or_late:
         matches.append("F支出あり + 短睡眠 + 週末/夜行動パターン")
+    if recent_f and recurrence_cluster:
+        matches.append("前回Fから7日以内 + F集中期間")
 
     matched = len(matches) >= 1
     return {
