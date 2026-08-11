@@ -1706,6 +1706,7 @@ def _compute_f_risk_alert_runtime(
             ),
         },
         "today_expense_f_aggregate_ignored_for_prediction": True,
+        "f_recurrence_feature_version": 1,
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(hash_payload)
     previous_input_hash = (previous_state.get("input_hash") or "").strip() or None
