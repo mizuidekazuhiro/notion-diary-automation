@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -17,6 +18,14 @@ class IngestResult:
     summary_text: str
     sources: List[str]
     raw_payload: Dict[str, Any]
+
+
+class HealthDataQualityError(RuntimeError):
+    """Raised after Phase A records all source results when Health is unusable."""
+
+
+BLOCKING_HEALTH_STATUSES = {"failed"}
+WARNING_HEALTH_STATUSES = {"no_data", "stale", "degraded"}
 
 
 def ingest_sources(
@@ -56,6 +65,10 @@ def ingest_sources(
     summary_blocks: Dict[str, Any] = {}
     raw_payload: Dict[str, Any] = {}
     sources: List[str] = []
+    blocking_health_status: Optional[str] = None
+    blocking_health_error_code: Optional[str] = None
+    warning_health_status: Optional[str] = None
+    warning_health_error_code: Optional[str] = None
 
     for connector in connectors:
         result = connector.fetch(target_date)
@@ -74,6 +87,18 @@ def ingest_sources(
         summary_blocks.update(rendered.get("summary_blocks", {}))
         raw_payload[connector.id] = rendered.get("raw_payload", {})
         sources.append(connector.id)
+        if connector.id == "health":
+            health_status = str(getattr(result, "status", "failed") or "failed").lower()
+            if health_status in BLOCKING_HEALTH_STATUSES:
+                blocking_health_status = health_status
+                blocking_health_error_code = (
+                    str(getattr(result, "error_code", "") or "").strip() or None
+                )
+            elif health_status in WARNING_HEALTH_STATUSES:
+                warning_health_status = health_status
+                warning_health_error_code = (
+                    str(getattr(result, "error_code", "") or "").strip() or None
+                )
 
     done_items = summary_blocks.get("done_items", [])
     drop_items = summary_blocks.get("drop_items", [])
@@ -122,6 +147,25 @@ def ingest_sources(
     _log_patch_summary("/api/daily_log/upsert", upsert_response)
     if after_step:
         after_step("upsert")
+
+    if warning_health_status:
+        logging.warning(
+            "phase_a_health_quality_warning status=%s error_code=%s processing_continues=true",
+            warning_health_status,
+            warning_health_error_code or "unknown",
+        )
+
+    if blocking_health_status:
+        logging.error(
+            "phase_a_health_quality_gate_failed status=%s error_code=%s",
+            blocking_health_status,
+            blocking_health_error_code or "unknown",
+        )
+        raise HealthDataQualityError(
+            "health source is unusable: "
+            f"status={blocking_health_status} "
+            f"error_code={blocking_health_error_code or 'unknown'}"
+        )
 
     return IngestResult(
         summary_html=summary_html,

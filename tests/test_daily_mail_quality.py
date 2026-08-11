@@ -157,7 +157,7 @@ def test_quality_detects_missing_payload_optional_keys() -> None:
     assert "payload_missing_meal_photos" in codes
 
 
-def test_quality_gate_fails_when_health_is_empty() -> None:
+def test_quality_gate_warns_but_does_not_fail_when_health_is_empty() -> None:
     summary = _summary(
         sleep_duration_min=None,
         sleep_score=None,
@@ -167,13 +167,32 @@ def test_quality_gate_fails_when_health_is_empty() -> None:
         protein=None,
         fat=None,
         carb=None,
+        payload_has_location_summary_gpt=True,
+        payload_has_meal_photos_raw=True,
+        location_summary="渋谷",
+        meal_photos=["https://example.com/a.jpg"],
+        mail_input_snapshot_json='{"meal_photos":["https://example.com/a.jpg"],"location_summary":"渋谷"}',
     )
 
-    report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary", mail_html="<html></html>")
+    report = build_quality_report(
+        summary,
+        mail_plain_text="Daily Log\nToday advice\nDiary\nLocation summary: 渋谷\n- https://example.com/a.jpg",
+        mail_html='<img src="https://example.com/a.jpg" />',
+    )
 
     assert "health_no_data" in _codes(report)
     assert "today_sleep_no_data" in _codes(report)
-    assert report["status"] == "fail"
+    health_issues = {
+        str(issue.get("code")): str(issue.get("severity"))
+        for issue in report["issues"]
+        if isinstance(issue, dict)
+        and issue.get("code") in {"health_no_data", "today_sleep_no_data"}
+    }
+    assert health_issues == {
+        "health_no_data": "warning",
+        "today_sleep_no_data": "warning",
+    }
+    assert report["status"] == "warning"
 
 
 def test_quality_gate_fails_when_expense_f_query_failed() -> None:

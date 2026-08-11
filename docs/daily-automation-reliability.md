@@ -12,7 +12,7 @@
 ## Implemented behavior
 
 - Expense F uses `F.equals=true` and `FamilyCard.equals=false`. Errors expose only HTTP status, Notion error code, exception class, a bounded response message, and filter strategy.
-- Health freshness uses `ok`, `no_data`, `stale`, `degraded`, and `failed` plus `data_date`, `last_valid_at`, `completeness`, `available_fields`, and `error_code`. Empty pages are not copied to Daily Log and are not considered successful.
+- Health freshness uses `ok`, `no_data`, `stale`, `degraded`, and `failed` plus `data_date`, `last_valid_at`, `completeness`, `available_fields`, and `error_code`. Empty pages are not copied to Daily Log. Data absence is reported as a non-blocking warning, while transport/API failure remains blocking.
 - Today sleep is limited to saved target-date properties or a candidate attributed to the target date by the canonical boundary. Historical sleep remains available only to trend calculations.
 - F Risk order is ML scoring, scoring fallback, final score, risk level, then match. Query failures in historical Expense F data stop scoring as unavailable instead of becoming zero-event days.
 - Phase C uses only `success`, `degraded`, `skipped`, and `failed`. `query_failed`, stale/no-data inputs, fallback, or skip reasons cannot become success.
@@ -92,7 +92,7 @@ CI must not print Notes, exact locations/addresses, merchants, raw health detail
 
 ## Enforced final quality gate
 
-Daily Diary 04 keeps mail delivery before enforcement. Its final step reads the redacted quality artifact and fails the workflow when a critical source or analysis is not trustworthy. Critical failures include missing or low-completeness Health, no target-date sleep candidate, missing/unavailable Expense F status, unreadable or missing F Risk state, degraded F Risk, fallback scoring, and missing F Risk observability metadata.
+Daily Diary 04 keeps mail delivery before enforcement. Its final step reads the redacted quality artifact and fails the workflow when a critical source or analysis is not trustworthy. Missing or low-completeness Health and no target-date sleep candidate are warnings only, so they do not interrupt the daily chain. Critical failures still include missing/unavailable Expense F status, unreadable or missing F Risk state, degraded F Risk, fallback scoring, and missing F Risk observability metadata.
 
 The GitHub step summary contains status names, completeness, field names, reason codes, counts, and hashes only. It does not contain Notes text, locations, merchants, raw Health values, or the mail body. A warning remains non-blocking by default; any error makes Daily Diary 04 red after the mail attempt.
 

@@ -44,7 +44,7 @@ class HealthConnector:
                 available_fields=tuple(quality["available_fields"]),
                 error_code=quality["error_code"],
             )
-        except Exception as exc:  # noqa: BLE001 - ensure Phase A continues
+        except Exception as exc:  # noqa: BLE001 - let Phase A finish other connectors before its quality gate
             logging.warning("health_ingest_failed exception_class=%s error_code=connector_exception", exc.__class__.__name__)
             return HealthIngestResult(
                 target_date=target_date,

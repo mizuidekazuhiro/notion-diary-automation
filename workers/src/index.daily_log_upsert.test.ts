@@ -10,6 +10,7 @@ const {
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
+  buildHealthNutritionPatchProperties,
   parseStudyPayload,
   applyStudyUpdateProperties,
 } = __test__;
@@ -29,6 +30,72 @@ const {
   });
   assert.equal(JSON.stringify(body).includes("Source"), false);
   assert.equal(JSON.stringify(body).includes("healthkit"), false);
+})();
+
+(() => {
+  const schema = {
+    Protein: { type: "number" },
+    Fat: { type: "number" },
+    Carb: { type: "number" },
+    Kcal: { type: "number" },
+    Weight: { type: "number" },
+    "Meal summary": { type: "rich_text" },
+  };
+  const propertyNames = {
+    protein: "Protein",
+    fat: "Fat",
+    carb: "Carb",
+    kcal: "Kcal",
+    weight: "Weight",
+  } as any;
+  const result = buildHealthNutritionPatchProperties({
+    dailyLogProperties: schema,
+    propertyNames,
+    protein: null,
+    fat: null,
+    carb: null,
+    kcal: null,
+    weight: null,
+  });
+
+  assert.deepEqual(result.properties, {});
+  assert.deepEqual(
+    result.preservedEmptyFields.sort(),
+    ["Protein", "Fat", "Carb", "Kcal", "Weight", "Meal summary"].sort(),
+  );
+})();
+
+(() => {
+  const schema = {
+    Protein: { type: "number" },
+    Fat: { type: "number" },
+    Carb: { type: "number" },
+    Kcal: { type: "number" },
+    Weight: { type: "number" },
+    "Meal summary": { type: "rich_text" },
+  };
+  const result = buildHealthNutritionPatchProperties({
+    dailyLogProperties: schema,
+    propertyNames: {
+      protein: "Protein",
+      fat: "Fat",
+      carb: "Carb",
+      kcal: "Kcal",
+      weight: "Weight",
+    } as any,
+    protein: 80,
+    fat: null,
+    carb: null,
+    kcal: 1500,
+    weight: null,
+  });
+
+  assert.equal((result.properties.Protein as any).number, 80);
+  assert.equal((result.properties.Kcal as any).number, 1500);
+  assert.equal("Fat" in result.properties, false);
+  assert.equal("Carb" in result.properties, false);
+  assert.equal("Weight" in result.properties, false);
+  assert.equal("Meal summary" in result.properties, true);
 })();
 
 (() => {

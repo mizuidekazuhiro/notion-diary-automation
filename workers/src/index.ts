@@ -1929,6 +1929,73 @@ function hasNonEmptyValue(value: unknown): boolean {
   return true;
 }
 
+function buildHealthNutritionPatchProperties(params: {
+  dailyLogProperties: Record<string, any>;
+  propertyNames: DailyLogHealthPropertyNames;
+  protein: number | null;
+  fat: number | null;
+  carb: number | null;
+  kcal: number | null;
+  weight: number | null;
+}): { properties: Record<string, any>; preservedEmptyFields: string[] } {
+  const properties: Record<string, any> = {};
+  const preservedEmptyFields: string[] = [];
+  const numberFields: Array<[string, number | null]> = [
+    [params.propertyNames.protein, params.protein],
+    [params.propertyNames.fat, params.fat],
+    [params.propertyNames.carb, params.carb],
+    [params.propertyNames.kcal, params.kcal],
+    [params.propertyNames.weight, params.weight],
+  ];
+
+  for (const [propertyName, value] of numberFields) {
+    if (!hasNonEmptyValue(value)) {
+      preservedEmptyFields.push(propertyName);
+      continue;
+    }
+    const resolvedPropertyName = canUseProperty(
+      params.dailyLogProperties,
+      propertyName,
+      "number",
+      `health_ingest:${propertyName}`,
+    );
+    if (resolvedPropertyName) {
+      properties[resolvedPropertyName] = createNumberProperty(value);
+    }
+  }
+
+  const hasMealSummaryInput = [
+    params.protein,
+    params.fat,
+    params.carb,
+    params.kcal,
+    params.weight,
+  ].some(hasNonEmptyValue);
+  if (hasMealSummaryInput) {
+    const mealSummaryPropertyName = canUseProperty(
+      params.dailyLogProperties,
+      "Meal summary",
+      "rich_text",
+      "health_ingest:meal_summary",
+    );
+    if (mealSummaryPropertyName) {
+      properties[mealSummaryPropertyName] = createRichTextProperty(
+        formatMealSummary(
+          params.protein,
+          params.fat,
+          params.carb,
+          params.kcal,
+          params.weight,
+        ),
+      );
+    }
+  } else {
+    preservedEmptyFields.push("Meal summary");
+  }
+
+  return { properties, preservedEmptyFields };
+}
+
 function buildWeatherSummaryText(params: {
   weatherCode: number | null;
   weatherTempMaxC: number | null;
@@ -2759,7 +2826,6 @@ async function handleDailyLogHealthIngest(
   const mealPhotos = normalizeFilesFromProperty(
     getResolvedProperty(healthProps, healthPropertyNames.mealPhoto, "health_ingest:meal_photo"),
   );
-  const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
   const availableHealthFields = getMajorHealthAvailableFields(healthProps, healthPropertyNames);
   const healthDataDate =
     getDateStartFromProperty(healthProps[healthPropertyNames.date]) || targetDate;
@@ -2836,46 +2902,16 @@ async function handleDailyLogHealthIngest(
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
   const existingPage = resolvedDailyLog.canonicalPage;
   const updateProperties: Record<string, any> = {};
-
-  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.protein, "number")) {
-    updateProperties[dailyLogHealthPropertyNames.protein] =
-      createNumberProperty(protein);
-  } else {
-    console.warn(
-      `Daily_Log missing number property "${dailyLogHealthPropertyNames.protein}", skipping.`,
-    );
-  }
-  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.fat, "number")) {
-    updateProperties[dailyLogHealthPropertyNames.fat] = createNumberProperty(fat);
-  } else {
-    console.warn(
-      `Daily_Log missing number property "${dailyLogHealthPropertyNames.fat}", skipping.`,
-    );
-  }
-  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.carb, "number")) {
-    updateProperties[dailyLogHealthPropertyNames.carb] =
-      createNumberProperty(carb);
-  } else {
-    console.warn(
-      `Daily_Log missing number property "${dailyLogHealthPropertyNames.carb}", skipping.`,
-    );
-  }
-  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.kcal, "number")) {
-    updateProperties[dailyLogHealthPropertyNames.kcal] =
-      createNumberProperty(kcal);
-  } else {
-    console.warn(
-      `Daily_Log missing number property "${dailyLogHealthPropertyNames.kcal}", skipping.`,
-    );
-  }
-  if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.weight, "number")) {
-    updateProperties[dailyLogHealthPropertyNames.weight] =
-      createNumberProperty(weight);
-  } else {
-    console.warn(
-      `Daily_Log missing number property "${dailyLogHealthPropertyNames.weight}", skipping.`,
-    );
-  }
+  const nutritionPatch = buildHealthNutritionPatchProperties({
+    dailyLogProperties,
+    propertyNames: dailyLogHealthPropertyNames,
+    protein,
+    fat,
+    carb,
+    kcal,
+    weight,
+  });
+  Object.assign(updateProperties, nutritionPatch.properties);
   if (hasPropertyType(dailyLogProperties, dailyLogHealthPropertyNames.mealPhoto, "files")) {
     const existingMealPhotos = normalizeFilesFromProperty(
       existingPage?.properties?.[dailyLogHealthPropertyNames.mealPhoto],
@@ -2889,11 +2925,6 @@ async function handleDailyLogHealthIngest(
     console.warn(
       `Daily_Log missing files property "${dailyLogHealthPropertyNames.mealPhoto}", skipping.`,
     );
-  }
-  if (hasPropertyType(dailyLogProperties, "Meal summary", "rich_text")) {
-    updateProperties["Meal summary"] = createRichTextProperty(mealSummary);
-  } else {
-    console.warn('Daily_Log missing rich_text property "Meal summary", skipping.');
   }
   const sleepStartPropertyName = canUseProperty(
     dailyLogProperties,
@@ -3041,6 +3072,7 @@ async function handleDailyLogHealthIngest(
       page_id: pageId,
       health_page_id: healthPage.id,
       health_quality: healthQuality,
+      preserved_empty_fields: nutritionPatch.preservedEmptyFields,
     }),
     { headers: jsonHeaders },
   );
@@ -5734,6 +5766,7 @@ export const __test__ = {
   getMealPhotosFilesCount,
   buildDailyLogUpsertDiagnostics,
   sanitizeMealPhotosPatchProperties,
+  buildHealthNutritionPatchProperties,
   parseStudyPayload,
   applyStudyUpdateProperties,
 };
