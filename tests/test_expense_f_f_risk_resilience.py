@@ -15,6 +15,12 @@ from scripts.note_batch_labeler import NoteLabel
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
 
 
+@pytest.fixture(autouse=True)
+def _isolate_github_actions_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unit tests independent from the runner's infrastructure environment."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 def _summary(day: int, **overrides: object) -> DailyLogSummary:
     payload = dict(
         target_date=f"2026-03-{day:02d}",
@@ -75,6 +81,18 @@ def _summary(day: int, **overrides: object) -> DailyLogSummary:
     )
     payload.update(overrides)
     return DailyLogSummary(**payload)
+
+
+def test_f_risk_expense_hydration_fails_closed_without_credentials_in_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("NOTION_TOKEN", raising=False)
+    monkeypatch.delenv("EXPENSES_DB_ID", raising=False)
+
+    result = f_risk_generator._hydrate_expense_f_from_expenses_db([_summary(1)])
+
+    assert result[0].expense_f_data_status == "query_failed"
 
 
 def test_expense_f_missing_env_includes_missing_keys(monkeypatch: pytest.MonkeyPatch) -> None:
