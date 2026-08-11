@@ -17,6 +17,22 @@ GENERIC_PHRASES = (
 )
 TREND_TERMS = ("直近", "7日", "過去", "傾向", "高評価", "低評価", "good", "bad")
 NON_SLEEP_TERMS = ("行動", "記録", "学習", "勉強", "タスク", "食事", "支出", "notes", "場所")
+MAJOR_HEALTH_FIELDS = (
+    "resolved_sleep_duration_min",
+    "sleep_score",
+    "readiness_hrv",
+    "readiness_bpm",
+    "kcal",
+    "protein",
+    "fat",
+    "carb",
+)
+INVALID_EXPENSE_F_STATUSES = {
+    "query_failed",
+    "schema_unresolved",
+    "schema_unavailable",
+    "expenses_data_unavailable",
+}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -76,6 +92,8 @@ def build_quality_report(
     mail_html: str,
     run_id: str = "",
     run_url: str = "",
+    f_risk_state: Mapping[str, object] | None = None,
+    f_risk_state_read_ok: bool | None = None,
 ) -> dict[str, object]:
     min_chars = _env_int("DAILY_MAIL_TODAY_ADVICE_MIN_CHARS", DEFAULT_TODAY_ADVICE_MIN_CHARS)
     max_chars = _env_int("DAILY_MAIL_TODAY_ADVICE_MAX_CHARS", DEFAULT_TODAY_ADVICE_MAX_CHARS)
@@ -94,6 +112,113 @@ def build_quality_report(
     target_date = _text(_get(summary, "target_date")) or _text(_get(summary, "date"))
     today_advice = _text(_get(summary, "today_advice"))
     today_advice_chars = _compact_len(today_advice)
+
+    health_available_fields = [name for name in MAJOR_HEALTH_FIELDS if _safe_float(_get(summary, name)) is not None]
+    health_completeness = round(len(health_available_fields) / len(MAJOR_HEALTH_FIELDS), 3)
+    health_status = "ok"
+    if not health_available_fields:
+        health_status = "no_data"
+        _add_issue(
+            issues,
+            "health_no_data",
+            "error",
+            "No major Health fields are available for the target date.",
+            "Check the Health sender, Worker ingest response, and the target-date Health page. Do not copy an older value.",
+        )
+    elif health_completeness < 0.5:
+        health_status = "degraded"
+        _add_issue(
+            issues,
+            "health_low_completeness",
+            "error",
+            "Fewer than half of the major Health fields are available for the target date.",
+            "Inspect the redacted Health freshness result and restore the missing source fields.",
+        )
+
+    today_sleep_available = _has_numeric(summary, "resolved_sleep_duration_min", "sleep_duration_min", "sleep_score") or _has_text(
+        summary,
+        "sleep_start",
+        "sleep_end",
+    )
+    today_sleep_status = "ok" if today_sleep_available else "no_data"
+    if not today_sleep_available:
+        _add_issue(
+            issues,
+            "today_sleep_no_data",
+            "error",
+            "No target-date sleep candidate is available.",
+            "Keep Today advice free of sleep duration/score values and verify the Health source for this date.",
+        )
+
+    expense_f_status = _text(_get(summary, "expense_f_data_status")) or "missing"
+    if expense_f_status == "missing":
+        _add_issue(
+            issues,
+            "expense_f_status_missing",
+            "error",
+            "Expense F data status is missing, so zero events cannot be distinguished from a query failure.",
+            "Verify Expense F aggregation persistence and Daily Log readback.",
+        )
+    elif expense_f_status in INVALID_EXPENSE_F_STATUSES:
+        _add_issue(
+            issues,
+            "expense_f_unavailable",
+            "error",
+            f"Expense F is unavailable ({expense_f_status}).",
+            "Inspect the sanitized Notion error metadata and rerun the supported checkbox query.",
+        )
+
+    f_risk_status = "not_evaluated"
+    if f_risk_state is not None:
+        if f_risk_state_read_ok is False:
+            f_risk_status = "failed"
+            _add_issue(
+                issues,
+                "f_risk_state_read_failed",
+                "error",
+                "F Risk state could not be read.",
+                "Check the state backend credentials and branch/path availability.",
+            )
+        elif not f_risk_state:
+            f_risk_status = "no_data"
+            _add_issue(
+                issues,
+                "f_risk_state_missing",
+                "error",
+                "F Risk has no state row for the target date.",
+                "Inspect Phase C generation and state persistence for this target date.",
+            )
+        else:
+            f_risk_status = _text(f_risk_state.get("data_status")) or "missing"
+            if f_risk_status != "ok":
+                _add_issue(
+                    issues,
+                    "f_risk_not_ok",
+                    "error",
+                    f"F Risk data status is {f_risk_status}.",
+                    "Inspect the redacted ML skip, fallback, and source-quality reason fields.",
+                )
+            if bool(f_risk_state.get("fallback_used")):
+                _add_issue(
+                    issues,
+                    "f_risk_fallback_used",
+                    "error",
+                    "F Risk used fallback scoring.",
+                    "Review the recorded fallback and training-data reason before treating the score as normal.",
+                )
+            missing_observability = [
+                name
+                for name in ("input_hash", "generated_at")
+                if not _text(f_risk_state.get(name))
+            ]
+            if missing_observability:
+                _add_issue(
+                    issues,
+                    "f_risk_observability_missing",
+                    "error",
+                    "F Risk is missing required observability metadata.",
+                    "Regenerate the target date with input_hash and generated_at persistence enabled.",
+                )
 
     if not _text(mail_plain_text):
         _add_issue(issues, "mail_plain_text_empty", "error", "Rendered mail plain text is empty.")
@@ -236,6 +361,14 @@ def build_quality_report(
         "daily_log_duplicate_merge_completed": duplicate_merge_completed,
         "daily_log_duplicate_has_location_summary": duplicate_has_location_summary,
         "daily_log_duplicate_has_meal_photos": duplicate_has_meal_photos,
+        "health_status": health_status,
+        "health_completeness": health_completeness,
+        "health_available_fields": health_available_fields,
+        "today_sleep_status": today_sleep_status,
+        "expense_f_status": expense_f_status,
+        "f_risk_status": f_risk_status,
+        "f_risk_state_read_ok": f_risk_state_read_ok,
+        "f_risk_fallback_used": bool(f_risk_state.get("fallback_used")) if f_risk_state else False,
     }
     return _finalize(target_date, run_id, run_url, issues, metrics, sections)
 

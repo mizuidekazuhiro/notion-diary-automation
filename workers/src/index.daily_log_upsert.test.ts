@@ -3,6 +3,7 @@ import { __test__ } from "./index";
 
 const {
   buildHealthIngestQueryBody,
+  buildLatestValidHealthQueryBody,
   buildDailyLogProperties,
   buildDailyLogUpsertProperties,
   getHealthPropertyNames,
@@ -28,6 +29,19 @@ const {
   });
   assert.equal(JSON.stringify(body).includes("Source"), false);
   assert.equal(JSON.stringify(body).includes("healthkit"), false);
+})();
+
+(() => {
+  const healthPropertyNames = getHealthPropertyNames({
+    HEALTH_DATE_PROPERTY_NAME: "Date",
+  } as any);
+  const body = buildLatestValidHealthQueryBody("2026-08-10", healthPropertyNames);
+
+  assert.deepEqual(body, {
+    page_size: 50,
+    filter: { property: "Date", date: { on_or_before: "2026-08-10" } },
+    sorts: [{ property: "Date", direction: "descending" }],
+  });
 })();
 
 (() => {

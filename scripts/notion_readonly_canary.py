@@ -69,6 +69,24 @@ def _find_property(properties: dict[str, Any], aliases: tuple[str, ...]) -> obje
     return None
 
 
+def _date_start(prop: object) -> str | None:
+    if not isinstance(prop, dict) or prop.get("type") != "date":
+        return None
+    value = prop.get("date")
+    if not isinstance(value, dict):
+        return None
+    start = value.get("start")
+    return str(start).strip() if start else None
+
+
+def _health_available_fields(properties: dict[str, Any]) -> list[str]:
+    return sorted(
+        name
+        for name, aliases in MAJOR_HEALTH_FIELDS.items()
+        if _number_present(_find_property(properties, aliases))
+    )
+
+
 def run_canary(*, token: str, expenses_db_id: str, health_db_id: str, daily_log_db_id: str) -> list[CanaryResult]:
     base = "https://api.notion.com/v1"
     results: list[CanaryResult] = []
@@ -104,21 +122,36 @@ def run_canary(*, token: str, expenses_db_id: str, health_db_id: str, daily_log_
         "POST",
         f"{base}/databases/{health_db_id}/query",
         token=token,
-        payload={"sorts": [{"property": "Date", "direction": "descending"}], "page_size": 1},
+        payload={"sorts": [{"property": "Date", "direction": "descending"}], "page_size": 50},
     )
     health_pages = health_query.get("results") if isinstance(health_query.get("results"), list) else []
     health_props = (health_pages[0].get("properties") or {}) if health_pages else {}
-    available = sorted(
-        name
-        for name, aliases in MAJOR_HEALTH_FIELDS.items()
-        if _number_present(_find_property(health_props, aliases))
-    )
-    health_status = "ok" if available else "no_data"
+    available = _health_available_fields(health_props)
+    completeness = round(len(available) / len(MAJOR_HEALTH_FIELDS), 3)
+    health_status = "no_data" if not available else "degraded" if completeness < 0.5 else "ok"
+    date_property = _find_property(health_props, ("Date", "date"))
+    data_date = _date_start(date_property)
+    last_valid_at = None
+    for page in health_pages:
+        if not isinstance(page, dict):
+            continue
+        props = page.get("properties") if isinstance(page.get("properties"), dict) else {}
+        if not _health_available_fields(props):
+            continue
+        last_valid_at = str(page.get("last_edited_time") or "").strip() or _date_start(_find_property(props, ("Date", "date")))
+        break
     results.append(
         CanaryResult(
             "health_latest_quality",
             health_status,
-            {"page_found": bool(health_pages), "available_fields": available, "completeness": round(len(available) / len(MAJOR_HEALTH_FIELDS), 3)},
+            {
+                "page_found": bool(health_pages),
+                "data_date": data_date,
+                "last_valid_at": last_valid_at,
+                "available_fields": available,
+                "completeness": completeness,
+                "error_code": "major_fields_empty" if health_status == "no_data" else "low_completeness" if health_status == "degraded" else None,
+            },
         )
     )
 

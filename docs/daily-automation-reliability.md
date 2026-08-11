@@ -89,3 +89,11 @@ CI must not print Notes, exact locations/addresses, merchants, raw health detail
 - Remove deprecated save flags only after every workflow references the semantic Phase status and Daily Signals dual-write has completed its observation window.
 - Close superseded F Risk/schema PRs after this replacement is merged; do not merge their branches.
 - Run the Notion API migration inventory one domain at a time and keep the legacy query path only as a compatibility fallback until canary parity is proven.
+
+## Enforced final quality gate
+
+Daily Diary 04 keeps mail delivery before enforcement. Its final step reads the redacted quality artifact and fails the workflow when a critical source or analysis is not trustworthy. Critical failures include missing or low-completeness Health, no target-date sleep candidate, missing/unavailable Expense F status, unreadable or missing F Risk state, degraded F Risk, fallback scoring, and missing F Risk observability metadata.
+
+The GitHub step summary contains status names, completeness, field names, reason codes, counts, and hashes only. It does not contain Notes text, locations, merchants, raw Health values, or the mail body. A warning remains non-blocking by default; any error makes Daily Diary 04 red after the mail attempt.
+
+The Notion read-only canary now runs after Daily Diary 04 completes, with a 14:30 JST scheduled fallback. It queries up to 50 recent Health pages so an empty latest page can still report the last page that contained a major Health field. The canary remains read-only and fails independently when the latest source quality is not `ok`.

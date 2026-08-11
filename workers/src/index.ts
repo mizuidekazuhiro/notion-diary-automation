@@ -1581,6 +1581,75 @@ function buildHealthIngestQueryBody(targetDate: string, healthPropertyNames: Hea
   };
 }
 
+function buildLatestValidHealthQueryBody(targetDate: string, healthPropertyNames: HealthPropertyNames): Record<string, any> {
+  return {
+    page_size: 50,
+    filter: { property: healthPropertyNames.date, date: { on_or_before: targetDate } },
+    sorts: [{ property: healthPropertyNames.date, direction: "descending" }],
+  };
+}
+
+function getMajorHealthAvailableFields(
+  properties: Record<string, any>,
+  healthPropertyNames: HealthPropertyNames,
+): string[] {
+  const values: Record<string, number | null | undefined> = {
+    sleep_duration_min: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.sleepDurationMin, "health_quality:sleep_duration"),
+    ),
+    sleep_score: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.sleepScore, "health_quality:sleep_score"),
+    ),
+    readiness_hrv: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.readinessHrv, "health_quality:readiness_hrv"),
+    ),
+    readiness_bpm: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.readinessBpm, "health_quality:readiness_bpm"),
+    ),
+    kcal: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.kcal, "health_quality:kcal"),
+    ),
+    protein: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.protein, "health_quality:protein"),
+    ),
+    fat: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.fat, "health_quality:fat"),
+    ),
+    carb: getNumberFromProperty(
+      getResolvedProperty(properties, healthPropertyNames.carb, "health_quality:carb"),
+    ),
+  };
+  return Object.entries(values)
+    .filter(([, value]) => hasNonEmptyValue(value))
+    .map(([name]) => name)
+    .sort();
+}
+
+async function findLastValidHealthAt(
+  env: Env,
+  targetDate: string,
+  healthPropertyNames: HealthPropertyNames,
+): Promise<string | null> {
+  const response = await notionFetch(env, `/databases/${env.HEALTH_DB_ID}/query`, {
+    method: "POST",
+    body: JSON.stringify(buildLatestValidHealthQueryBody(targetDate, healthPropertyNames)),
+  });
+  if (!response.ok) {
+    console.warn(`Health freshness: could not resolve last_valid_at for ${targetDate}.`);
+    return null;
+  }
+  const data = await response.json();
+  const pages = Array.isArray(data.results) ? data.results : [];
+  for (const page of pages) {
+    const properties = page?.properties ?? {};
+    if (!getMajorHealthAvailableFields(properties, healthPropertyNames).length) {
+      continue;
+    }
+    return page.last_edited_time || page.created_time || getDateStartFromProperty(properties[healthPropertyNames.date]) || null;
+  }
+  return null;
+}
+
 function getDailyLogHealthPropertyNames(env: Env): DailyLogHealthPropertyNames {
   return {
     protein: env.DAILY_LOG_PROTEIN_PROPERTY_NAME || "Protein",
@@ -2626,6 +2695,7 @@ async function handleDailyLogHealthIngest(
   const healthPages = queryData.results ?? [];
   if (!healthPages.length) {
     console.log(`Health ingest: no health record for ${targetDate}`);
+    const lastValidAt = await findLastValidHealthAt(env, targetDate, healthPropertyNames);
     return new Response(
       JSON.stringify({
         ok: true,
@@ -2636,7 +2706,7 @@ async function handleDailyLogHealthIngest(
         health_quality: {
           status: "no_data",
           data_date: targetDate,
-          last_valid_at: null,
+          last_valid_at: lastValidAt,
           completeness: 0,
           available_fields: [],
           error_code: "health_page_not_found",
@@ -2690,24 +2760,11 @@ async function handleDailyLogHealthIngest(
     getResolvedProperty(healthProps, healthPropertyNames.mealPhoto, "health_ingest:meal_photo"),
   );
   const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
-  const majorHealthValues: Record<string, unknown> = {
-    sleep_duration_min: sleepDurationMin,
-    sleep_score: sleepScore,
-    readiness_hrv: readinessHrv,
-    readiness_bpm: readinessBpm,
-    kcal,
-    protein,
-    fat,
-    carb,
-  };
-  const availableHealthFields = Object.entries(majorHealthValues)
-    .filter(([, value]) => hasNonEmptyValue(value))
-    .map(([name]) => name)
-    .sort();
+  const availableHealthFields = getMajorHealthAvailableFields(healthProps, healthPropertyNames);
   const healthDataDate =
     getDateStartFromProperty(healthProps[healthPropertyNames.date]) || targetDate;
   const healthCompleteness = Number(
-    (availableHealthFields.length / Object.keys(majorHealthValues).length).toFixed(3),
+    (availableHealthFields.length / 8).toFixed(3),
   );
   const healthStatus =
     healthDataDate !== targetDate
@@ -2717,13 +2774,13 @@ async function handleDailyLogHealthIngest(
         : healthCompleteness < 0.5
           ? "degraded"
           : "ok";
+  const lastValidAt = availableHealthFields.length > 0
+    ? (healthPage.last_edited_time || healthPage.created_time || null)
+    : await findLastValidHealthAt(env, targetDate, healthPropertyNames);
   const healthQuality = {
     status: healthStatus,
     data_date: healthDataDate,
-    last_valid_at:
-      availableHealthFields.length > 0
-        ? (healthPage.last_edited_time || healthPage.created_time || null)
-        : null,
+    last_valid_at: lastValidAt,
     completeness: healthCompleteness,
     available_fields: availableHealthFields,
     error_code:
@@ -5666,6 +5723,7 @@ export default {
 
 export const __test__ = {
   buildHealthIngestQueryBody,
+  buildLatestValidHealthQueryBody,
   buildDailyLogProperties,
   extractMailMetadataFromProperties,
   getHealthPropertyNames,

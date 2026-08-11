@@ -22,12 +22,19 @@ def _summary(**overrides: object) -> SimpleNamespace:
         "study_sessions": None,
         "study_last_used_at": "",
         "resolved_sleep_duration_min": None,
-        "sleep_duration_min": None,
-        "sleep_score": None,
+        "sleep_duration_min": 420,
+        "sleep_score": 80,
         "sleep_start": "",
         "sleep_end": "",
         "sleep_analysis_jp": "",
         "today_condition_forecast_jp": "",
+        "readiness_hrv": 45,
+        "readiness_bpm": 60,
+        "kcal": 2000,
+        "protein": 100,
+        "fat": 60,
+        "carb": 250,
+        "expense_f_data_status": "ok",
         "weather_summary": "",
         "weather_location": "",
         "weather_code": None,
@@ -148,3 +155,71 @@ def test_quality_detects_missing_payload_optional_keys() -> None:
     codes = _codes(report)
     assert "payload_missing_location_summary_gpt" in codes
     assert "payload_missing_meal_photos" in codes
+
+
+def test_quality_gate_fails_when_health_is_empty() -> None:
+    summary = _summary(
+        sleep_duration_min=None,
+        sleep_score=None,
+        readiness_hrv=None,
+        readiness_bpm=None,
+        kcal=None,
+        protein=None,
+        fat=None,
+        carb=None,
+    )
+
+    report = build_quality_report(summary, mail_plain_text="Daily Log\nToday advice\nDiary", mail_html="<html></html>")
+
+    assert "health_no_data" in _codes(report)
+    assert "today_sleep_no_data" in _codes(report)
+    assert report["status"] == "fail"
+
+
+def test_quality_gate_fails_when_expense_f_query_failed() -> None:
+    report = build_quality_report(
+        _summary(expense_f_data_status="query_failed"),
+        mail_plain_text="Daily Log\nToday advice\nDiary",
+        mail_html="<html></html>",
+    )
+
+    assert "expense_f_unavailable" in _codes(report)
+
+
+def test_quality_gate_fails_when_f_risk_fallback_is_used() -> None:
+    report = build_quality_report(
+        _summary(),
+        mail_plain_text="Daily Log\nToday advice\nDiary",
+        mail_html="<html></html>",
+        f_risk_state={
+            "data_status": "degraded",
+            "fallback_used": True,
+            "input_hash": "hash",
+            "generated_at": "2026-05-08T03:00:00Z",
+        },
+        f_risk_state_read_ok=True,
+    )
+
+    codes = _codes(report)
+    assert "f_risk_not_ok" in codes
+    assert "f_risk_fallback_used" in codes
+
+
+def test_quality_gate_accepts_healthy_f_risk_state() -> None:
+    report = build_quality_report(
+        _summary(
+            payload_has_location_summary_gpt=True,
+            payload_has_meal_photos_raw=True,
+        ),
+        mail_plain_text="Daily Log\nToday advice\nSleep & Condition\nDiary",
+        mail_html="<html></html>",
+        f_risk_state={
+            "data_status": "ok",
+            "fallback_used": False,
+            "input_hash": "hash",
+            "generated_at": "2026-05-08T03:00:00Z",
+        },
+        f_risk_state_read_ok=True,
+    )
+
+    assert not ({"f_risk_not_ok", "f_risk_fallback_used", "f_risk_state_missing"} & _codes(report))
