@@ -1272,14 +1272,25 @@
     },
     "2026-08-11": {
       "alert_text": null,
-      "generated_at": "2026-08-11T04:27:56Z",
-      "input_hash": "4890aed0c79d61055f9b778412faa38d9c2e6023658b8966b4d91ad4d3b71af1",
+      "data_status": "ok",
+      "f_event_count": 25,
+      "fallback_used": false,
+      "generated_at": "2026-08-11T15:35:09Z",
+      "history_count": 186,
+      "input_hash": "4138ef4c100a29d82ea54c0a99f674ab5f9bcca33e44c75950a2b3848700b49e",
       "matched_patterns": [],
+      "ml_skipped_reason": null,
       "no_alert_reason": "case_similarity_weak",
+      "quality_warnings": [],
       "reason": "no_alert:case_similarity_weak",
-      "score": 0.32
+      "risk_level": "low",
+      "risk_matched": false,
+      "same_score_streak": 1,
+      "score": 0.03477142687259853,
+      "similarity_score": 0.303,
+      "usable_f_event_count": 25
     }
   },
-  "updated_at": "2026-08-11T04:27:56Z",
+  "updated_at": "2026-08-11T15:35:09Z",
   "version": 1
 }
