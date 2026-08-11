@@ -2,7 +2,7 @@
 
 > Reliability update: Health page existence is no longer treated as usable data, Expense F no longer uses the unsupported checkbox `is_empty` filter, and Today advice never substitutes an unrelated historical sleep as today's sleep. See [docs/daily-automation-reliability.md](docs/daily-automation-reliability.md) for statuses, repair semantics, the Daily Signals proposal, migration plan, and rollback.
 
-> Final quality gate: Daily Diary 04 sends any renderable mail first, then evaluates a redacted source/analysis quality report. Missing Health/Sleep, unavailable Expense F, missing F Risk state, degraded F Risk, or fallback scoring makes the workflow fail after delivery so a partially usable mail cannot leave GitHub Actions green.
+> Final quality gate: Daily Diary 04 sends any renderable mail first, then evaluates a redacted source/analysis quality report. Missing Health/Sleep is a non-blocking warning; unavailable Expense F, missing F Risk state, degraded F Risk, or fallback scoring still makes the workflow fail after delivery.
 
 ## Anki PC Automatic Study Tracking
 

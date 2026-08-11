@@ -21,7 +21,7 @@ iPhone / 外部サービス
                          Notion read-only canary
 ```
 
-Phase Aは `Daily Diary 01 - Ingest Daily Log`、Phase BはLocation summary、Phase Cは生成・保存、Phase Dはメール配信です。Healthが `no_data`、`stale`、`failed` の場合、Phase Aは他ソースの処理とDaily Log要約更新を終え、sanitized logへ診断結果を残した後に失敗します。メール後の最終品質ゲートも独立して失敗判定します。
+Phase Aは `Daily Diary 01 - Ingest Daily Log`、Phase BはLocation summary、Phase Cは生成・保存、Phase Dはメール配信です。Healthの `no_data`、`stale`、`degraded` はsanitized warningを残して処理を継続し、Health欄なしで日記とメールを生成します。認証・HTTP・Notion API障害を表す `failed` だけは、他ソースの処理とDaily Log要約更新を終えた後にPhase Aを失敗させます。
 
 ## DBと責務
 
@@ -44,8 +44,8 @@ Health condition DBへ値を送るiPhoneショートカット等は、このリ�
 | --- | --- | --- | --- |
 | `ok` | 主要項目の50%以上があり対象日と一致 | 値がある項目だけ更新 | 継続 |
 | `degraded` | 主要項目はあるが50%未満 | 値がある項目だけ更新 | 継続し、診断を残す |
-| `no_data` | ページなし、または主要項目が全て空 | 更新しない | 失敗 |
-| `stale` | `data_date` が対象日と不一致 | 更新しない | 失敗 |
+| `no_data` | ページなし、または主要項目が全て空 | 更新しない | 警告して継続 |
+| `stale` | `data_date` が対象日と不一致 | 更新しない | 警告して継続 |
 | `failed` | 認証、HTTP、Notion API等の失敗 | 更新しない | 失敗 |
 
 診断値は `data_date`、`last_valid_at`、`completeness`、`available_fields`、`error_code` です。ログには項目名と状態だけを出し、Healthの実測値やトークンは出しません。
@@ -89,9 +89,10 @@ Health condition DBへ値を送るiPhoneショートカット等は、このリ�
 ## 監視と復旧
 
 1. Phase Aで各入力を取得し、Healthの品質状態を確定します。
-2. `no_data / stale / failed` はDaily Logの既存Healthを保持したままPhase Aを赤にします。
-3. Phase Dはメール送信後に全ソースの品質を再評価します。
-4. read-only canaryがNotionスキーマ、Expense F query、最新Health、Daily Log読取を独立確認します。
-5. Health送信元の復旧手順は [health-recovery.md](health-recovery.md) を参照します。
+2. `no_data / stale / degraded` はDaily Logの既存Healthを保持し、警告を残して後続処理を継続します。
+3. `failed` は認証・API障害としてPhase Aを失敗させます。
+4. Phase Dはメール送信後に全ソースの品質を再評価し、Health欠損だけならwarningにします。
+5. read-only canaryがNotionスキーマ、Expense F query、最新Health、Daily Log読取を独立確認します。
+6. Health送信元の復旧手順は [health-recovery.md](health-recovery.md) を参照します。
 
 棚卸し対象は [obsolete-inventory.md](obsolete-inventory.md)、古いOpen PRの扱いは [open-pr-disposition-2026-08-11.md](open-pr-disposition-2026-08-11.md) に分離しています。

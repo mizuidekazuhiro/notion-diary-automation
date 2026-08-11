@@ -24,7 +24,8 @@ class HealthDataQualityError(RuntimeError):
     """Raised after Phase A records all source results when Health is unusable."""
 
 
-BLOCKING_HEALTH_STATUSES = {"no_data", "stale", "failed"}
+BLOCKING_HEALTH_STATUSES = {"failed"}
+WARNING_HEALTH_STATUSES = {"no_data", "stale", "degraded"}
 
 
 def ingest_sources(
@@ -66,6 +67,8 @@ def ingest_sources(
     sources: List[str] = []
     blocking_health_status: Optional[str] = None
     blocking_health_error_code: Optional[str] = None
+    warning_health_status: Optional[str] = None
+    warning_health_error_code: Optional[str] = None
 
     for connector in connectors:
         result = connector.fetch(target_date)
@@ -89,6 +92,11 @@ def ingest_sources(
             if health_status in BLOCKING_HEALTH_STATUSES:
                 blocking_health_status = health_status
                 blocking_health_error_code = (
+                    str(getattr(result, "error_code", "") or "").strip() or None
+                )
+            elif health_status in WARNING_HEALTH_STATUSES:
+                warning_health_status = health_status
+                warning_health_error_code = (
                     str(getattr(result, "error_code", "") or "").strip() or None
                 )
 
@@ -139,6 +147,13 @@ def ingest_sources(
     _log_patch_summary("/api/daily_log/upsert", upsert_response)
     if after_step:
         after_step("upsert")
+
+    if warning_health_status:
+        logging.warning(
+            "phase_a_health_quality_warning status=%s error_code=%s processing_continues=true",
+            warning_health_status,
+            warning_health_error_code or "unknown",
+        )
 
     if blocking_health_status:
         logging.error(

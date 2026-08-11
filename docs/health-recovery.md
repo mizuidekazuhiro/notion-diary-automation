@@ -15,8 +15,8 @@
 
 ## このPRで直す範囲
 
-- Healthの `no_data / stale / failed` をPhase A成功にしません。
-- Healthが使えなくてもTasksとExpensesの処理とDaily Logの要約更新を終え、Health診断をsanitized logへ残してからPhase Aを失敗させます。
+- Healthの `no_data / stale / degraded` は通知対象にしますが、Phase Aと後続の日記・メール処理は止めません。
+- 認証・HTTP・Notion API障害の `failed` は、TasksとExpensesの処理とDaily Logの要約更新を終え、sanitized logへ診断を残してからPhase Aを失敗させます。
 - 空の栄養・体重・Meal summaryでDaily Logの既存値を消しません。
 - 部分データは `degraded` とし、有効な項目だけ更新します。
 - ログには状態、項目名、理由コードだけを残します。
@@ -31,7 +31,7 @@
 4. Workerを経由する構成なら、iPhone側Bearer tokenとCloudflare Workerの `WORKERS_BEARER_TOKEN` を同時に更新します。GitHub Actions側だけ更新してもiPhone側は直りません。
 5. 対象日、Source、少なくとも1つの主要Health値を含むテスト送信を1回実行します。
 6. Health condition DBで対象日の実測値を確認後、`Daily Diary 01 - Ingest Daily Log` を手動実行します。
-7. Phase A、Phase D、read-only canaryがすべて緑になることを確認します。
+7. Phase AとPhase Dが完了し、read-only canaryのHealth警告が解消することを確認します。
 
 ## 送信元の必須ガード
 

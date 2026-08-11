@@ -121,7 +121,7 @@ def build_quality_report(
         _add_issue(
             issues,
             "health_no_data",
-            "error",
+            "warning",
             "No major Health fields are available for the target date.",
             "Check the Health sender, Worker ingest response, and the target-date Health page. Do not copy an older value.",
         )
@@ -130,7 +130,7 @@ def build_quality_report(
         _add_issue(
             issues,
             "health_low_completeness",
-            "error",
+            "warning",
             "Fewer than half of the major Health fields are available for the target date.",
             "Inspect the redacted Health freshness result and restore the missing source fields.",
         )
@@ -145,7 +145,7 @@ def build_quality_report(
         _add_issue(
             issues,
             "today_sleep_no_data",
-            "error",
+            "warning",
             "No target-date sleep candidate is available.",
             "Keep Today advice free of sleep duration/score values and verify the Health source for this date.",
         )

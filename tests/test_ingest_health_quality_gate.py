@@ -21,12 +21,12 @@ class _FakeConnector:
         return {"summary_blocks": {}, "raw_payload": {"id": self.id}}
 
 
-def test_phase_a_records_other_sources_then_fails_for_unusable_health(monkeypatch):
+def test_phase_a_records_other_sources_then_fails_for_health_transport_failure(monkeypatch):
     calls: list[str] = []
     health_result = SimpleNamespace(
-        status="no_data",
-        error_code="major_fields_empty",
-        payload={"ok": True, "health_quality": {"status": "no_data"}},
+        status="failed",
+        error_code="connector_exception",
+        payload={},
     )
     monkeypatch.setattr(
         ingest_module,
@@ -50,7 +50,7 @@ def test_phase_a_records_other_sources_then_fails_for_unusable_health(monkeypatc
         lambda url, payload, token: upserts.append(payload) or {"ok": True},
     )
 
-    with pytest.raises(ingest_module.HealthDataQualityError, match="major_fields_empty"):
+    with pytest.raises(ingest_module.HealthDataQualityError, match="connector_exception"):
         ingest_module.ingest_sources(
             target_date="2026-08-10",
             page_id="daily-page",
@@ -67,8 +67,8 @@ def test_phase_a_records_other_sources_then_fails_for_unusable_health(monkeypatc
     assert len(upserts) == 1
 
 
-@pytest.mark.parametrize("status", ["ok", "degraded"])
-def test_phase_a_allows_usable_health(status, monkeypatch):
+@pytest.mark.parametrize("status", ["ok", "degraded", "no_data", "stale"])
+def test_phase_a_does_not_stop_for_health_data_quality_warning(status, monkeypatch):
     calls: list[str] = []
     health_result = SimpleNamespace(status=status, error_code=None, payload={"ok": True})
     monkeypatch.setattr(
