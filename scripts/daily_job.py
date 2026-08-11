@@ -687,6 +687,33 @@ def _build_input_hash(payload: dict[str, object]) -> tuple[str, dict[str, object
     return hashlib.sha256(normalized_json.encode("utf-8")).hexdigest(), normalized_payload, normalized_json
 
 
+def _serialize_done_tasks_detail_for_f_risk(value: object) -> list[object]:
+    if not value:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+
+    serialized: list[object] = []
+    for item in value:
+        try:
+            if dataclasses.is_dataclass(item):
+                serialized.append(dataclasses.asdict(item))
+                continue
+            if isinstance(item, dict):
+                serialized.append({str(key): item[key] for key in sorted(item.keys(), key=str)})
+                continue
+            serialized.append(
+                {
+                    "title": getattr(item, "title", None),
+                    "done_date": getattr(item, "done_date", None),
+                    "event_date": getattr(item, "event_date", None),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            serialized.append(str(item))
+    return serialized
+
+
 def _utc_timestamp() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -1592,15 +1619,56 @@ def _compute_f_risk_alert_runtime(
     previous_state = store.get_for_date(f_risk_target_date)
     hash_payload = {
         "target_date": f_risk_target_date,
+        "daily_log_context_date": getattr(summary, "target_date", None),
         "sleep": {
-            "sleep_hours": summary.resolved_sleep_duration_hours,
-            "sleep_score": summary.sleep_score,
+            "sleep_hours": getattr(summary, "resolved_sleep_duration_hours", None),
+            "sleep_score": getattr(summary, "sleep_score", None),
+            "sleep_start": getattr(summary, "sleep_start", None),
+            "sleep_end": getattr(summary, "sleep_end", None),
+            "sleep_duration_source": getattr(summary, "sleep_duration_source", None),
+            "readiness_hrv": getattr(summary, "readiness_hrv", None),
+            "readiness_bpm": getattr(summary, "readiness_bpm", None),
         },
         "weather": {
-            "weather_code": summary.weather_code,
-            "weather_temp_max_c": summary.weather_temp_max_c,
-            "weather_temp_min_c": summary.weather_temp_min_c,
-            "weather_precip_probability_max": summary.weather_precip_probability_max,
+            "weather_code": getattr(summary, "weather_code", None),
+            "weather_temp_max_c": getattr(summary, "weather_temp_max_c", None),
+            "weather_temp_min_c": getattr(summary, "weather_temp_min_c", None),
+            "weather_precip_probability_max": getattr(summary, "weather_precip_probability_max", None),
+            "weather_input_hash": getattr(summary, "weather_input_hash", None),
+        },
+        "notes": {
+            "notes": getattr(summary, "notes", None),
+            "notes_label_input_hash": getattr(summary, "notes_label_input_hash", None),
+            "notes_stress_flag": getattr(summary, "notes_stress_flag", None),
+            "notes_fatigue_flag": getattr(summary, "notes_fatigue_flag", None),
+            "notes_social_load_flag": getattr(summary, "notes_social_load_flag", None),
+            "notes_sleep_issue_flag": getattr(summary, "notes_sleep_issue_flag", None),
+            "notes_flags_json": getattr(summary, "notes_flags_json", None),
+            "notes_tags_json": getattr(summary, "notes_tags_json", None),
+        },
+        "location": {
+            "place": getattr(summary, "place", None),
+            "location_summary": getattr(summary, "location_summary", None),
+            "location_summary_source": getattr(summary, "location_summary_source", None),
+        },
+        "meal": {
+            "meal_summary": getattr(summary, "meal_summary", None),
+            "kcal": getattr(summary, "kcal", None),
+            "protein": getattr(summary, "protein", None),
+            "fat": getattr(summary, "fat", None),
+            "carb": getattr(summary, "carb", None),
+        },
+        "tasks": {
+            "done_count": getattr(summary, "done_count", None),
+            "drop_count": getattr(summary, "drop_count", None),
+            "done_tasks_detail": _serialize_done_tasks_detail_for_f_risk(
+                getattr(summary, "done_tasks_detail", None)
+            ),
+        },
+        "study": {
+            "study_minutes": getattr(summary, "study_minutes", None),
+            "study_sessions": getattr(summary, "study_sessions", None),
+            "study_last_used_at": getattr(summary, "study_last_used_at", None),
         },
         "today_expense_f_aggregate_ignored_for_prediction": True,
     }

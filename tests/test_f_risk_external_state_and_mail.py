@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary, read_daily_log
@@ -7,6 +8,13 @@ from publish.render_mail import render_mail
 from scripts import daily_job, f_risk_generator
 from scripts.f_risk_generator import FRiskResult
 from scripts.f_risk_state_store import FRiskStateStore
+
+
+@dataclass(frozen=True)
+class _TaskObject:
+    title: str
+    done_date: str | None
+    event_date: str | None
 
 
 def _summary(**overrides: object) -> DailyLogSummary:
@@ -71,6 +79,37 @@ def _summary(**overrides: object) -> DailyLogSummary:
     return DailyLogSummary(**payload)
 
 
+def _compute_f_risk_hash_for_summary(monkeypatch, summary: DailyLogSummary) -> tuple[str, dict[str, object]]:
+    captured: dict[str, object] = {}
+    original_build_input_hash = daily_job._build_input_hash
+    config = SimpleNamespace(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+
+    def capture_hash(payload: dict[str, object]) -> tuple[str, dict[str, object], str]:
+        current_hash, normalized_payload, normalized_json = original_build_input_hash(payload)
+        captured["payload"] = normalized_payload
+        return current_hash, normalized_payload, normalized_json
+
+    monkeypatch.setattr(daily_job, "aggregate_daily_expense_f", lambda *_: SimpleNamespace(count=99, total=9999, data_status="ok"))
+    monkeypatch.setattr(daily_job.FRiskStateStore, "get_for_date", lambda self, *_: {})
+    monkeypatch.setattr(daily_job.FRiskStateStore, "save_for_date", lambda self, *_: True)
+    monkeypatch.setattr(daily_job, "_build_input_hash", capture_hash)
+    monkeypatch.setattr(
+        daily_job,
+        "generate_f_risk",
+        lambda **kwargs: FRiskResult(
+            alert_text="",
+            score=0.1,
+            reason="ok",
+            matched_patterns=[],
+            skip_reason=None,
+            debug_summary={"risk_json": {"no_alert_reason": "low_risk"}},
+        ),
+    )
+
+    result = daily_job._compute_f_risk_alert_runtime(config, summary=summary, run_id="run")
+    return result["input_hash"], captured["payload"]
+
+
 def test_f_risk_runtime_never_writes_notion_fields(monkeypatch) -> None:
     summary = _summary()
     config = SimpleNamespace(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
@@ -94,6 +133,99 @@ def test_f_risk_runtime_never_writes_notion_fields(monkeypatch) -> None:
     payload = daily_job._compute_f_risk_alert_runtime(config, summary=summary, run_id="run")
 
     assert payload["matched"] is True
+
+
+def test_f_risk_input_hash_payload_includes_notes_context(monkeypatch) -> None:
+    input_hash, payload = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(
+            notes="強い疲れとストレス",
+            notes_label_input_hash="notes-hash-1",
+            notes_stress_flag=True,
+            notes_flags_json='{"stress":true}',
+            notes_tags_json='["fatigue"]',
+        ),
+    )
+
+    assert input_hash
+    assert payload["notes"]["notes"] == "強い疲れとストレス"
+    assert payload["notes"]["notes_label_input_hash"] == "notes-hash-1"
+    assert payload["notes"]["notes_stress_flag"] is True
+    assert payload["notes"]["notes_flags_json"] == '{"stress":true}'
+    assert payload["notes"]["notes_tags_json"] == '["fatigue"]'
+
+
+def test_f_risk_input_hash_changes_when_notes_label_or_stress_flag_changes(monkeypatch) -> None:
+    hash_a, _ = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(notes_label_input_hash="notes-hash-1", notes_stress_flag=False),
+    )
+    hash_b, _ = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(notes_label_input_hash="notes-hash-2", notes_stress_flag=False),
+    )
+    hash_c, _ = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(notes_label_input_hash="notes-hash-2", notes_stress_flag=True),
+    )
+
+    assert hash_a != hash_b
+    assert hash_b != hash_c
+
+
+def test_f_risk_input_hash_still_changes_when_weather_or_sleep_changes(monkeypatch) -> None:
+    base_hash, _ = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(weather_code=1, resolved_sleep_duration_hours=7.5),
+    )
+    weather_hash, _ = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(weather_code=80, resolved_sleep_duration_hours=7.5),
+    )
+    sleep_hash, _ = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(weather_code=1, resolved_sleep_duration_hours=6.0),
+    )
+
+    assert base_hash != weather_hash
+    assert base_hash != sleep_hash
+
+
+def test_f_risk_input_hash_ignores_today_expense_f_actuals(monkeypatch) -> None:
+    base_hash, payload = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(expense_f_count=0, expense_f_total=0),
+    )
+    changed_expense_hash, changed_payload = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(expense_f_count=9, expense_f_total=12345),
+    )
+
+    assert base_hash == changed_expense_hash
+    assert payload["today_expense_f_aggregate_ignored_for_prediction"] is True
+    assert "expense_f_count" not in str(changed_payload)
+    assert "expense_f_total" not in str(changed_payload)
+
+
+def test_f_risk_done_tasks_detail_hash_payload_accepts_none_dicts_and_objects(monkeypatch) -> None:
+    none_hash, none_payload = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(done_tasks_detail=None),
+    )
+    dict_hash, dict_payload = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(done_tasks_detail=[{"title": "A", "done_date": "2026-03-20", "event_date": None}]),
+    )
+    object_hash, object_payload = _compute_f_risk_hash_for_summary(
+        monkeypatch,
+        _summary(done_tasks_detail=[_TaskObject(title="A", done_date="2026-03-20", event_date=None)]),
+    )
+
+    assert none_hash
+    assert none_payload["tasks"]["done_count"] == 0
+    assert dict_payload["tasks"]["done_tasks_detail"] == [{"done_date": "2026-03-20", "title": "A"}]
+    assert object_payload["tasks"]["done_tasks_detail"] == [{"done_date": "2026-03-20", "title": "A"}]
+    assert dict_hash == object_hash
 
 
 def test_f_risk_runtime_reuses_previous_state_when_hash_unchanged(monkeypatch) -> None:
