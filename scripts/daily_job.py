@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import dataclasses
 import hashlib
 import json
@@ -50,7 +51,7 @@ from scripts.sleep_condition_generator import (
 from scripts.sleep_utils import resolve_sleep_for_target_date
 from scripts.weather_client import fetch_weather_for_date
 from scripts.openai_chat_utils import chat_completion
-from scripts.daily_job_phase_c import PhaseCDeps, run_phase_c
+from scripts.daily_job_phase_c import PhaseCDeps, PhaseSemanticDegradation, run_phase_c
 from scripts.voice_diary_notes import (
     fetch_voice_diary_notes,
     format_voice_diary_notes,
@@ -392,9 +393,9 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     weather_summary_source = "saved" if (summary.weather_summary or "").strip() else ("fallback_from_raw" if any(value is not None for value in (summary.weather_code, summary.weather_temp_max_c, summary.weather_temp_min_c, summary.weather_precip_probability_max)) else "empty")
     weather_summary_text = (summary.weather_summary or "").strip()
     logging.info(
-        "weather_summary_source=%s weather_summary_text=%s",
+        "weather_summary_source=%s weather_summary_chars=%s",
         weather_summary_source,
-        weather_summary_text,
+        len(weather_summary_text),
     )
     mail = render_mail(summary, expense_f_alert=expense_f_alert_for_render, f_risk_alert=f_risk_alert)
     weather_section_rendered_html = "Weather" in mail.html_body
@@ -636,10 +637,9 @@ def build_diary_input_fields(summary: "DailyLogSummary", *, voice_diary_notes_te
             skipped_reason_by_field[name] = "empty_or_missing"
             continue
         used[name] = value
-        preview = value.replace("\n", " ")
-        if len(preview) > 80:
-            preview = f"{preview[:80]}..."
-        overview_parts.append(f"{name}({len(value)} chars): {preview}")
+        # CI logs keep only field names and lengths.  Diary inputs can contain
+        # Notes, addresses, merchant names, and other personal data.
+        overview_parts.append(f"{name}({len(value)} chars)")
 
     return used, skipped, " | ".join(overview_parts), skipped_reason_by_field
 
@@ -685,6 +685,15 @@ def _build_input_hash(payload: dict[str, object]) -> tuple[str, dict[str, object
         separators=(",", ":"),
     )
     return hashlib.sha256(normalized_json.encode("utf-8")).hexdigest(), normalized_payload, normalized_json
+
+
+def _redacted_hash_summary(normalized_payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "groups": sorted(normalized_payload.keys()),
+        "present_groups": sorted(
+            key for key, value in normalized_payload.items() if value not in (None, "", [], {})
+        ),
+    }
 
 
 def _utc_timestamp() -> str:
@@ -1057,7 +1066,7 @@ def _generate_and_save_today_advice(
         "historical_behavior_fields": sorted(today_state.get("historical_behavior_patterns", {}).keys()),
         "historical_recording_fields": sorted(today_state.get("historical_recording_patterns", {}).keys()),
         "expense_count": summary.expenses.count if summary.expenses else 0,
-        "hash_input_summary": normalized_hash_payload,
+        "hash_input_summary": _redacted_hash_summary(normalized_hash_payload),
         "history_loaded_count": context.get("history_debug", {}).get("history_loaded_count"),
         "history_failed_count": context.get("history_debug", {}).get("history_failed_count"),
         "history_partial": context.get("history_debug", {}).get("history_partial"),
@@ -1222,7 +1231,7 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s weather_retrieved_at=%s location_source=%s debug=%s",
+            "[Weather] source=%s selected_location_present=%s resolution_method=%s geocode_status=skipped weather_status=location_resolution_failed latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query_present=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s weather_retrieved_at=%s location_source=%s debug=%s",
             resolved_location.source,
             "",
             resolved_location.resolution_method,
@@ -1235,7 +1244,7 @@ def _generate_and_save_weather(
             resolved_location.debug_summary.get("resolved_lat_prop"),
             resolved_location.debug_summary.get("resolved_lon_prop"),
             resolved_location.debug_summary.get("geocode_attempted"),
-            resolved_location.debug_summary.get("geocode_query"),
+            bool(resolved_location.debug_summary.get("geocode_query")),
             resolved_location.debug_summary.get("fallback_used"),
             summary.target_date,
             weather_forecast_date_jst,
@@ -1252,7 +1261,7 @@ def _generate_and_save_weather(
             f"location_resolution_failed:{skip_reason}",
             "",
             resolved_location.source,
-            json.dumps(resolved_location.debug_summary, ensure_ascii=False, sort_keys=True, default=str),
+            json.dumps({"fields": sorted(resolved_location.debug_summary.keys()), "redacted": True}, sort_keys=True),
         )
         return _refresh_daily_log_summary(config, summary.target_date) or summary
 
@@ -1271,14 +1280,13 @@ def _generate_and_save_weather(
     has_weather = bool((summary.weather_summary or "").strip())
     input_changed = current_input_hash != previous_input_hash
     logging.info(
-        "phase_c_weather_input_summary daily_log_target_date(JST)=%s weather_forecast_date_jst=%s run_id=%s has_weather=%s location=%s lat=%s lon=%s resolution_method=%s location_source=%s debug_summary=%s",
+        "phase_c_weather_input_summary daily_log_target_date(JST)=%s weather_forecast_date_jst=%s run_id=%s has_weather=%s location_present=%s coordinates_present=%s resolution_method=%s location_source=%s debug_summary=%s",
         summary.target_date,
         weather_forecast_date_jst,
         run_id,
         has_weather,
-        resolved_location.name,
-        resolved_location.latitude,
-        resolved_location.longitude,
+        bool(resolved_location.name),
+        resolved_location.latitude is not None and resolved_location.longitude is not None,
         resolved_location.resolution_method,
         resolved_location.source,
         json.dumps(
@@ -1286,8 +1294,8 @@ def _generate_and_save_weather(
                 "current_input_hash": current_input_hash,
                 "previous_input_hash": previous_input_hash,
                 "input_hash_changed": input_changed,
-                "hash_input_summary": normalized_hash_payload,
-                "location_debug": resolved_location.debug_summary,
+                "hash_input_summary": _redacted_hash_summary(normalized_hash_payload),
+                "location_debug_fields": sorted(resolved_location.debug_summary.keys()),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -1334,9 +1342,9 @@ def _generate_and_save_weather(
             payload={"weather": "", "weather_generated_at": _utc_timestamp()},
         )
         logging.info(
-            "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s save_result=%s debug=%s",
+            "[Weather] source=%s selected_location_present=%s resolution_method=%s geocode_status=%s weather_status=failed latlon_available=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s empty_update_reason=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s save_result=%s debug=%s",
             resolved_location.source,
-            resolved_location.name,
+            bool(resolved_location.name),
             resolved_location.resolution_method,
             (resolved_location.debug_summary.get("geocode_debug") or {}).get("status") or weather.debug_summary.get("stage"),
             bool(resolved_location.latitude is not None and resolved_location.longitude is not None),
@@ -1363,7 +1371,7 @@ def _generate_and_save_weather(
             weather.temp_min_c,
             weather.precipitation_sum_mm,
             save_result.get("reason"),
-            json.dumps(debug_payload, ensure_ascii=False, sort_keys=True, default=str),
+            json.dumps({"fields": sorted(debug_payload.keys()), "redacted": True}, sort_keys=True),
         )
         return _refresh_daily_log_summary(config, summary.target_date) or summary
 
@@ -1380,7 +1388,7 @@ def _generate_and_save_weather(
         "weather_generated_at": _utc_timestamp(),
     }
     logging.info(
-        "weather_summary_generated=%s daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s resolution_method=%s precipitation_sum=%s weather_summary_text=%s",
+        "weather_summary_generated=%s daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s resolution_method=%s precipitation_sum=%s weather_summary_chars=%s",
         bool(weather.summary),
         summary.target_date,
         weather_forecast_date_jst,
@@ -1388,7 +1396,7 @@ def _generate_and_save_weather(
         resolved_location.source,
         resolved_location.resolution_method,
         weather.precipitation_sum_mm,
-        weather.summary or "",
+        len(weather.summary or ""),
     )
     weather_save_attempted = True
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
@@ -1408,9 +1416,9 @@ def _generate_and_save_weather(
     )
     stage_status = "ok" if readback_ok and compare_ok else "weather_readback_or_compare_failed"
     logging.info(
-        "[Weather] source=%s selected_location=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s weather_compare_normalized=%s weather_compare_ignored_fields=%s weather_summary_source=%s weather_summary_text=%s empty_update_reason=%s save_result=%s debug=%s",
+        "[Weather] source=%s selected_location_present=%s resolution_method=%s geocode_status=%s weather_status=%s latlon_available=%s query_status=%s latest_selected_page_id=%s latest_selected_time=%s effective_time_prop=%s effective_place_prop=%s resolved_lat_prop=%s resolved_lon_prop=%s geocode_attempted=%s geocode_query_present=%s fallback_used=%s saved_to=Weather daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s api_endpoint=%s requested_daily_fields=%s returned_daily_keys=%s weather_code=%s temp_max=%s temp_min=%s precipitation_sum=%s updated=%s weather_fetch_ok=%s weather_save_attempted=%s weather_save_ok=%s weather_readback_ok=%s weather_compare_ok=%s weather_readback_missing_fields=%s weather_compare_mismatch_fields=%s weather_timestamp_normalized_save=%s weather_timestamp_normalized_read=%s weather_compare_normalized=%s weather_compare_ignored_fields=%s weather_summary_source=%s weather_summary_chars=%s empty_update_reason=%s save_result=%s debug=%s",
         resolved_location.source,
-        weather.location_label,
+        bool(weather.location_label),
         resolved_location.resolution_method,
         (resolved_location.debug_summary.get("geocode_debug") or {}).get("status")
         or ("skipped_latlon_available" if resolved_location.resolution_method == "latlon_direct" else "ok"),
@@ -1424,7 +1432,7 @@ def _generate_and_save_weather(
         resolved_location.debug_summary.get("resolved_lat_prop"),
         resolved_location.debug_summary.get("resolved_lon_prop"),
         resolved_location.debug_summary.get("geocode_attempted"),
-        resolved_location.debug_summary.get("geocode_query"),
+        bool(resolved_location.debug_summary.get("geocode_query")),
         resolved_location.debug_summary.get("fallback_used"),
         summary.target_date,
         weather_forecast_date_jst,
@@ -1450,10 +1458,10 @@ def _generate_and_save_weather(
         roundtrip_status["compare_normalized"],
         roundtrip_status["ignored_fields"],
         "saved" if (weather.summary or "").strip() else "empty",
-        weather.summary or "",
+        len(weather.summary or ""),
         "",
         save_result.get("reason"),
-        json.dumps({**weather.debug_summary, "roundtrip_status": roundtrip_status}, ensure_ascii=False, sort_keys=True, default=str),
+        json.dumps({"weather_debug_fields": sorted(weather.debug_summary.keys()), "roundtrip_status": roundtrip_status, "redacted": True}, sort_keys=True, default=str),
     )
     if not (readback_ok and compare_ok):
         logging.warning(
@@ -1576,7 +1584,7 @@ def _compute_f_risk_alert_runtime(
     f_risk_target_date = (target_date_override or summary.target_date).strip()
     logging.info("f_risk_runtime_start source=f_risk_runtime target_date(JST)=%s run_id=%s", f_risk_target_date, run_id)
     # 今日のF支出実績は予測入力に使わない（リーク防止）。必要時のデバッグ確認のみ。
-    _ignored_today_expense_f_aggregate = aggregate_daily_expense_f(f_risk_target_date)
+    # Same-day F expense actuals are intentionally not fetched or hashed for prediction.
     store = FRiskStateStore()
     if store.meta.backend == "unavailable":
         logging.warning(
@@ -1589,26 +1597,103 @@ def _compute_f_risk_alert_runtime(
             store.meta.path,
             store.meta.fallback_used,
         )
-    previous_state = store.get_for_date(f_risk_target_date)
+    all_state = store.load_all()
+    by_date_state = all_state.get("by_date", {}) if isinstance(all_state, dict) else {}
+    if not isinstance(by_date_state, dict):
+        by_date_state = {}
+    # Keep the point lookup authoritative for compatibility with alternate
+    # state stores; ``all_state`` is separately used for bounded quality checks.
+    previous_state = store.get_for_date(f_risk_target_date) or {}
+    if not isinstance(previous_state, dict):
+        previous_state = {}
+    def sensitive_digest(value: object) -> Optional[str]:
+        if value in (None, "", [], {}):
+            return None
+        normalized = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    task_details = []
+    for item in getattr(summary, "done_tasks_detail", None) or []:
+        task_details.append(
+            {
+                "title_digest": sensitive_digest(getattr(item, "title", None)),
+                "done_date": getattr(item, "done_date", None),
+                "event_date": getattr(item, "event_date", None),
+            }
+        )
+
     hash_payload = {
         "target_date": f_risk_target_date,
+        "daily_log_context_date": getattr(summary, "target_date", None),
         "sleep": {
-            "sleep_hours": summary.resolved_sleep_duration_hours,
-            "sleep_score": summary.sleep_score,
+            "sleep_hours": getattr(summary, "resolved_sleep_duration_hours", None),
+            "sleep_score": getattr(summary, "sleep_score", None),
+            "sleep_start": getattr(summary, "sleep_start", None),
+            "sleep_end": getattr(summary, "sleep_end", None),
+            "sleep_duration_source": getattr(summary, "sleep_duration_source", None),
+            "readiness_hrv": getattr(summary, "readiness_hrv", None),
+            "readiness_bpm": getattr(summary, "readiness_bpm", None),
         },
         "weather": {
-            "weather_code": summary.weather_code,
-            "weather_temp_max_c": summary.weather_temp_max_c,
-            "weather_temp_min_c": summary.weather_temp_min_c,
-            "weather_precip_probability_max": summary.weather_precip_probability_max,
+            "weather_code": getattr(summary, "weather_code", None),
+            "weather_temp_max_c": getattr(summary, "weather_temp_max_c", None),
+            "weather_temp_min_c": getattr(summary, "weather_temp_min_c", None),
+            "weather_precip_probability_max": getattr(summary, "weather_precip_probability_max", None),
+            "weather_input_hash": getattr(summary, "weather_input_hash", None),
+        },
+        "notes": {
+            "content_digest": sensitive_digest(getattr(summary, "notes", None)),
+            "label_input_hash": getattr(summary, "notes_label_input_hash", None),
+            "stress": getattr(summary, "notes_stress_flag", None),
+            "fatigue": getattr(summary, "notes_fatigue_flag", None),
+            "social_load": getattr(summary, "notes_social_load_flag", None),
+            "sleep_issue": getattr(summary, "notes_sleep_issue_flag", None),
+            "flags_digest": sensitive_digest(getattr(summary, "notes_flags_json", None)),
+            "tags_digest": sensitive_digest(getattr(summary, "notes_tags_json", None)),
+        },
+        "location": {
+            "place_digest": sensitive_digest(getattr(summary, "place", None)),
+            "summary_digest": sensitive_digest(getattr(summary, "location_summary", None)),
+            "source": getattr(summary, "location_summary_source", None),
+        },
+        "meal": {
+            "summary_digest": sensitive_digest(getattr(summary, "meal_summary", None)),
+            "kcal": getattr(summary, "kcal", None),
+            "protein": getattr(summary, "protein", None),
+            "fat": getattr(summary, "fat", None),
+            "carb": getattr(summary, "carb", None),
+        },
+        "tasks": {
+            "done_count": getattr(summary, "done_count", None),
+            "drop_count": getattr(summary, "drop_count", None),
+            "done_tasks_digest": sensitive_digest(getattr(summary, "done_tasks", None)),
+            "done_tasks_detail": task_details,
+        },
+        "study": {
+            "study_minutes": getattr(summary, "study_minutes", None),
+            "study_sessions": getattr(summary, "study_sessions", None),
+            "study_last_used_at": getattr(summary, "study_last_used_at", None),
+        },
+        "schedule": {
+            "activity_summary_digest": sensitive_digest(getattr(summary, "activity_summary", None)),
+            "event_dates": sorted(
+                str(item.get("event_date")) for item in task_details if item.get("event_date")
+            ),
         },
         "today_expense_f_aggregate_ignored_for_prediction": True,
     }
     current_input_hash, normalized_hash_payload, _ = _build_input_hash(hash_payload)
     previous_input_hash = (previous_state.get("input_hash") or "").strip() or None
     input_changed = current_input_hash != previous_input_hash
-    can_reuse_previous = bool(previous_state) and not input_changed and any(
+    can_reuse_previous = (
+        bool(previous_state)
+        and previous_state.get("data_status") == "ok"
+        and not previous_state.get("fallback_used")
+        and not previous_state.get("ml_skipped_reason")
+        and not input_changed
+        and any(
         key in previous_state for key in ("alert_text", "score", "reason", "matched_patterns", "no_alert_reason")
+        )
     )
     logging.info(
         "f_risk_runtime_input_summary source=f_risk_runtime target_date(JST)=%s run_id=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s skip_recompute=%s reuse_previous_state=%s state_store_backend=%s state_read_ok=%s branch_name=%s path=%s fallback_used=%s debug_summary=%s",
@@ -1626,7 +1711,13 @@ def _compute_f_risk_alert_runtime(
         store.meta.fallback_used,
         json.dumps(
             {
-                "hash_input_summary": normalized_hash_payload,
+                "hash_input_summary": {
+                    "groups": sorted(normalized_hash_payload.keys()),
+                    "present_groups": sorted(
+                        key for key, value in normalized_hash_payload.items() if value not in (None, "", [], {})
+                    ),
+                    "redacted": True,
+                },
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -1651,6 +1742,15 @@ def _compute_f_risk_alert_runtime(
             "skip_reason": "unchanged_input_reused_state",
             "input_hash": current_input_hash,
             "no_alert_reason": previous_state.get("no_alert_reason"),
+            "generated_at": previous_state.get("generated_at"),
+            "risk_level": previous_state.get("risk_level"),
+            "data_status": previous_state.get("data_status") or "degraded",
+            "fallback_used": bool(previous_state.get("fallback_used")),
+            "ml_skipped_reason": previous_state.get("ml_skipped_reason"),
+            "f_event_count": previous_state.get("f_event_count"),
+            "usable_f_event_count": previous_state.get("usable_f_event_count"),
+            "similarity_score": previous_state.get("similarity_score"),
+            "history_count": previous_state.get("history_count"),
             "state_meta": {
                 "backend": store.meta.backend,
                 "state_read_ok": store.meta.state_read_ok,
@@ -1671,7 +1771,7 @@ def _compute_f_risk_alert_runtime(
             daily_log_context_date=summary.target_date,
         )
     except Exception as exc:  # noqa: BLE001
-        soft_fail = str(os.getenv("F_RISK_SOFT_FAIL", "true")).strip().lower() not in {"0", "false", "no", "off"}
+        soft_fail = str(os.getenv("F_RISK_SOFT_FAIL", "false")).strip().lower() not in {"0", "false", "no", "off"}
         logging.exception(
             "phase_c_f_risk_failed target_date(JST)=%s run_id=%s reason=%s",
             f_risk_target_date,
@@ -1695,6 +1795,9 @@ def _compute_f_risk_alert_runtime(
             "skip_reason": "f_risk_exception",
             "no_alert_reason": type(exc).__name__,
             "input_hash": current_input_hash,
+            "data_status": "failed",
+            "fallback_used": False,
+            "ml_skipped_reason": "f_risk_exception",
             "state_meta": {
                 "backend": store.meta.backend,
                 "state_read_ok": store.meta.state_read_ok,
@@ -1715,15 +1818,45 @@ def _compute_f_risk_alert_runtime(
             (result.debug_summary.get("risk_json") or {}).get("no_alert_reason"),
             result.matched_patterns[:3],
         )
+    risk_json = result.debug_summary.get("risk_json") or {}
+    generated_at = _utc_timestamp()
+    data_status = str(risk_json.get("data_status") or ("degraded" if result.skip_reason else "ok"))
     row = {
         "input_hash": current_input_hash,
         "reason": result.reason or (result.skip_reason or ""),
-        "generated_at": _utc_timestamp(),
+        "generated_at": generated_at,
         "score": result.score,
+        "risk_level": risk_json.get("f_risk_level"),
+        "risk_matched": bool(risk_json.get("risk_matched", bool(result.alert_text))),
+        "data_status": data_status,
+        "fallback_used": bool(risk_json.get("fallback_used")),
+        "ml_skipped_reason": risk_json.get("ml_skipped_reason"),
+        "f_event_count": risk_json.get("f_event_count"),
+        "usable_f_event_count": risk_json.get("usable_f_event_count"),
+        "similarity_score": risk_json.get("similarity_score_total"),
+        "history_count": risk_json.get("history_count"),
         "matched_patterns": result.matched_patterns,
         "alert_text": result.alert_text,
-        "no_alert_reason": (result.debug_summary.get("risk_json") or {}).get("no_alert_reason"),
+        "no_alert_reason": risk_json.get("no_alert_reason"),
     }
+    same_score_streak = 1
+    if result.score is not None:
+        for day in sorted((key for key in by_date_state if key < f_risk_target_date), reverse=True):
+            prior = by_date_state.get(day)
+            if not isinstance(prior, dict) or prior.get("score") != result.score:
+                break
+            same_score_streak += 1
+    warning_days = max(2, int(os.getenv("F_RISK_SAME_SCORE_WARNING_DAYS", "3") or "3"))
+    quality_warnings = ["same_score_streak"] if same_score_streak >= warning_days else []
+    row["same_score_streak"] = same_score_streak
+    row["quality_warnings"] = quality_warnings
+    if quality_warnings:
+        logging.warning(
+            "f_risk_quality_warning target_date=%s warning=same_score_streak score=%s consecutive_days=%s",
+            f_risk_target_date,
+            result.score,
+            same_score_streak,
+        )
     state_write_ok = store.save_for_date(f_risk_target_date, row)
     logging.info(
         "f_risk_runtime_result source=f_risk_runtime target_date=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s state_store_backend=%s state_read_ok=%s state_write_ok=%s branch_name=%s path=%s fallback_used=%s risk_matched=%s score=%s skip_reason=%s no_alert_reason=%s matched_patterns=%s daily_log_write_skipped_for_f_risk=true",
@@ -1737,14 +1870,14 @@ def _compute_f_risk_alert_runtime(
         store.meta.branch_name,
         store.meta.path,
         store.meta.fallback_used,
-        bool(result.alert_text),
+        bool(risk_json.get("risk_matched")),
         result.score,
         result.skip_reason,
         row.get("no_alert_reason"),
         result.matched_patterns[:3],
     )
     return {
-        "matched": bool(result.alert_text),
+        "matched": bool(risk_json.get("risk_matched", bool(result.alert_text))),
         "alert_text": result.alert_text or "",
         "score": result.score,
         "reason": row["reason"],
@@ -1752,6 +1885,17 @@ def _compute_f_risk_alert_runtime(
         "skip_reason": result.skip_reason,
         "no_alert_reason": row.get("no_alert_reason"),
         "input_hash": current_input_hash,
+        "generated_at": generated_at,
+        "risk_level": row.get("risk_level"),
+        "data_status": data_status,
+        "fallback_used": row.get("fallback_used"),
+        "ml_skipped_reason": row.get("ml_skipped_reason"),
+        "f_event_count": row.get("f_event_count"),
+        "usable_f_event_count": row.get("usable_f_event_count"),
+        "similarity_score": row.get("similarity_score"),
+        "history_count": row.get("history_count"),
+        "same_score_streak": same_score_streak,
+        "quality_warnings": quality_warnings,
         "state_meta": {
             "backend": store.meta.backend,
             "state_read_ok": store.meta.state_read_ok,
@@ -1770,7 +1914,11 @@ def _generate_and_save_f_risk(
     summary: "DailyLogSummary",
     run_id: str,
 ) -> "DailyLogSummary":
-    _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    runtime = _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    if runtime.get("data_status") in {"failed", "degraded"} or runtime.get("fallback_used") or runtime.get("skip_reason"):
+        raise PhaseSemanticDegradation(
+            str(runtime.get("skip_reason") or runtime.get("ml_skipped_reason") or runtime.get("data_status"))
+        )
     return _refresh_daily_log_summary(config, summary.target_date) or summary
 
 
@@ -1810,7 +1958,7 @@ def _generate_and_save_diary(
                 "input_hash_changed": input_changed,
                 "has_previous_input_hash": previous_input_hash is not None,
                 "has_diary": has_diary,
-                "hash_input_summary": normalized_hash_payload,
+                "hash_input_summary": _redacted_hash_summary(normalized_hash_payload),
             },
             ensure_ascii=False,
             sort_keys=True,

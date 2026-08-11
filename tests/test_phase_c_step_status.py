@@ -62,3 +62,12 @@ def test_phase_c_no_pending_on_today_advice_exception(monkeypatch):
     assert logs
     assert "pending" not in set(logs[-1].values())
     assert logs[-1]["today_advice"] == "failed"
+
+
+def test_phase_c_marks_query_failed_as_degraded(monkeypatch):
+    logs = []
+    deps, logger = _deps(logs)
+    object.__setattr__(deps, "run_expense_f", lambda _s: {"matched": False, "data_status": "query_failed"})
+    monkeypatch.setattr("scripts.daily_job_phase_c.logging", logger)
+    run_phase_c(SimpleNamespace(), target_date="2026-03-20", run_id="r", deps=deps)
+    assert logs[-1]["expense_f"] == "degraded"

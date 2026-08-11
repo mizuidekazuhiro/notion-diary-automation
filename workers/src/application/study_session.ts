@@ -5,6 +5,7 @@ import {
   update_page_property,
 } from "../infrastructure/notion/client";
 import { chooseCanonicalDailyLogPage } from "../domain/daily_log_resolver";
+import { parseDayBoundaryHour, resolveJstDayKey } from "../utils/date_utils";
 
 export const DEFAULT_APP_USAGE_SESSIONS_DB_ID = "2ac8d44d07b4410b8f825906cab0c41e";
 export const ANKI_REVLOG_SOURCE = "anki_revlog";
@@ -17,6 +18,7 @@ type StudySessionEnv = {
   WORKERS_BEARER_TOKEN?: string;
   APP_USAGE_SESSIONS_DB_ID?: string;
   STUDY_DAY_START_HOUR?: string;
+  CANONICAL_DAY_BOUNDARY_HOUR?: string;
 };
 
 type StudySessionPayload = {
@@ -134,13 +136,16 @@ function parseIsoDateTime(value: unknown, field: string): { iso: string; epochMs
   return { iso: new Date(epochMs).toISOString(), epochMs };
 }
 
-export function parseStudyDayStartHour(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return DEFAULT_STUDY_DAY_START_HOUR;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0 || value > 23) {
-    throw new Error("STUDY_DAY_START_HOUR must be an integer from 0 to 23");
-  }
-  return value;
+export function parseStudyDayStartHour(
+  raw: string | undefined,
+  canonicalRaw?: string,
+): number {
+  const canonical = parseDayBoundaryHour(
+    canonicalRaw,
+    DEFAULT_STUDY_DAY_START_HOUR,
+    "CANONICAL_DAY_BOUNDARY_HOUR",
+  );
+  return parseDayBoundaryHour(raw, canonical, "STUDY_DAY_START_HOUR");
 }
 
 function formatJstDate(epochMs: number): string {
@@ -166,7 +171,7 @@ function formatJstTime(epochMs: number): string {
 }
 
 export function resolveStudyTargetDate(endedAtEpochMs: number, dayStartHour = 4): string {
-  return formatJstDate(endedAtEpochMs - dayStartHour * 60 * 60 * 1000);
+  return resolveJstDayKey(endedAtEpochMs, dayStartHour);
 }
 
 export function parseStudySessionPayload(
@@ -518,7 +523,10 @@ export async function handleStudySession(request: Request, env: StudySessionEnv)
 
   let session: ParsedStudySession;
   try {
-    session = parseStudySessionPayload(rawPayload, parseStudyDayStartHour(env.STUDY_DAY_START_HOUR));
+    session = parseStudySessionPayload(
+      rawPayload,
+      parseStudyDayStartHour(env.STUDY_DAY_START_HOUR, env.CANONICAL_DAY_BOUNDARY_HOUR),
+    );
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : "invalid payload" }, 400);
   }

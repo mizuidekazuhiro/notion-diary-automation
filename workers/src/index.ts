@@ -84,6 +84,7 @@ interface Env {
   EXPENSES_NAME_PROPERTY_NAME?: string;
   EXPENSES_MERCHANT_PROPERTY_NAME?: string;
   EXPENSES_DAY_START_HOUR?: string;
+  CANONICAL_DAY_BOUNDARY_HOUR?: string;
   LOCATION_LOG_DB_ID?: string;
   OPENAI_API_KEY?: string;
   TZ?: string;
@@ -539,7 +540,7 @@ function normalizeMoodInput(rawMood: string): (typeof MOOD_OPTIONS)[number] | un
 }
 
 function getExpensesDayStartHour(env: Env): number {
-  const raw = env.EXPENSES_DAY_START_HOUR ?? "5";
+  const raw = env.EXPENSES_DAY_START_HOUR ?? env.CANONICAL_DAY_BOUNDARY_HOUR ?? "5";
   const dayStartHour = Number(raw);
   if (!Number.isInteger(dayStartHour) || dayStartHour < 0 || dayStartHour > 23) {
     throw new Error(
@@ -2632,6 +2633,14 @@ async function handleDailyLogHealthIngest(
         found: false,
         updated: false,
         reason: "no health record",
+        health_quality: {
+          status: "no_data",
+          data_date: targetDate,
+          last_valid_at: null,
+          completeness: 0,
+          available_fields: [],
+          error_code: "health_page_not_found",
+        },
       }),
       { headers: jsonHeaders },
     );
@@ -2681,24 +2690,70 @@ async function handleDailyLogHealthIngest(
     getResolvedProperty(healthProps, healthPropertyNames.mealPhoto, "health_ingest:meal_photo"),
   );
   const mealSummary = formatMealSummary(protein, fat, carb, kcal, weight);
+  const majorHealthValues: Record<string, unknown> = {
+    sleep_duration_min: sleepDurationMin,
+    sleep_score: sleepScore,
+    readiness_hrv: readinessHrv,
+    readiness_bpm: readinessBpm,
+    kcal,
+    protein,
+    fat,
+    carb,
+  };
+  const availableHealthFields = Object.entries(majorHealthValues)
+    .filter(([, value]) => hasNonEmptyValue(value))
+    .map(([name]) => name)
+    .sort();
+  const healthDataDate =
+    getDateStartFromProperty(healthProps[healthPropertyNames.date]) || targetDate;
+  const healthCompleteness = Number(
+    (availableHealthFields.length / Object.keys(majorHealthValues).length).toFixed(3),
+  );
+  const healthStatus =
+    healthDataDate !== targetDate
+      ? "stale"
+      : availableHealthFields.length === 0
+        ? "no_data"
+        : healthCompleteness < 0.5
+          ? "degraded"
+          : "ok";
+  const healthQuality = {
+    status: healthStatus,
+    data_date: healthDataDate,
+    last_valid_at:
+      availableHealthFields.length > 0
+        ? (healthPage.last_edited_time || healthPage.created_time || null)
+        : null,
+    completeness: healthCompleteness,
+    available_fields: availableHealthFields,
+    error_code:
+      healthStatus === "stale"
+        ? "data_date_mismatch"
+        : healthStatus === "no_data"
+          ? "major_fields_empty"
+          : healthStatus === "degraded"
+            ? "low_completeness"
+            : null,
+  };
 
   console.log(
-    `Health ingest sleep inputs resolved for ${targetDate}: ${JSON.stringify({
-      sleepStart,
-      sleepEnd,
-      sleepDurationMin,
-      sleepScore,
-      sleepSource,
-      sleepHeartRate,
-      deepDurationMin,
-      remDurationMin,
-      readinessStars,
-      readinessHrv,
-      readinessBpm,
-      baselineHrv,
-      baselineWakingBpm,
-    })}`
+    `Health ingest quality for ${targetDate}: status=${healthQuality.status} completeness=${healthQuality.completeness} available_fields=${healthQuality.available_fields.join(",") || "none"} error_code=${healthQuality.error_code || "none"}`,
   );
+
+  if (healthQuality.status === "no_data" || healthQuality.status === "stale") {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        target_date: targetDate,
+        found: true,
+        updated: false,
+        reason: healthQuality.error_code,
+        health_page_id: healthPage.id,
+        health_quality: healthQuality,
+      }),
+      { headers: jsonHeaders },
+    );
+  }
 
   console.log(
     `Daily Log schema validation uses sleep property names: ${[
@@ -2861,6 +2916,11 @@ async function handleDailyLogHealthIngest(
         updated: false,
         reason: "no updatable properties",
         health_page_id: healthPage.id,
+        health_quality: {
+          ...healthQuality,
+          status: "degraded",
+          error_code: "no_updatable_properties",
+        },
       }),
       { headers: jsonHeaders },
     );
@@ -2923,6 +2983,7 @@ async function handleDailyLogHealthIngest(
       updated: true,
       page_id: pageId,
       health_page_id: healthPage.id,
+      health_quality: healthQuality,
     }),
     { headers: jsonHeaders },
   );
@@ -3454,7 +3515,10 @@ async function handleDailyLogLocationIngest(
   }
 
   const diaryDate = targetDateResult.targetDate;
-  const windowStartHour = parseIntEnv(env.WINDOW_START_HOUR, 5);
+  const windowStartHour = parseIntEnv(
+    env.WINDOW_START_HOUR ?? env.CANONICAL_DAY_BOUNDARY_HOUR,
+    5,
+  );
   const previousDate = addDaysToJstDate(diaryDate, -1);
   const hourText = String(windowStartHour).padStart(2, "0");
   const window = {
@@ -4126,7 +4190,7 @@ async function handleDailyLogGenerateDiary(
     : "missing";
   console.log(
     `[generate_diary] weather_summary_generated=${weatherSummaryTextResolved !== ""} ` +
-      `weather_summary_text=${JSON.stringify(weatherSummaryTextResolved)} ` +
+      `weather_summary_chars=${weatherSummaryTextResolved.length} ` +
       `weather_select_label=${weatherSelectLabel ?? "null"} ` +
       `weather_property_type=${weatherPropertyType} ` +
       `weather_summary_property_type=${weatherSummaryPropertyType}`,
@@ -5305,29 +5369,67 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
       { property: "Target Date", date: { on_or_before: end } },
     ],
   });
+  const healthNames = getDailyLogHealthPropertyNames(env);
+  const expenseNames = getDailyLogExpensesPropertyNames(env);
 
   const items = pages
     .map((page: any) => {
       const p = page.properties ?? {};
       const targetDate = getDateStartFromProperty(p["Target Date"]);
       if (!targetDate) return null;
+      const location = resolveLocationSummaryFields(p, env);
+      const doneRelationIds = getRelationIdsFromProperty(p["Done Tasks"]);
+      const dropRelationIds = getRelationIdsFromProperty(p["Drop Tasks"]);
       return {
         target_date: targetDate,
         date: getDateStartFromProperty(p.Date),
         page_id: page.id,
         title: getPlainTextFromTitle(p[TITLE_PROPERTIES.dailyLog]) || "",
+        activity_summary: getPlainTextFromRichText(p["Activity Summary"]) || null,
+        notes: getPlainTextFromRichText(p[getDailyLogNotesPropertyName(env)]) || null,
+        location_summary: location.locationSummary,
+        location_summary_source: location.locationSummarySource,
+        meal_summary: getPlainTextFromRichText(p["Meal summary"]) || null,
+        kcal: _historyNumber(p, healthNames.kcal),
+        protein: _historyNumber(p, healthNames.protein),
+        fat: _historyNumber(p, healthNames.fat),
+        carb: _historyNumber(p, healthNames.carb),
+        weight: _historyNumber(p, "Weight"),
+        mood: p.Mood?.select?.name ?? null,
+        done_count: _historyNumber(p, "Done Count") ?? doneRelationIds.length,
+        drop_count: _historyNumber(p, "Drop Count") ?? dropRelationIds.length,
+        done_tasks: [],
+        done_tasks_detail: [],
+        drop_tasks: [],
+        expenses_total: _historyNumber(p, expenseNames.total),
         study_minutes: _historyNumber(p, "Study Minutes"),
         study_sessions: _historyNumber(p, "Study Sessions"),
-        sleep_duration_min: _historyNumber(p, "Sleep Duration"),
-        sleep_score: _historyNumber(p, "Sleep Score"),
-        readiness_hrv: _historyNumber(p, "Readiness HRV"),
-        readiness_bpm: _historyNumber(p, "Readiness BPM"),
+        study_last_used_at: getDateTimeFromProperty(p["Study Last Used At"]),
+        sleep_start: getDateTimeFromProperty(p[healthNames.sleepStart]),
+        sleep_end: getDateTimeFromProperty(p[healthNames.sleepEnd]),
+        sleep_duration_min: _historyNumber(p, healthNames.sleepDurationMin),
+        sleep_score: _historyNumber(p, healthNames.sleepScore),
+        sleep_source: getStringFromProperty(p[healthNames.sleepSource]),
+        readiness_stars: _historyNumber(p, healthNames.readinessStars),
+        readiness_hrv: _historyNumber(p, healthNames.readinessHrv),
+        readiness_bpm: _historyNumber(p, healthNames.readinessBpm),
+        baseline_hrv: _historyNumber(p, healthNames.baselineHrv),
+        baseline_waking_bpm: _historyNumber(p, healthNames.baselineWakingBpm),
+        sleep_heart_rate: _historyNumber(p, healthNames.sleepHeartRate),
+        deep_duration_min: _historyNumber(p, healthNames.deepDurationMin),
+        rem_duration_min: _historyNumber(p, healthNames.remDurationMin),
         notes_stress_flag: _historyBool(p, "Notes Stress Flag"),
         notes_sleep_issue_flag: _historyBool(p, "Notes Sleep Issue Flag"),
         notes_fatigue_flag: _historyBool(p, "Notes Fatigue Flag"),
+        notes_social_load_flag: _historyBool(p, "Notes Social Load Flag"),
+        notes_label_input_hash: getPlainTextFromRichText(p["Notes Label Input Hash"]) || null,
+        notes_flags_json: getPlainTextFromRichText(p["Notes Flags JSON"]) || null,
+        notes_tags_json: getPlainTextFromRichText(p["Notes Tags JSON"]) || null,
         weather_code: _historyNumber(p, "Weather Code"),
         weather_temp_max_c: _historyNumber(p, "Weather Temp Max C"),
         weather_temp_min_c: _historyNumber(p, "Weather Temp Min C"),
+        weather_precip_probability_max: _historyNumber(p, "Weather Precip Probability Max"),
+        weather_input_hash: getPlainTextFromRichText(p["Weather Input Hash"]) || null,
         f_risk_score: _historyNumber(p, "F Risk Score"),
         f_risk_reason: getPlainTextFromRichText(p["F Risk Reason"]) || null,
         f_risk_input_hash: getPlainTextFromRichText(p["F Risk Input Hash"]) || null,

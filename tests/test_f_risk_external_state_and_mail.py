@@ -107,10 +107,11 @@ def test_f_risk_runtime_reuses_previous_state_when_hash_unchanged(monkeypatch) -
             "input_hash": "reuse-hash",
             "alert_text": "cached alert",
             "score": 0.5,
-            "reason": "cached",
-            "matched_patterns": ["p1"],
-            "no_alert_reason": None,
-        },
+                "reason": "cached",
+                "matched_patterns": ["p1"],
+                "no_alert_reason": None,
+                "data_status": "ok",
+            },
     )
     monkeypatch.setattr(daily_job, "_build_input_hash", lambda *_: ("reuse-hash", {}, ""))
     monkeypatch.setattr(
@@ -128,6 +129,7 @@ def test_f_risk_runtime_reuses_previous_state_when_hash_unchanged(monkeypatch) -
 
 
 def test_f_risk_runtime_soft_fail_continues_when_generate_fails(monkeypatch) -> None:
+    monkeypatch.setenv("F_RISK_SOFT_FAIL", "true")
     summary = _summary()
     config = SimpleNamespace(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     monkeypatch.setattr(daily_job, "aggregate_daily_expense_f", lambda *_: SimpleNamespace(count=1, total=1000, data_status="ok"))
@@ -165,6 +167,8 @@ def test_read_daily_log_keeps_backward_compat_with_old_f_fields(monkeypatch) -> 
 
 
 def test_hydrate_histories_with_expenses_db_labels(monkeypatch) -> None:
+    monkeypatch.setenv("NOTION_TOKEN", "test-token")
+    monkeypatch.setenv("EXPENSES_DB_ID", "test-db")
     items = [_summary(target_date="2026-03-19"), _summary(target_date="2026-03-20")]
     monkeypatch.setattr(
         f_risk_generator,

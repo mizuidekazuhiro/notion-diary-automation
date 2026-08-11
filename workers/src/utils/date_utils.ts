@@ -42,6 +42,28 @@ export function addDaysToJstDate(dateString: string, days: number): string {
   return getJstDateString(date);
 }
 
+export function parseDayBoundaryHour(
+  raw: string | undefined,
+  fallback = 5,
+  settingName = "CANONICAL_DAY_BOUNDARY_HOUR",
+): number {
+  const value = raw === undefined || raw.trim() === "" ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 23) {
+    throw new Error(`${settingName} must be an integer from 0 to 23`);
+  }
+  return value;
+}
+
+export function resolveJstDayKey(dateTime: string | number | Date, boundaryHour = 5): string {
+  const parsedBoundary = parseDayBoundaryHour(String(boundaryHour), 5);
+  const epochMs = dateTime instanceof Date ? dateTime.getTime() :
+    typeof dateTime === "number" ? dateTime : Date.parse(dateTime);
+  if (!Number.isFinite(epochMs)) {
+    throw new Error("dateTime must be a valid ISO-8601 datetime, epoch, or Date");
+  }
+  return getJstDateString(new Date(epochMs - parsedBoundary * 60 * 60 * 1000));
+}
+
 export function getJstRangeForTargetDate(targetDate: string): {
   start_jst_iso: string;
   end_jst_iso: string;

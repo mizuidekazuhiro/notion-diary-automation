@@ -64,3 +64,34 @@ def test_created_time_strategy(monkeypatch):
     assert out.debug_summary["filter_strategy"] == "created_time_fallback"
     assert payload["filter"]["and"][1]["timestamp"] == "created_time"
     assert "T" in payload["filter"]["and"][1]["created_time"]["on_or_after"]
+
+
+def test_family_card_filter_uses_equals_false_only(monkeypatch):
+    _, payload = _run(
+        monkeypatch,
+        {
+            "F": {"type": "checkbox"},
+            "FamilyCard": {"type": "checkbox"},
+            "Merchant": {"type": "rich_text"},
+            "Amount": {"type": "number"},
+            "Date": {"type": "date"},
+        },
+    )
+    family = payload["filter"]["and"][-1]
+    assert family == {"property": "FamilyCard", "checkbox": {"equals": False}}
+    assert "is_empty" not in str(payload)
+
+
+def test_http_error_exposes_sanitized_notion_fields(monkeypatch):
+    monkeypatch.setenv("NOTION_TOKEN", "secret-token")
+    monkeypatch.setenv("EXPENSES_DB_ID", "db")
+    props = {"F": {"type": "checkbox"}, "Merchant": {"type": "rich_text"}, "Amount": {"type": "number"}, "Date": {"type": "date"}}
+    monkeypatch.setattr(mod.requests, "get", lambda *a, **k: Resp(200, {"properties": props}))
+    monkeypatch.setattr(mod.requests, "post", lambda *a, **k: Resp(400, {"code": "validation_error", "message": "bad checkbox filter\n"}))
+    out = mod.aggregate_daily_expense_f("2026-03-20")
+    assert out.data_status == "query_failed"
+    assert out.debug_summary["http_status"] == 400
+    assert out.debug_summary["notion_error_code"] == "validation_error"
+    assert out.debug_summary["exception_class"] == "HTTPError"
+    assert out.debug_summary["response_message"] == "bad checkbox filter"
+    assert "secret-token" not in str(out.debug_summary)

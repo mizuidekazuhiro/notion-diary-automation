@@ -358,8 +358,10 @@ def test_today_advice_existing_with_changed_hash_regenerates(monkeypatch) -> Non
     daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
 
-def test_f_risk_no_f_history_skips_save(monkeypatch) -> None:
+def test_f_risk_no_f_history_marks_semantic_degradation_without_save(monkeypatch) -> None:
+    import pytest
     from scripts.f_risk_generator import FRiskResult
+    from scripts.daily_job_phase_c import PhaseSemanticDegradation
 
     summary = _summary()
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
@@ -379,9 +381,9 @@ def test_f_risk_no_f_history_skips_save(monkeypatch) -> None:
     monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True})
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
 
-    result = daily_job._generate_and_save_f_risk(config, summary=summary, run_id="run")
+    with pytest.raises(PhaseSemanticDegradation, match="no_f_history"):
+        daily_job._generate_and_save_f_risk(config, summary=summary, run_id="run")
 
-    assert result == summary
     assert save_calls == []
 
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from publish.read_daily_log import DailyLogSummary, ExpenseSummary, read_daily_log
+from publish.read_daily_log import DailyLogSummary, DoneTaskDetail, ExpenseSummary, read_daily_log
 from ingest.http_client import fetch_json
 from scripts.note_batch_labeler import label_notes_in_batches, neutral_label
 from scripts.openai_chat_utils import chat_completion
@@ -102,10 +102,28 @@ def generate_f_risk(
         "explanation_points": [],
         "no_alert_reason": None,
         "forbidden_inputs_used": False,
+        "data_status": "degraded",
     }
     history_days = max(60, int(os.getenv("F_RISK_HISTORY_DAYS", "365") or "365"))
     histories = _load_histories_with_bulk_fallback(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=training_end_date, days=history_days)
     histories = _hydrate_expense_f_from_expenses_db(histories)
+    invalid_expense_statuses = sorted(
+        {
+                str(getattr(item, "expense_f_data_status", None))
+                for item in histories
+                if getattr(item, "expense_f_data_status", None) not in (None, "ok", "no_results")
+        }
+    )
+    if invalid_expense_statuses:
+        risk_json.update(
+            {
+                "skipped_reason": "expense_history_unavailable",
+                "no_alert_reason": "expense_history_unavailable",
+                "expense_history_statuses": invalid_expense_statuses,
+                "data_status": "failed" if "query_failed" in invalid_expense_statuses else "degraded",
+            }
+        )
+        return FRiskResult(None, None, None, [], "expense_history_unavailable", {"risk_json": risk_json})
     logging.info(
         "f_risk_history_source source=expenses_db_direct target_date=%s history_days=%s",
         target_date,
@@ -184,8 +202,15 @@ def generate_f_risk(
 
     recent_score = _to_float(recent_model.get("score"))
     long_score = _to_float(longterm_model.get("score"))
-    blended = _blend_scores(recent_score, long_score)
+    # Final scoring order is intentional: ML -> fallback -> final score -> level -> match.
+    blended = (
+        _to_float(fallback_meta.get("blended_score"))
+        if fallback_used
+        else _blend_scores(recent_score, long_score)
+    )
     matched = _derive_matched_features(today.iloc[0].to_dict())
+    if fallback_used:
+        matched = list(dict.fromkeys([*matched, *[str(x) for x in fallback_meta.get("matched_factors", [])]]))
     explanation_points = _build_explanation_points(
         matched=matched,
         similarity={"summary": similarity.get("summary", ""), "strength": similarity.get("strength", "weak")},
@@ -203,16 +228,17 @@ def generate_f_risk(
     sim_level = str(similarity.get("strength") or "weak")
     case_high = sim_total >= high_threshold
     case_medium_plus_rule = sim_total >= medium_threshold and rule_count >= 2
-    ml_probability = blended
+    final_score = blended
+    ml_probability = _blend_scores(recent_score, long_score)
     model_support = bool(ml_probability is not None and ml_probability >= 0.62)
     rule_score = rule_count
-    high = bool((ml_probability is not None and ml_probability >= 0.70) or sim_total >= 0.72 or (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5))
-    medium = bool((ml_probability is not None and ml_probability >= 0.40) or sim_total >= 0.55 or rule_score >= 3)
+    high = bool((final_score is not None and final_score >= 0.70) or sim_total >= high_threshold or (final_score is not None and final_score >= 0.55 and rule_score >= 5))
+    medium = bool((final_score is not None and final_score >= 0.40) or sim_total >= medium_threshold or rule_score >= 3)
     risk_level = "high" if high else "medium" if medium else "low"
     min_level = str(os.getenv("F_RISK_ALERT_MIN_LEVEL", "high")).strip().lower()
-    risk_matched = high if min_level == "high" else (high or medium)
-    if fallback_used:
-        blended = _to_float(fallback_meta.get("blended_score"))
+    risk_matched = bool(high if min_level == "high" else (high or medium))
+    if fallback_used and min_level != "high":
+        risk_matched = bool(risk_matched or fallback_meta.get("risk_matched"))
 
     prediction_feature_names = _build_xy(train.copy(), today.copy())[0].columns.tolist()
     forbidden_feature_names = [
@@ -232,7 +258,7 @@ def generate_f_risk(
     study_missing_rate = _missing_rate_for_prefix(today_for_missing, prediction_feature_names, "study")
     if overall_missing_rate >= 0.6 or effective_feature_count < 5:
         confidence = "low"
-        if ml_probability is not None and ml_probability >= 0.70 and not (rule_score >= 3 or sim_total >= 0.55):
+        if final_score is not None and final_score >= 0.70 and not (rule_score >= 3 or sim_total >= medium_threshold):
             high = False
             risk_level = "medium" if medium else "low"
     # Recalculate final match decision after all quality/missingness corrections.
@@ -292,6 +318,8 @@ def generate_f_risk(
             "weather_features_used": availability["weather_used"],
             "fallback_used": fallback_used,
             "fallback_details": fallback_meta,
+            "blended_score": final_score,
+            "data_status": "degraded" if fallback_used or overall_missing_rate >= 0.6 else "ok",
             "forbidden_inputs_used": False,
             "history_days_loaded": len(histories),
             "f_event_count": int(train["f_event_flag"].sum()),
@@ -315,13 +343,14 @@ def generate_f_risk(
             ),
             "final_alert_basis_detail": (
                 "forbidden_today_features_used" if forbidden_used else
-                "ml_high_probability" if (ml_probability is not None and ml_probability >= 0.70) else
+                "final_high_score" if (final_score is not None and final_score >= 0.70) else
                 "case_similarity_high" if sim_total >= 0.72 else
-                "ml_medium_plus_rule_high" if (ml_probability is not None and ml_probability >= 0.55 and rule_score >= 5) else
+                "final_medium_plus_rule_high" if (final_score is not None and final_score >= 0.55 and rule_score >= 5) else
                 "rule_only_medium" if rule_score >= 3 else
                 "below_threshold"
             ),
             "ml_probability": ml_probability,
+            "final_score": final_score,
             "ml_model_used": "logistic_regression" if (recent_model.get("score") is not None or longterm_model.get("score") is not None) else None,
             "ml_skipped_reason": ml_skip_reason or (recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason")),
             "ml_training_days": ml_training_days,
@@ -421,10 +450,10 @@ def generate_f_risk(
         )
 
     text = _compose_case_alert_text(risk_json)
-    fallback_used = False
+    stage_b_fallback_used = False
     fallback_reason = None
     if not text:
-        text, fallback_used, fallback_reason = _render_f_risk_alert(
+        text, stage_b_fallback_used, fallback_reason = _render_f_risk_alert(
         risk_json=risk_json,
         model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
         )
@@ -435,7 +464,7 @@ def generate_f_risk(
             "stage_b_failed",
             matched,
             "stage_b_failed",
-            {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "fallback_reason": fallback_reason},
+            {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "render_fallback_used": stage_b_fallback_used, "fallback_reason": fallback_reason},
         )
 
     return FRiskResult(
@@ -444,7 +473,7 @@ def generate_f_risk(
         f"model=recent:{recent_model.get('model')} long:{longterm_model.get('model')} score={blended:.3f}",
         matched,
         None,
-        {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "fallback_reason": fallback_reason},
+        {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "render_fallback_used": stage_b_fallback_used, "fallback_reason": fallback_reason},
     )
 
 
@@ -484,6 +513,17 @@ def _build_summary_from_history_item(item: dict[str, Any]) -> Optional[DailyLogS
     page_id = str(item.get("page_id") or "").strip()
     if not target_date or not page_id:
         return None
+    sleep_duration = _to_float(item.get("sleep_duration_min"))
+    task_details = [
+        DoneTaskDetail(
+            title=str(raw.get("title") or ""),
+            done_date=str(raw.get("done_date") or "") or None,
+            event_date=str(raw.get("event_date") or "") or None,
+        )
+        for raw in (item.get("done_tasks_detail") or [])
+        if isinstance(raw, dict)
+    ]
+    expenses_total = _to_float(item.get("expenses_total"))
     return DailyLogSummary(
         target_date=target_date,
         date=item.get("date"),
@@ -495,50 +535,54 @@ def _build_summary_from_history_item(item: dict[str, Any]) -> Optional[DailyLogS
         mail_id="",
         source=None,
         diary=None,
-        meal_summary=None,
+        meal_summary=item.get("meal_summary"),
         meal_photos=[],
-        place=None,
-        activity_summary=None,
-        done_count=None,
-        done_tasks=[],
-        done_tasks_detail=[],
-        drop_count=None,
-        drop_tasks=[],
-        kcal=None,
-        protein=None,
-        fat=None,
-        carb=None,
-        expenses_total=None,
-        expenses=ExpenseSummary(total=0.0, count=0, top=[], remaining=0),
-        location_summary=None,
-        mood=None,
-        notes=None,
-        weight=None,
-        sleep_start=None,
-        sleep_end=None,
-        sleep_duration_min=item.get("sleep_duration_min"),
-        resolved_sleep_duration_min=item.get("sleep_duration_min"),
-        resolved_sleep_duration_hours=None,
+        place=item.get("place"),
+        activity_summary=item.get("activity_summary"),
+        done_count=item.get("done_count"),
+        done_tasks=[str(value) for value in (item.get("done_tasks") or [])],
+        done_tasks_detail=task_details,
+        drop_count=item.get("drop_count"),
+        drop_tasks=[str(value) for value in (item.get("drop_tasks") or [])],
+        kcal=_to_float(item.get("kcal")),
+        protein=_to_float(item.get("protein")),
+        fat=_to_float(item.get("fat")),
+        carb=_to_float(item.get("carb")),
+        expenses_total=expenses_total,
+        expenses=ExpenseSummary(total=expenses_total or 0.0, count=0, top=[], remaining=0),
+        location_summary=item.get("location_summary"),
+        location_summary_source=item.get("location_summary_source"),
+        mood=item.get("mood"),
+        notes=item.get("notes"),
+        weight=_to_float(item.get("weight")),
+        sleep_start=item.get("sleep_start"),
+        sleep_end=item.get("sleep_end"),
+        sleep_duration_min=sleep_duration,
+        resolved_sleep_duration_min=sleep_duration,
+        resolved_sleep_duration_hours=round(sleep_duration / 60.0, 2) if sleep_duration else None,
         resolved_sleep_duration_text=None,
         sleep_duration_source="history_api",
         sleep_score=item.get("sleep_score"),
-        sleep_source=None,
-        readiness_stars=None,
+        sleep_source=item.get("sleep_source"),
+        readiness_stars=_to_float(item.get("readiness_stars")),
         readiness_hrv=item.get("readiness_hrv"),
         readiness_bpm=item.get("readiness_bpm"),
-        baseline_hrv=None,
-        baseline_waking_bpm=None,
-        sleep_heart_rate=None,
-        deep_duration_min=None,
-        rem_duration_min=None,
+        baseline_hrv=_to_float(item.get("baseline_hrv")),
+        baseline_waking_bpm=_to_float(item.get("baseline_waking_bpm")),
+        sleep_heart_rate=_to_float(item.get("sleep_heart_rate")),
+        deep_duration_min=_to_float(item.get("deep_duration_min")),
+        rem_duration_min=_to_float(item.get("rem_duration_min")),
         sleep_analysis_jp=None,
         today_condition_forecast_jp=None,
         today_advice=None,
         study_minutes=item.get("study_minutes"),
         study_sessions=item.get("study_sessions"),
+        study_last_used_at=item.get("study_last_used_at"),
         weather_code=item.get("weather_code"),
         weather_temp_max_c=item.get("weather_temp_max_c"),
         weather_temp_min_c=item.get("weather_temp_min_c"),
+        weather_precip_probability_max=item.get("weather_precip_probability_max"),
+        weather_input_hash=item.get("weather_input_hash"),
         expense_f_count=item.get("expense_f_count"),
         expense_f_total=item.get("expense_f_total"),
         expense_f_merchants=item.get("expense_f_merchants"),
@@ -549,6 +593,10 @@ def _build_summary_from_history_item(item: dict[str, Any]) -> Optional[DailyLogS
         notes_stress_flag=item.get("notes_stress_flag"),
         notes_sleep_issue_flag=item.get("notes_sleep_issue_flag"),
         notes_fatigue_flag=item.get("notes_fatigue_flag"),
+        notes_social_load_flag=item.get("notes_social_load_flag"),
+        notes_label_input_hash=item.get("notes_label_input_hash"),
+        notes_flags_json=item.get("notes_flags_json"),
+        notes_tags_json=item.get("notes_tags_json"),
     )
 
 
@@ -575,6 +623,11 @@ def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], tar
 def _hydrate_expense_f_from_expenses_db(histories: list[DailyLogSummary]) -> list[DailyLogSummary]:
     if not histories:
         return histories
+    if not (os.getenv("NOTION_TOKEN", "").strip() and os.getenv("EXPENSES_DB_ID", "").strip()):
+        if os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
+            return [replace(item, expense_f_data_status="query_failed") for item in histories]
+        logging.info("f_risk_expense_hydration_skipped reason=credentials_unavailable_non_ci")
+        return histories
     target_dates = [item.target_date for item in histories]
     aggregates = aggregate_expense_f_for_dates(target_dates)
     hydrated: list[DailyLogSummary] = []
@@ -582,6 +635,9 @@ def _hydrate_expense_f_from_expenses_db(histories: list[DailyLogSummary]) -> lis
         aggregate = aggregates.get(item.target_date)
         if not aggregate:
             hydrated.append(item)
+            continue
+        if aggregate.data_status not in {"ok", "no_results"}:
+            hydrated.append(replace(item, expense_f_data_status=aggregate.data_status))
             continue
         hydrated.append(
             replace(

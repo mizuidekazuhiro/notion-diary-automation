@@ -1,5 +1,7 @@
 # notion-diary-automation
 
+> Reliability update: Health page existence is no longer treated as usable data, Expense F no longer uses the unsupported checkbox `is_empty` filter, and Today advice never substitutes an unrelated historical sleep as today's sleep. See [docs/daily-automation-reliability.md](docs/daily-automation-reliability.md) for statuses, repair semantics, the Daily Signals proposal, migration plan, and rollback.
+
 ## Anki PC Automatic Study Tracking
 
 Windows PC版Ankiの実レビュー履歴（`revlog.time`）を午前4時区切りで自動集計し、既存Notion Daily Logの `Study Minutes` / `Study Sessions` / `Study Last Used At` へ反映します。日記・メールの「司法試験 Study」の表示構成は変更しません。

@@ -91,6 +91,7 @@ def check_workflow_chain() -> list[str]:
                 "repair workflow missing backfill command",
             ),
             ("send_mail:", "repair workflow missing send_mail input"),
+            ('default: "false"', "repair workflow send_mail must default to false"),
             ("--send-mail", "repair workflow missing historical mail flag"),
             (
                 "github.event_name",
