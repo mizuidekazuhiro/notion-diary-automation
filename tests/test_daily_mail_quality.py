@@ -205,6 +205,18 @@ def test_quality_gate_fails_when_expense_f_query_failed() -> None:
     assert "expense_f_unavailable" in _codes(report)
 
 
+def test_live_expense_f_status_overrides_missing_legacy_daily_log_field() -> None:
+    report = build_quality_report(
+        _summary(expense_f_data_status=None),
+        mail_plain_text="Daily Log\nToday advice\nDiary",
+        mail_html="<html></html>",
+        expense_f_status_override="no_results",
+    )
+
+    assert "expense_f_status_missing" not in _codes(report)
+    assert "expense_f_unavailable" not in _codes(report)
+
+
 def test_quality_gate_fails_when_f_risk_fallback_is_used() -> None:
     report = build_quality_report(
         _summary(),

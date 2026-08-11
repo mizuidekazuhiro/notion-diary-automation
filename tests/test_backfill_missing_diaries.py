@@ -9,6 +9,24 @@ import pytest
 from scripts import backfill_missing_diaries as backfill
 
 
+HEALTHY_F_RISK_STATE = {
+    "data_status": "ok",
+    "fallback_used": False,
+    "input_hash": "hash",
+    "generated_at": "2026-07-12T07:04:00Z",
+}
+
+
+@pytest.fixture(autouse=True)
+def external_quality_sources(monkeypatch) -> None:
+    monkeypatch.setattr(backfill, "_read_expense_f_status", lambda target_date: "ok")
+    monkeypatch.setattr(
+        backfill,
+        "_read_f_risk_state",
+        lambda target_date: (dict(HEALTHY_F_RISK_STATE), True),
+    )
+
+
 def summary(**overrides):
     base = dict(
         target_date="2026-07-12",
@@ -19,6 +37,15 @@ def summary(**overrides):
         today_advice_generated_at="2026-07-12T07:00:00+09:00",
         diary_generated_at="2026-07-12T07:05:00+09:00",
         page_id="page-1",
+        resolved_sleep_duration_min=420,
+        sleep_duration_min=420,
+        sleep_score=80,
+        readiness_hrv=45,
+        readiness_bpm=60,
+        kcal=1800,
+        protein=90,
+        fat=60,
+        carb=220,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -53,7 +80,7 @@ def test_diary_generated_at_missing_is_incomplete() -> None:
         summary(diary_generated_at="")
     )
     assert classification == "incomplete"
-    assert "diary_generated_at" in missing
+    assert "content:diary_generated_at" in missing
 
 
 def test_activity_summary_empty_can_still_be_complete() -> None:
@@ -355,3 +382,211 @@ def test_second_run_complete_page_skips_without_mail_request(monkeypatch) -> Non
     assert stats.complete_count == 1
     assert stats.repaired_count == 0
     assert stats.mail_processed_count == 0
+
+
+def test_missing_page_reports_all_three_quality_axes_incomplete() -> None:
+    quality = backfill.evaluate_daily_log(None)
+
+    assert quality.classification == "missing"
+    assert quality.content_complete is False
+    assert quality.source_complete is False
+    assert quality.analysis_complete is False
+
+
+def test_health_no_data_is_recorded_without_stopping_or_repairing(monkeypatch) -> None:
+    empty_health = {
+        "resolved_sleep_duration_min": None,
+        "sleep_duration_min": None,
+        "sleep_score": None,
+        "readiness_hrv": None,
+        "readiness_bpm": None,
+        "kcal": None,
+        "protein": None,
+        "fat": None,
+        "carb": None,
+    }
+    monkeypatch.setattr(
+        backfill,
+        "load_config",
+        lambda **kwargs: SimpleNamespace(
+            daily_log_read_url="read", bearer_token="token"
+        ),
+    )
+    monkeypatch.setattr(
+        backfill,
+        "read_daily_log",
+        lambda **kwargs: summary(**empty_health),
+    )
+    monkeypatch.setattr(
+        backfill,
+        "_repair_day",
+        lambda target_date: (_ for _ in ()).throw(
+            AssertionError("Health no_data alone must not trigger repair")
+        ),
+    )
+    monkeypatch.setattr(
+        backfill,
+        "_publish_day",
+        lambda target_date: (_ for _ in ()).throw(
+            AssertionError("historical mail must remain disabled by default")
+        ),
+    )
+
+    stats = backfill.run_backfill(
+        days=1,
+        end_date="2026-07-12",
+        dry_run=False,
+    )
+
+    assert stats.failed_count == 0
+    assert stats.source_missing_count == 1
+    assert stats.results[-1].status == "source_missing"
+    assert stats.results[-1].content_complete is True
+    assert stats.results[-1].source_complete is False
+    assert stats.results[-1].analysis_complete is True
+    assert stats.mail_processed_count == 0
+
+
+def test_health_no_data_does_not_block_safe_content_repair(monkeypatch) -> None:
+    empty_health = {
+        "resolved_sleep_duration_min": None,
+        "sleep_duration_min": None,
+        "sleep_score": None,
+        "readiness_hrv": None,
+        "readiness_bpm": None,
+        "kcal": None,
+        "protein": None,
+        "fat": None,
+        "carb": None,
+    }
+    reads = iter(
+        [
+            summary(diary="", **empty_health),
+            summary(**empty_health),
+        ]
+    )
+    repaired: list[str] = []
+    monkeypatch.setattr(
+        backfill,
+        "load_config",
+        lambda **kwargs: SimpleNamespace(
+            daily_log_read_url="read", bearer_token="token"
+        ),
+    )
+    monkeypatch.setattr(backfill, "read_daily_log", lambda **kwargs: next(reads))
+    monkeypatch.setattr(backfill, "_repair_day", lambda target_date: repaired.append(target_date))
+
+    stats = backfill.run_backfill(
+        days=1,
+        end_date="2026-07-12",
+        dry_run=False,
+    )
+
+    assert repaired == ["2026-07-12"]
+    assert stats.failed_count == 0
+    assert stats.repaired_count == 1
+    assert stats.results[-1].status == "repair_success_source_missing"
+    assert stats.results[-1].content_complete is True
+    assert stats.results[-1].source_complete is False
+    assert stats.results[-1].analysis_complete is True
+    assert "source:health:no_data" in stats.results[-1].missing_fields
+
+
+def test_health_no_data_allows_explicit_manual_historical_mail(monkeypatch) -> None:
+    empty_health = {
+        "resolved_sleep_duration_min": None,
+        "sleep_duration_min": None,
+        "sleep_score": None,
+        "readiness_hrv": None,
+        "readiness_bpm": None,
+        "kcal": None,
+        "protein": None,
+        "fat": None,
+        "carb": None,
+    }
+    published: list[str] = []
+    monkeypatch.setattr(
+        backfill,
+        "load_config",
+        lambda **kwargs: SimpleNamespace(
+            daily_log_read_url="read", bearer_token="token"
+        ),
+    )
+    monkeypatch.setattr(
+        backfill,
+        "read_daily_log",
+        lambda **kwargs: summary(**empty_health),
+    )
+    monkeypatch.setattr(backfill, "_publish_day", lambda target_date: published.append(target_date))
+
+    stats = backfill.run_backfill(
+        days=1,
+        end_date="2026-07-12",
+        dry_run=False,
+        send_mail=True,
+    )
+
+    assert published == ["2026-07-12"]
+    assert stats.results[-1].status == "source_missing_mail_processed"
+    assert stats.results[-1].source_complete is False
+
+
+def test_expense_query_failure_is_not_complete_and_failed_retry_stays_red(
+    monkeypatch,
+) -> None:
+    statuses = iter(["query_failed", "query_failed"])
+    monkeypatch.setattr(
+        backfill,
+        "_read_expense_f_status",
+        lambda target_date: next(statuses),
+    )
+    monkeypatch.setattr(
+        backfill,
+        "load_config",
+        lambda **kwargs: SimpleNamespace(
+            daily_log_read_url="read", bearer_token="token"
+        ),
+    )
+    monkeypatch.setattr(backfill, "read_daily_log", lambda **kwargs: summary())
+    monkeypatch.setattr(backfill, "_repair_day", lambda target_date: None)
+
+    stats = backfill.run_backfill(
+        days=1,
+        end_date="2026-07-12",
+        dry_run=False,
+    )
+
+    assert stats.failed_count == 1
+    assert stats.results[-1].status == "repair_failed"
+    assert "source:expense_f:query_failed" in stats.results[-1].missing_fields
+
+
+def test_f_risk_generation_failure_triggers_repair_and_readback(monkeypatch) -> None:
+    states = iter(
+        [
+            ({"data_status": "failed", "input_hash": "old"}, True),
+            (dict(HEALTHY_F_RISK_STATE), True),
+        ]
+    )
+    repaired: list[str] = []
+    monkeypatch.setattr(backfill, "_read_f_risk_state", lambda target_date: next(states))
+    monkeypatch.setattr(
+        backfill,
+        "load_config",
+        lambda **kwargs: SimpleNamespace(
+            daily_log_read_url="read", bearer_token="token"
+        ),
+    )
+    monkeypatch.setattr(backfill, "read_daily_log", lambda **kwargs: summary())
+    monkeypatch.setattr(backfill, "_repair_day", lambda target_date: repaired.append(target_date))
+
+    stats = backfill.run_backfill(
+        days=1,
+        end_date="2026-07-12",
+        dry_run=False,
+    )
+
+    assert repaired == ["2026-07-12"]
+    assert stats.failed_count == 0
+    assert stats.repaired_count == 1
+    assert stats.results[-1].status == "repair_success"

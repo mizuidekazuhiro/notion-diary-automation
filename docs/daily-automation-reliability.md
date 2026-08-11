@@ -16,7 +16,7 @@
 - Today sleep is limited to saved target-date properties or a candidate attributed to the target date by the canonical boundary. Historical sleep remains available only to trend calculations.
 - F Risk order is ML scoring, scoring fallback, final score, risk level, then match. Query failures in historical Expense F data stop scoring as unavailable instead of becoming zero-event days.
 - Phase C uses only `success`, `degraded`, `skipped`, and `failed`. `query_failed`, stale/no-data inputs, fallback, or skip reasons cannot become success.
-- Repair evaluates `content_complete`, `source_complete`, and `analysis_complete`. `source_missing` is recorded without copying an older value. Historical mail defaults to off.
+- Repair evaluates `content_complete`, `source_complete`, and `analysis_complete` using the Daily Log, a live read-only Expense F query, and external F Risk state. Health `no_data/stale/degraded` is recorded as non-blocking `source_missing`; content and analysis repair continues without copying an older value. Critical Expense F or F Risk failures remain red. Historical mail defaults to off and scheduled repair never enables it.
 - The read-only canary validates schemas, an F query, latest Health quality, and latest Daily Log read without printing merchant, note, location, or raw health values.
 
 ## Before / after

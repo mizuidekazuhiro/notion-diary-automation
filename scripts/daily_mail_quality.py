@@ -94,6 +94,7 @@ def build_quality_report(
     run_url: str = "",
     f_risk_state: Mapping[str, object] | None = None,
     f_risk_state_read_ok: bool | None = None,
+    expense_f_status_override: str | None = None,
 ) -> dict[str, object]:
     min_chars = _env_int("DAILY_MAIL_TODAY_ADVICE_MIN_CHARS", DEFAULT_TODAY_ADVICE_MIN_CHARS)
     max_chars = _env_int("DAILY_MAIL_TODAY_ADVICE_MAX_CHARS", DEFAULT_TODAY_ADVICE_MAX_CHARS)
@@ -150,7 +151,11 @@ def build_quality_report(
             "Keep Today advice free of sleep duration/score values and verify the Health source for this date.",
         )
 
-    expense_f_status = _text(_get(summary, "expense_f_data_status")) or "missing"
+    expense_f_status = (
+        _text(expense_f_status_override)
+        or _text(_get(summary, "expense_f_data_status"))
+        or "missing"
+    )
     if expense_f_status == "missing":
         _add_issue(
             issues,

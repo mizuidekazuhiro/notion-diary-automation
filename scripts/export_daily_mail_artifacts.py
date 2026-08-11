@@ -13,6 +13,7 @@ from publish.read_daily_log import read_daily_log
 from publish.render_mail import render_mail
 from scripts.daily_job import load_config, resolve_target_date
 from scripts.daily_mail_quality import build_markdown_report, build_quality_report, write_quality_artifacts
+from scripts.expense_f_aggregator import aggregate_daily_expense_f
 from scripts.f_risk_state_store import FRiskStateStore
 
 
@@ -102,6 +103,11 @@ def main() -> int:
 
     state_store = FRiskStateStore()
     f_risk_state = state_store.get_for_date(target_date)
+    try:
+        expense_f_status = aggregate_daily_expense_f(target_date).data_status
+    except Exception:
+        # The aggregate helper already emits a bounded sanitized diagnostic.
+        expense_f_status = "query_failed"
     report = build_quality_report(
         summary,
         mail_plain_text=mail.plain_text,
@@ -110,6 +116,7 @@ def main() -> int:
         run_url=run_url,
         f_risk_state=f_risk_state,
         f_risk_state_read_ok=state_store.meta.state_read_ok,
+        expense_f_status_override=expense_f_status,
     )
     write_quality_artifacts(report, artifact_dir=artifact_dir)
     print(build_markdown_report(report))
