@@ -287,35 +287,893 @@ def generate_f_risk(
             "matched_protective_factors": _derive_protective_features(today.iloc[0].to_dict())[:1],
             "matched_patterns": matched,
             "top_positive_features": [d.get("feature") for d in pattern_summary.get("deltas", []) if d.get("delta", 0) > 0][:5],
-            "top_negative_features": [d.get("feature") for d in pattern_summary.get("deltas", [])÷O|¶‰žËkºwµç]Ì¹Ñ½}‘¥Ð ‰É•½É‘Ìˆ¥t°(€€€€€€€ô(€€€€€€€…Í•l‰•Ù•¹Ñ}ÑåÁ”‰t€ô}±…ÍÍ¥™å}™}•Ù•¹Ñ}ÑåÁ”¡…Í”¤(€€€€€€€…Í•Ì¹…ÁÁ•¹¡…Í”¤(€€€É•ÑÕÉ¸…Í•Ì(()‘•˜}±…ÍÍ¥™å}™}•Ù•¹Ñ}ÑåÁ”¡…Í”è‘¥ÑmÍÑÈ°¹åt¤€´øÍÑÈè(€€€•Ù•¹Ñ}‘…ä€ô…Í”¹•Ð ‰•Ù•¹Ñ}‘…äˆ¤½Èíô(€€€ÁÉ•}É½ÝÌ€ô…Í”¹•Ð ‰ÁÉ•}É½ÝÌˆ¤½Èmt(€€€µ•É¡…¹ÑÌ€ôÍÑÈ¡•Ù•¹Ñ}‘…ä¹•Ð ‰•áÁ•¹Í•}™}µ•É¡…¹ÑÌˆ¤½È€ˆˆ¤¹±½Ý•È ¤(€€€±…Ñ•}½ÕÑ¥¹œ€ô‰½½°¡•Ù•¹Ñ}‘…ä¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤½È…¹ä¡‰½½°¡È¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤™½ÈÈ¥¸ÁÉ•}É½ÝÌ¤(€€€‘É¥¹­¥¹œ€ô‰½½°¡•Ù•¹Ñ}‘…ä¹•Ð ‰¹½Ñ•Í}¡…Í}‘É¥¹­¥¹œˆ¤¤½È…¹ä¡‰½½°¡È¹•Ð ‰¹½Ñ•Í}¡…Í}‘É¥¹­¥¹œˆ¤¤™½ÈÈ¥¸ÁÉ•}É½ÝÌ¤(€€€Í½¥…±}±½…€ô‰½½°¡•Ù•¹Ñ}‘…ä¹•Ð ‰¹½Ñ•Í}Í½¥…±}±½…‘}™±…œˆ¤¤½È…¹ä¡‰½½°¡È¹•Ð ‰¹½Ñ•Í}Í½¥…±}±½…‘}™±…œˆ¤¤™½ÈÈ¥¸ÁÉ•}É½ÝÌ¤(€€€ÍÑÉ•ÍÌ€ô‰½½°¡•Ù•¹Ñ}‘…ä¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤½È…¹ä¡‰½½°¡È¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤™½ÈÈ¥¸ÁÉ•}É½ÝÌ¤(€€€‘•Ñ½ÕÈ€ô‰½½°¡•Ù•¹Ñ}‘…ä¹•Ð ‰µÕ±Ñ¥}ÍÑ½Á}™±…œˆ¤¤½È€ ‰ÍÑ…Ñ¥½¸ˆ¥¸µ•É¡…¹ÑÌ½È€‹¦žˆ¥¸µ•É¡…¹ÑÌ¤(€€€ÍÁ•¹‘}‘•±Ñ„€ô€¡}Ñ½}™±½…Ð¡•Ù•¹Ñ}‘…ä¹•Ð ‰ÍÁ•¹‘¥¹}ÙÍ|Ý‘}‘•±Ñ„ˆ¤¤½È€À¤(€€€¥˜±…Ñ•}½ÕÑ¥¹œ…¹Í½¥…±}±½…è(€€€€€€€É•ÑÕÉ¸€‰¹¥¡Ñ}½ÕÑ¥¹œˆ(€€€¥˜‘É¥¹­¥¹œ…¹Í½¥…±}±½…è(€€€€€€€É•ÑÕÉ¸€‰‘É¥¹­¥¹}Í½¥…°ˆ(€€€¥˜ÍÁ•¹‘}‘•±Ñ„€ø€ÌÀÀÀè(€€€€€€€É•ÑÕÉ¸€‰¥µÁÕ±Í•}ÍÁ•¹ˆ(€€€¥˜ÍÑÉ•ÍÌè(€€€€€€€É•ÑÕÉ¸€‰ÍÑÉ•ÍÍ}É•±•…Í”ˆ(€€€¥˜‘•Ñ½ÕÈè(€€€€€€€É•ÑÕÉ¸€‰½µµÕÑ•}‘•Ñ½ÕÈˆ(€€€É•ÑÕÉ¸€‰Õ¹­¹½Ý¸ˆ(()‘•˜}‰Õ¥±‘}É••¹Ñ}…Í”¡Ý½É¬è¹ä°€¨°‘…åÌè¥¹Ð¤€´ø‘¥ÑmÍÑÈ°¹åtè(€€€É••¹Ñ}É½ÝÌ€ôÝ½É¬¹Ñ…¥°¡‘…åÌ¤¹Ñ½}‘¥Ð ‰É•½É‘Ìˆ¤(€€€É•ÑÕÉ¸ì‰É••¹Ñ}É½ÝÌˆèÉ••¹Ñ}É½ÝÍô(()‘•˜}½µÁÕÑ•}…Í•}Í¥µ¥±…É¥Ñä ¨°É••¹Ñ}…Í”è‘¥ÑmÍÑÈ°¹åt°•Ù•¹Ñ}…Í•Ìè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut°Ñ½Á}¸è¥¹Ð¤€´ø‘¥ÑmÍÑÈ°¹åtè(€€€É••¹Ñ}É½ÝÌ€ôÉ••¹Ñ}…Í”¹•Ð ‰É••¹Ñ}É½ÝÌˆ¤½Èmt(€€€¥˜¹½Ð•Ù•¹Ñ}…Í•Ì½È¹½ÐÉ••¹Ñ}É½ÝÌè(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰ÍÑÉ•¹Ñ ˆè€‰Ý•…¬ˆ°(€€€€€€€€€€€€‰ÍÕµµ…Éäˆè€‹¦;–:íŽ
-ÇŽóŽ
-çŽ£Ž»š¾S¢ò–¾û¢Æ‡Ž3’â7¢ÚÌˆ°(€€€€€€€€€€€€‰Ñ½Á}…Í•}µ…Ñ¡•Ìˆèmt°(€€€€€€€€€€€€‰Ñ½Á}…Í•}µ…Ñ¡}Í½É•Ìˆèmt°(€€€€€€€€€€€€‰µ…Ñ¡•‘}…Í•}‘…Ñ•Ìˆèmt°(€€€€€€€€€€€€‰µ…Ñ¡•‘}…Í•}ÑåÁ•Ìˆèmt°(€€€€€€€€€€€€‰µ…Ñ¡•‘}ÁÉ•}Á…ÑÑ•É¹Ìˆèmt°(€€€€€€€€€€€€‰Í½É•}Ñ½Ñ…°ˆè€À¸À°(€€€€€€€€€€€€‰Í½É•}½Ù•É±…Àˆè€À¸À°(€€€€€€€€€€€€‰Í½É•}Í•ÅÕ•¹”ˆè€À¸À°(€€€€€€€€€€€€‰Í½É•}ÑåÁ”ˆè€À¸À°(€€€€€€€€€€€€‰ÕÍ…‰±•}™}•Ù•¹Ñ}½Õ¹Ðˆè€À°(€€€€€€€ô(€€€Í½É•è±¥ÍÑm‘¥ÑmÍÑÈ°¹åut€ômt(€€€™½È…Í”¥¸•Ù•¹Ñ}…Í•Ìè(€€€€€€€ÁÉ•}É½ÝÌ€ô…Í”¹•Ð ‰ÁÉ•}É½ÝÌˆ¤½Èmt(€€€€€€€¥˜¹½ÐÁÉ•}É½ÝÌè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€½Ù•É±…À€ô}™•…ÑÕÉ•}½Ù•É±…Á}Í½É”¡É••¹Ñ}É½ÝÌ°ÁÉ•}É½ÝÌ¤(€€€€€€€Í•ÅÕ•¹”€ô}Ñ•µÁ½É…±}Í•ÅÕ•¹•}Í½É”¡É••¹Ñ}É½ÝÌ°ÁÉ•}É½ÝÌ¤(€€€€€€€ÑåÁ•}Í½É”€ô}•Ù•¹Ñ}ÑåÁ•}½¹Í¥ÍÑ•¹å}Í½É”¡É••¹Ñ}É½ÝÌ°ÍÑÈ¡…Í”¹•Ð ‰•Ù•¹Ñ}ÑåÁ”ˆ¤½È€‰Õ¹­¹½Ý¸ˆ¤¤(€€€€€€€Ñ½Ñ…°€ôÉ½Õ¹  À¸Ô€¨½Ù•É±…À¤€¬€ À¸ÌÔ€¨Í•ÅÕ•¹”¤€¬€ À¸ÄÔ€¨ÑåÁ•}Í½É”¤°€Ì¤(€€€€€€€Í½É•¹…ÁÁ•¹¡ì(€€€€€€€€€€€€‰•Ù•¹Ñ}‘…Ñ”ˆè…Í”¹•Ð ‰•Ù•¹Ñ}‘…Ñ”ˆ¤°(€€€€€€€€€€€€‰•Ù•¹Ñ}ÑåÁ”ˆè…Í”¹•Ð ‰•Ù•¹Ñ}ÑåÁ”ˆ¤°(€€€€€€€€€€€€‰Í½É•}Ñ½Ñ…°ˆèÑ½Ñ…°°(€€€€€€€€€€€€‰Í½É•}½Ù•É±…Àˆè½Ù•É±…À°(€€€€€€€€€€€€‰Í½É•}Í•ÅÕ•¹”ˆèÍ•ÅÕ•¹”°(€€€€€€€€€€€€‰Í½É•}ÑåÁ”ˆèÑåÁ•}Í½É”°(€€€€€€€ô¤(€€€¥˜¹½ÐÍ½É•è(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰ÍÑÉ•¹Ñ ˆè€‰Ý•…¬ˆ°(€€€€€€€€€€€€‰ÍÕµµ…Éäˆè€‹š¾S¢ò–>¿¢÷Ž«¦;–:íÁÉ”µÝ¥¹‘½ßŽ3’â7¢ÚÌˆ°(€€€€€€€€€€€€‰Ñ½Á}…Í•}µ…Ñ¡•Ìˆèmt°(€€€€€€€€€€€€‰Ñ½Á}…Í•}µ…Ñ¡}Í½É•Ìˆèmt°(€€€€€€€€€€€€‰µ…Ñ¡•‘}…Í•}‘…Ñ•Ìˆèmt°(€€€€€€€€€€€€‰µ…Ñ¡•‘}…Í•}ÑåÁ•Ìˆèmt°(€€€€€€€€€€€€‰µ…Ñ¡•‘}ÁÉ•}Á…ÑÑ•É¹Ìˆèmt°(€€€€€€€€€€€€‰Í½É•}Ñ½Ñ…°ˆè€À¸À°(€€€€€€€€€€€€‰Í½É•}½Ù•É±…Àˆè€À¸À°(€€€€€€€€€€€€‰Í½É•}Í•ÅÕ•¹”ˆè€À¸À°(€€€€€€€€€€€€‰Í½É•}ÑåÁ”ˆè€À¸À°(€€€€€€€€€€€€‰ÕÍ…‰±•}™}•Ù•¹Ñ}½Õ¹Ðˆè€À°(€€€€€€€ô(€€€Í½É•€ôÍ½ÉÑ•¡Í½É•°­•äõ±…µ‰‘„àèál‰Í½É•}Ñ½Ñ…°‰t°É•Ù•ÉÍ”õQÉÕ”¤(€€€Ñ½À€ôÍ½É•‘léÑ½Á}¹t(€€€‰•ÍÐ€ôÑ½ÁlÁt(€€€ÍÑÉ•¹Ñ €ô€‰ÍÑÉ½¹œˆ¥˜‰•ÍÑl‰Í½É•}Ñ½Ñ…°‰t€øô€À¸ÜÈ•±Í”€‰µ•‘¥Õ´ˆ¥˜‰•ÍÑl‰Í½É•}Ñ½Ñ…°‰t€øô€À¸ÔÔ•±Í”€‰Ý•…¬ˆ(€€€µ…Ñ¡•‘}Á…ÑÑ•É¹Ì€ô}‘•ÍÉ¥‰•}µ…Ñ¡•‘}Á…ÑÑ•É¹Ì¡É••¹Ñ}É½ÝÌ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰ÍÑÉ•¹Ñ ˆèÍÑÉ•¹Ñ °(€€€€€€€€‰ÍÕµµ…Éäˆè˜‹žnÓ¢þEí±•¸¡É••¹Ñ}É½ÝÌ¥÷š^—Ž»’â›ŽÏŽ¿¦;–:í–&7–Ž¡íÍÑÉ•¹Ñ¡÷’â¢Ó¾ò#šr¢&¿’â¢Ðí‰•ÍÑl•Ù•¹Ñ}‘…Ñ”u÷¾ò$ˆ°(€€€€€€€€‰Ñ½Á}…Í•}µ…Ñ¡•ÌˆèÑ½À°(€€€€€€€€‰Ñ½Á}…Í•}µ…Ñ¡}Í½É•Ìˆèmál‰Í½É•}Ñ½Ñ…°‰t™½Èà¥¸Ñ½Át°(€€€€€€€€‰µ…Ñ¡•‘}…Í•}‘…Ñ•ÌˆèmÍÑÈ¡ál‰•Ù•¹Ñ}‘…Ñ”‰t¤™½Èà¥¸Ñ½Át°(€€€€€€€€‰µ…Ñ¡•‘}…Í•}ÑåÁ•ÌˆèmÍÑÈ¡ál‰•Ù•¹Ñ}ÑåÁ”‰t¤™½Èà¥¸Ñ½Át°(€€€€€€€€‰µ…Ñ¡•‘}ÁÉ•}Á…ÑÑ•É¹Ìˆèµ…Ñ¡•‘}Á…ÑÑ•É¹Ì°(€€€€€€€€‰Í½É•}Ñ½Ñ…°ˆè‰•ÍÑl‰Í½É•}Ñ½Ñ…°‰t°(€€€€€€€€‰Í½É•}½Ù•É±…Àˆè‰•ÍÑl‰Í½É•}½Ù•É±…À‰t°(€€€€€€€€‰Í½É•}Í•ÅÕ•¹”ˆè‰•ÍÑl‰Í½É•}Í•ÅÕ•¹”‰t°(€€€€€€€€‰Í½É•}ÑåÁ”ˆè‰•ÍÑl‰Í½É•}ÑåÁ”‰t°(€€€€€€€€‰ÕÍ…‰±•}™}•Ù•¹Ñ}½Õ¹Ðˆè±•¸¡Í½É•¤°(€€€ô(()‘•˜}™•…ÑÕÉ•}½Ù•É±…Á}Í½É”¡É••¹Ñ}É½ÝÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut°ÁÉ•}É½ÝÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut¤€´ø™±½…Ðè(€€€­•åÌ€ôl(€€€€€€€€‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ°€‰‰•‘Ñ¥µ•}µ¥¸ˆ°€‰Í±••Á}Í½É”ˆ°€‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ°€‰¹½Ñ•Í}™…Ñ¥Õ•}™±…œˆ°€‰¹½Ñ•Í}Í½¥…±}±½…‘}™±…œˆ°(€€€€€€€€‰¹½Ñ•Í}Í±••Á}¥ÍÍÕ•}™±…œˆ°€‰¹½Ñ•Í}¡…Í}‘É¥¹­¥¹œˆ°€‰¹½Ñ•Í}¡…Í}±…Ñ•}Ý½É¬ˆ°€‰¹½Ñ•Í}¡…Í}Í½¥…°ˆ°€‰¹½Ñ•Í}¡…Í}É•É•Ðˆ°€‰¹½Ñ•Í}¡…Í}½¹™±¥Ðˆ°(€€€€€€€€‰±…Ñ•}½ÕÑ¥¹}™±…œˆ°€‰µÕ±Ñ¥}ÍÑ½Á}™±…œˆ°€‰½ÕÑ¥¹}¡•…Ùå}™±…œˆ°€‰¡½µ•}¡•…Ùå}™±…œˆ°€‰ÍÁ•¹‘¥¹}ÙÍ|Ý‘}‘•±Ñ„ˆ°€‰Í½¥…±}ÍÁ•¹‘}±¥­•}™±…œˆ°(€€€€€€€€‰½¹Ù•¹¥•¹•}ÍÑ½É•}±¥­•}™±…œˆ°€‰­…±}ÙÍ|Ý‘}‘•±Ñ„ˆ°€‰™…Ñ}ÙÍ|Ý‘}‘•±Ñ„ˆ°€‰…É‰}ÙÍ|Ý‘}‘•±Ñ„ˆ°€‰¡¥¡}™…Ñ}™±…œˆ°€‰¡¥¡}…É‰}™±…œˆ°(€€€€€€€€‰Ñ…Í­}½µÁ±•Ñ¥½¹}É…Ñ¥¼ˆ°€‰‘½¹•}ÙÍ|Ý‘}‘•±Ñ„ˆ°€‰‘É½Á}ÙÍ|Ý‘}‘•±Ñ„ˆ°€‰Í¡•‘Õ±•}Í…µ•}‘…å}•Ù•¹Ñ}½Õ¹Ðˆ°€‰±…Ñ•}•Ù•¹Ñ}±¥­•}™±…œˆ°(€€€€€€€€‰Ý•…Ñ¡•É}‰…‘}™±…œˆ°€‰Ý•…Ñ¡•É}ÁÉ•¥Á}ÁÉ½‰…‰¥±¥Ñå}µ…àˆ°€‰Ý•…Ñ¡•É}Ñ•µÁ}É…¹•}Œˆ°(€€€t(€€€Ñ½Ñ…°€ô€À¸À(€€€µ…Ñ¡•€ô€À¸À(€€€™½È­•ä¥¸­•åÌè(€€€€€€€É••¹Ñ}Ø€ô}Ñ½}™±½…Ð¡É••¹Ñ}É½ÝÍl´Åt¹•Ð¡­•ä¤¤¥˜É••¹Ñ}É½ÝÌ•±Í”9½¹”(€€€€€€€ÁÉ•}Ø€ô}Ñ½}™±½…Ð¡ÁÉ•}É½ÝÍl´Åt¹•Ð¡­•ä¤¤¥˜ÁÉ•}É½ÝÌ•±Í”9½¹”(€€€€€€€¥˜É••¹Ñ}Ø¥Ì9½¹”…¹ÁÉ•}Ø¥Ì9½¹”è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜€¡É••¹Ñ}Ø¥Ì9½¹”½È…‰Ì¡É••¹Ñ}Ø¤€ð€À¸ÀÔ¤…¹€¡ÁÉ•}Ø¥Ì9½¹”½È…‰Ì¡ÁÉ•}Ø¤€ð€À¸ÀÔ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Ñ½Ñ…°€¬ô€Ä¸À(€€€€€€€¥˜É••¹Ñ}Ø¥Ì9½¹”½ÈÁÉ•}Ø¥Ì9½¹”è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜…‰Ì¡É••¹Ñ}Ø€´ÁÉ•}Ø¤€ðôµ…à À¸È°…‰Ì¡ÁÉ•}Ø¤€¨€À¸ÌÔ¤è(€€€€€€€€€€€µ…Ñ¡•€¬ô€Ä¸À(€€€¥˜Ñ½Ñ…°€ðô€Àè(€€€€€€€É•ÑÕÉ¸€À¸À(€€€É•ÑÕÉ¸É½Õ¹¡µ…Ñ¡•€¼Ñ½Ñ…°°€Ì¤(()‘•˜}Ñ•µÁ½É…±}Í•ÅÕ•¹•}Í½É”¡É••¹Ñ}É½ÝÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut°ÁÉ•}É½ÝÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut¤€´ø™±½…Ðè(€€€Í¥é”€ôµ¥¸¡±•¸¡É••¹Ñ}É½ÝÌ¤°±•¸¡ÁÉ•}É½ÝÌ¤¤(€€€¥˜Í¥é”€ðô€Àè(€€€€€€€É•ÑÕÉ¸€À¸À(€€€Í½É”€ô€À¸À(€€€™½È¤¥¸É…¹” Ä°Í¥é”€¬€Ä¤è(€€€€€€€É••¹Ð€ôÉ••¹Ñ}É½ÝÍlµ¥t(€€€€€€€ÁÉ”€ôÁÉ•}É½ÝÍlµ¥t(€€€€€€€É••¹Ñ}Ý•¥¡Ð€ô€Ä¸À€¬€ À¸ÈÔ¥˜¤€ôô€Ä•±Í”€À¸À¤(€€€€€€€Í¡½ÉÑ}Í±••Á}µ…Ñ €ô‰½½° ¡}Ñ½}™±½…Ð¡É••¹Ð¹•Ð ‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ¤¤½È€À¤€øô€È¤…¹‰½½° ¡}Ñ½}™±½…Ð¡ÁÉ”¹•Ð ‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ¤¤½È€À¤€øô€È¤(€€€€€€€ÍÑÉ•ÍÍ}µ…Ñ €ô‰½½°¡É••¹Ð¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤…¹‰½½°¡ÁÉ”¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤(€€€€€€€±…Ñ•}½ÕÑ¥¹}µ…Ñ €ô‰½½°¡É••¹Ð¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤…¹‰½½°¡ÁÉ”¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤(€€€€€€€Í½É”€¬ôÉ••¹Ñ}Ý•¥¡Ð€¨€¡™±½…Ð¡Í¡½ÉÑ}Í±••Á}µ…Ñ ¤€¬™±½…Ð¡ÍÑÉ•ÍÍ}µ…Ñ ¤€¬™±½…Ð¡±…Ñ•}½ÕÑ¥¹}µ…Ñ ¤¤€¼€Ì¸À(€€€‘•¹½´€ôÍÕ´ Ä¸À€¬€ À¸ÈÔ¥˜¤€ôô€Ä•±Í”€À¸À¤™½È¤¥¸É…¹” Ä°Í¥é”€¬€Ä¤¤(€€€É•ÑÕÉ¸É½Õ¹¡Í½É”€¼µ…à¡‘•¹½´°€Ä¸À¤°€Ì¤(()‘•˜}•Ù•¹Ñ}ÑåÁ•}½¹Í¥ÍÑ•¹å}Í½É”¡É••¹Ñ}É½ÝÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut°•Ù•¹Ñ}ÑåÁ”èÍÑÈ¤€´ø™±½…Ðè(€€€±…Ñ•ÍÐ€ôÉ••¹Ñ}É½ÝÍl´Åt¥˜É••¹Ñ}É½ÝÌ•±Í”íô(€€€¥˜•Ù•¹Ñ}ÑåÁ”€ôô€‰¹¥¡Ñ}½ÕÑ¥¹œˆè(€€€€€€€É•ÑÕÉ¸€Ä¸À¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤•±Í”€À¸ÌÔ(€€€¥˜•Ù•¹Ñ}ÑåÁ”€ôô€‰‘É¥¹­¥¹}Í½¥…°ˆè(€€€€€€€É•ÑÕÉ¸€Ä¸À¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰¹½Ñ•Í}¡…Í}‘É¥¹­¥¹œˆ¤¤…¹‰½½°¡±…Ñ•ÍÐ¹•Ð ‰¹½Ñ•Í}Í½¥…±}±½…‘}™±…œˆ¤¤•±Í”€À¸ÈÔ(€€€¥˜•Ù•¹Ñ}ÑåÁ”€ôô€‰¥µÁÕ±Í•}ÍÁ•¹ˆè(€€€€€€€É•ÑÕÉ¸€Ä¸À¥˜€¡}Ñ½}™±½…Ð¡±…Ñ•ÍÐ¹•Ð ‰ÍÁ•¹‘¥¹}ÙÍ|Ý‘}‘•±Ñ„ˆ¤¤½È€À¤€ø€ÈÀÀÀ•±Í”€À¸Ì(€€€¥˜•Ù•¹Ñ}ÑåÁ”€ôô€‰ÍÑÉ•ÍÍ}É•±•…Í”ˆè(€€€€€€€É•ÑÕÉ¸€Ä¸À¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤•±Í”€À¸Ì(€€€¥˜•Ù•¹Ñ}ÑåÁ”€ôô€‰½µµÕÑ•}‘•Ñ½ÕÈˆè(€€€€€€€É•ÑÕÉ¸€Ä¸À¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰µÕ±Ñ¥}ÍÑ½Á}™±…œˆ¤¤•±Í”€À¸Ì(€€€É•ÑÕÉ¸€À¸È(()‘•˜}‘•ÍÉ¥‰•}µ…Ñ¡•‘}Á…ÑÑ•É¹Ì¡É••¹Ñ}É½ÝÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut¤€´ø±¥ÍÑmÍÑÉtè(€€€¥˜¹½ÐÉ••¹Ñ}É½ÝÌè(€€€€€€€É•ÑÕÉ¸mt(€€€±…Ñ•ÍÐ€ôÉ••¹Ñ}É½ÝÍl´Åt(€€€½ÕÐè±¥ÍÑmÍÑÉt€ômt(€€€¥˜€¡}Ñ½}™±½…Ð¡±…Ñ•ÍÐ¹•Ð ‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ¤¤½È€À¤€øô€Èè(€€€€€€€½ÕÐ¹…ÁÁ•¹ ‹ž~·žv‡žrƒ¦žÚhˆ¤(€€€¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰¹½Ñ•Í}Í½¥…±}±½…‘}™±…œˆ¤¤è(€€€€€€€½ÕÐ¹…ÁÁ•¹ ‰Í½¥…°±½…ˆ¤(€€€¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤è(€€€€€€€½ÕÐ¹…ÁÁ•¹ ‹–’s–’[–ë–
-û–BDˆ¤(€€€¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰¹½Ñ•Í}¡…Í}‘É¥¹­¥¹œˆ¤¤è(€€€€€€€½ÕÐ¹…ÁÁ•¹ ‰‘É¥¹­¥¹œˆ¤(€€€¥˜‰½½°¡±…Ñ•ÍÐ¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤è(€€€€€€€½ÕÐ¹…ÁÁ•¹ ‰ÍÑÉ•ÍÌˆ¤(€€€É•ÑÕÉ¸½ÕÑlèÕt(()‘•˜}½µÁ½Í•}…Í•}…±•ÉÑ}Ñ•áÐ¡É¥Í­}©Í½¸è‘¥ÑmÍÑÈ°¹åt¤€´ø=ÁÑ¥½¹…±mÍÑÉtè(€€€¥˜¹½ÐÉ¥Í­}©Í½¸¹•Ð ‰É¥Í­}µ…Ñ¡•ˆ¤è(€€€€€€€É•ÑÕÉ¸9½¹”(€€€Á½¥¹ÑÌ€ôÉ¥Í­}©Í½¸¹•Ð ‰•áÁ±…¹…Ñ¥½¹}Á½¥¹ÑÌˆ¤½Èmt(€€€‰…Í¥Ì€ô€‹Žˆ¹©½¥¸¡ÍÑÈ¡à¤™½Èà¥¸Á½¥¹ÑÍlèÍt¤¥˜Á½¥¹ÑÌ•±Í”€‹ž~·žv‡žrƒŽïŽ
-çŽ#Ž³Ž
-çŽï¦;–:ïŽ
-ÇŽóŽ
-ç¦†{’òðˆ(€€€É•ÑÕÉ¸€ (€€€€€€€€‹’î+š^—Ž½Ž«Ž
-çŽ
-¿Ž3¦®cŽ
-ŽŸŽgŽˆ(€€€€€€€˜‹š‚çš.ƒŽ¿Ží‰…Í¥Í÷ŽŸŽgŽˆ(€€€€€€€€‹’î+š^—Ž¿–’ŸŽ7Ž«šR¿–ë–"“šZ·Ž–¾Ž
-+¦OŽ–’sŽ»–’[–ëŽŽ
-ÏŽÏŽOŽ/Žï–’[¦ŽŽ»¢þ÷–*ƒ¢Îó–—Ž
-K¦ÿŽGŽ›Ž?ŽƒŽWŽŽˆ(€€€€¤(()‘•˜}‰Õ¥±‘}ÁÉ•‘¥Ñ¥½¹}É½Ü¡ÑÉ…¥¸è¹ä°€¨°ÁÉ•‘¥Ñ¥½¹}‘…Ñ”èÍÑÈ°‘…¥±å}±½}½¹Ñ•áÑ}‘…Ñ”èÍÑÈ¤€´ø¹äè(€€€€Œƒ’ê#šâ³–¾û¢Æ‡š^—Ž»–öOš^—–ºžâûŽ
-K’öÿŽ
-?Ž«ŽŽŽ
-Ž–¶›žþKšr¯–Âû¾ò#š^—š²‡ŽŸ¦k–âãŽ¿šb£š^—¾ò'Ž»¢†3Ž
-K–r–>ÃŽ¬(€€€€ŒÁÉ•‘¥Ñ¥½¹}‘…Ñ”ƒŽ
-K’â;Ž#ŽŽ3’î+š^—’ê#šâ³žR É½ßŽ7Ž
-K’ösŽ
-/ŽŽOŽ
-3Ž¿’ê/–ú3š–‚ÇŽ«ŽóŽ
-¿¦bËš¶‹Ž»ŽŽ
-Ž(€€€É½Ü€ôÑÉ…¥¸¹Ñ…¥° Ä¤¹½Áä ¤(€€€¥˜±•¸¡É½Ü¤€ôô€Àè(€€€€€€€É•ÑÕÉ¸ÑÉ…¥¸¹Ñ…¥° À¤¹½Áä ¤(€€€É½Ü¹±½lè°€‰‘…Ñ”‰t€ôÁÉ•‘¥Ñ¥½¹}‘…Ñ”(€€€É½Ü¹±½lè°€‰¥Í}Ý••­•¹‰t€ô€Ä¥˜‘…Ñ•Ñ¥µ”¹ÍÑÉÁÑ¥µ”¡ÁÉ•‘¥Ñ¥½¹}‘…Ñ”°€ˆ•d´•´´•ˆ¤¹Ý••­‘…ä ¤€øô€Ô•±Í”€À(€€€™½È™½É‰¥‘‘•¸¥¸€ ‰ÍÁ•¹‘¥¹}Ñ½Ñ…°ˆ°€‰•áÁ•¹Í•}™}½Õ¹Ðˆ°€‰•áÁ•¹Í•}™}Ñ½Ñ…°ˆ°€‰ÍÁ•¹‘¥¹}ÙÍ|Ý‘}‘•±Ñ„ˆ¤è(€€€€€€€¥˜™½É‰¥‘‘•¸¥¸É½Ü¹½±Õµ¹Ìè(€€€€€€€€€€€É½Ü¹±½lè°™½É‰¥‘‘•¹t€ô9½¹”(€€€É•ÑÕÉ¸É½Ü(()‘•˜}‰Õ¥±‘}•áÁ±…¹…Ñ¥½¹}Á½¥¹ÑÌ ¨°µ…Ñ¡•è±¥ÍÑmÍÑÉt°Í¥µ¥±…É¥Ñäè‘¥ÑmÍÑÈ°¹åt°Ñ½‘…äè‘¥ÑmÍÑÈ°¹åt¤€´ø±¥ÍÑmÍÑÉtè(€€€Á½¥¹ÑÌè±¥ÍÑmÍÑÉt€ômt(€€€¥˜Í¥µ¥±…É¥Ñä¹•Ð ‰ÍÕµµ…Éäˆ¤è(€€€€€€€Á½¥¹ÑÌ¹…ÁÁ•¹¡ÍÑÈ¡Í¥µ¥±…É¥Ñål‰ÍÕµµ…Éä‰t¤¤(€€€¥˜µ…Ñ¡•è(€€€€€€€Á½¥¹ÑÌ¹…ÁÁ•¹¡˜‹’â¢ÓŽ_Ž’âï¢š–n€èìœ°€œ¹©½¥¸¡µ…Ñ¡•‘lèÍt¥ôˆ¤(€€€¥˜}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ¤¤…¹}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ¤¤€øô€Èè(€€€€€€€Á½¥¹ÑÌ¹…ÁÁ•¹ ‹žnÓ¢þGšVÃš^—ŽŸž~·žv‡žrƒŽ3žÚkŽ7Ž–"“šZ·¢Êƒ¢6ßŽ3’â+Ž3Ž
-+Ž
-ŽgŽ’â›ŽÌˆ¤(€€€ÁÉ½Ñ•Ñ¥Ù”€ô}‘•É¥Ù•}ÁÉ½Ñ•Ñ¥Ù•}™•…ÑÕÉ•Ì¡Ñ½‘…ä¤(€€€¥˜ÁÉ½Ñ•Ñ¥Ù”è(€€€€€€€Á½¥¹ÑÌ¹…ÁÁ•¹¡˜‹’þw¢¶ß¢š–n€èíÁÉ½Ñ•Ñ¥Ù•lÁuôˆ¤(€€€É•ÑÕÉ¸Á½¥¹ÑÍlèÑt(()‘•˜}‰±•¹‘}Í½É•Ì¡É••¹Ðè=ÁÑ¥½¹…±m™±½…Ñt°±½¹}Ñ•É´è=ÁÑ¥½¹…±m™±½…Ñt¤€´ø=ÁÑ¥½¹…±m™±½…Ñtè(€€€¥˜É••¹Ð¥Ì9½¹”…¹±½¹}Ñ•É´¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸9½¹”(€€€¥˜É••¹Ð¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸±½¹}Ñ•É´(€€€¥˜±½¹}Ñ•É´¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸É••¹Ð(€€€É•ÑÕÉ¸€À¸Ø€¨É••¹Ð€¬€À¸Ð€¨±½¹}Ñ•É´(()‘•˜}Ñ½}™±½…Ð¡Ù…±Õ”è½‰©•Ð¤€´ø=ÁÑ¥½¹…±m™±½…Ñtè(€€€¥˜Ù…±Õ”¥Ì9½¹”½È¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°‰½½°¤è(€€€€€€€É•ÑÕÉ¸9½¹”(€€€ÑÉäè(€€€€€€€É•ÑÕÉ¸™±½…Ð¡Ù…±Õ”¤(€€€•á•ÁÐ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€É•ÑÕÉ¸9½¹”(()‘•˜}µ¥ÍÍ¥¹}É…Ñ•}™½É}ÁÉ•™¥à¡Ñ½‘…å}É½Üè¹ä°™•…ÑÕÉ•}¹…µ•Ìè±¥ÍÑmÍÑÉt°ÁÉ•™¥àèÍÑÈ¤€´ø™±½…Ðè(€€€­•åÌ€ôm¹…µ”™½È¹…µ”¥¸™•…ÑÕÉ•}¹…µ•Ì¥˜¹…µ”¹ÍÑ…ÉÑÍÝ¥Ñ ¡ÁÉ•™¥à¥t(€€€¥˜¹½Ð­•åÌè(€€€€€€€É•ÑÕÉ¸€Ä¸À(€€€Í…™”€ô}•¹ÍÕÉ•}½±Õµ¹Ì¡Ñ½‘…å}É½Ü°­•åÌ¤(€€€É½Ü€ôÍ…™•m­•åÍt(€€€É•ÑÕÉ¸™±½…Ð¡É½Ü¹¥Í¹„ ¤¹µ•…¸¡…á¥ÌôÄ¤¹¥±½lÁt¤(()‘•˜}•¹ÍÕÉ•}½±Õµ¹Ì¡‘˜è¹ä°½±Õµ¹Ìè±¥ÍÑmÍÑÉt¤€´ø¹äè(€€€½ÕÐ€ô‘˜¹½Áä ¤(€€€™½È½°¥¸½±Õµ¹Ìè(€€€€€€€¥˜½°¹½Ð¥¸½ÕÐ¹½±Õµ¹Ìè(€€€€€€€€€€€½ÕÑm½±t€ô9½¹”(€€€É•ÑÕÉ¸½ÕÐ(()‘•˜}‰Õ¥±‘}¥¹ÁÕÑ}…Ù…¥±…‰¥±¥Ñä¡Ý½É¬è¹ä¤€´ø‘¥ÑmÍÑÈ°¹åtè(€€€±…Ñ•ÍÐ€ôÝ½É¬¹¥±½l´Åt¹Ñ½}‘¥Ð ¤¥˜±•¸¡Ý½É¬¤•±Í”íô(€€€É½ÕÁÌ€ôì(€€€€€€€€‰Í±••Àˆèl‰Í±••Á}¡½ÕÉÌˆ°€‰Í±••Á}Í½É”‰t°(€€€€€€€€‰µ•…°ˆèl‰­…°ˆ°€‰ÁÉ½Ñ•¥¸ˆ°€‰™…Ðˆ°€‰…Éˆ‰t°(€€€€€€€€‰ÍÁ•¹‘¥¹œˆèl‰ÍÁ•¹‘¥¹}Ñ½Ñ…°ˆ°€‰•áÁ•¹Í•}™}½Õ¹Ðˆ°€‰•áÁ•¹Í•}™}Ñ½Ñ…°‰t°(€€€€€€€€‰Ñ…Í­Ìˆèl‰Ñ…Í­}‘½¹•}½Õ¹Ðˆ°€‰Ñ…Í­}‘É½Á}½Õ¹Ðˆ°€‰Ñ…Í­}½µÁ±•Ñ¥½¹}É…Ñ¥¼‰t°(€€€€€€€€‰¹½Ñ•Ìˆèl‰¹½Ñ•Í}ÁÉ•Í•¹Ñ}™±…œˆ°€‰¹½Ñ•Í}Í¥¹…±}½Õ¹Ð‰t°(€€€€€€€€‰±½…Ñ¥½¸ˆèl‰±½…Ñ¥½¹}ÁÉ•Í•¹Ñ}™±…œˆ°€‰±…Ñ•}½ÕÑ¥¹}™±…œˆ°€‰µÕ±Ñ¥}ÍÑ½Á}™±…œ‰t°(€€€€€€€€‰Ý•…Ñ¡•Èˆèl‰Ý•…Ñ¡•É}É•ÑÉ¥•Ù•‘}™±…œˆ°€‰Ý•…Ñ¡•É}½‘”ˆ°€‰Ý•…Ñ¡•É}ÁÉ•¥Á}ÁÉ½‰…‰¥±¥Ñå}µ…à‰t°(€€€€€€€€‰Í¡•‘Õ±”ˆèl‰Í¡•‘Õ±•}Í¥¹…±}…Ù…¥±…‰±•}™±…œˆ°€‰Í¡•‘Õ±•}Í…µ•}‘…å}•Ù•¹Ñ}½Õ¹Ð‰t°(€€€ô(€€€…Ù…¥±…‰±”è±¥ÍÑmÍÑÉt€ômt(€€€Õ¹…Ù…¥±…‰±”è±¥ÍÑmÍÑÉt€ômt(€€€•á±Õ‘•‘}É•…Í½¹Ìè‘¥ÑmÍÑÈ°ÍÑÉt€ôíô(€€€½Õ¹ÑÌè‘¥ÑmÍÑÈ°¥¹Ñt€ôíô(€€€™½ÈÉ½ÕÀ°­•åÌ¥¸É½ÕÁÌ¹¥Ñ•µÌ ¤è(€€€€€€€É½ÕÁ}…Ù…¥±…‰±”€ô€À(€€€€€€€™½È­•ä¥¸­•åÌè(€€€€€€€€€€€Ù…±Õ”€ô±…Ñ•ÍÐ¹•Ð¡­•ä¤(€€€€€€€€€€€¥˜Ù…±Õ”¥Ì9½¹”è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°™±½…Ð¤…¹µ…Ñ ¹¥Í¹…¸¡Ù…±Õ”¤è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°‰½½°¤è(€€€€€€€€€€€€€€€¥˜Ù…±Õ”è(€€€€€€€€€€€€€€€€€€€É½ÕÁ}…Ù…¥±…‰±”€¬ô€Ä(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€É½ÕÁ}…Ù…¥±…‰±”€¬ô€Ä(€€€€€€€½Õ¹ÑÍmÉ½ÕÁt€ôÉ½ÕÁ}…Ù…¥±…‰±”(€€€€€€€¥˜É½ÕÁ}…Ù…¥±…‰±”€ø€Àè(€€€€€€€€€€€…Ù…¥±…‰±”¹…ÁÁ•¹¡É½ÕÀ¤(€€€€€€€•±Í”è(€€€€€€€€€€€Õ¹…Ù…¥±…‰±”¹…ÁÁ•¹¡É½ÕÀ¤(€€€€€€€€€€€•á±Õ‘•‘}É•…Í½¹ÍmÉ½ÕÁt€ô€‰Õ¹…Ù…¥±…‰±•}™É½µ}•á¥ÍÑ¥¹}É•…‘}Á…Ñ ˆ(€€€É•ÑÕÉ¸ì(€€€€€€€€‰…Ù…¥±…‰±•}É½ÕÁÌˆè…Ù…¥±…‰±”°(€€€€€€€€‰Õ¹…Ù…¥±…‰±•}É½ÕÁÌˆèÕ¹…Ù…¥±…‰±”°(€€€€€€€€‰•á±Õ‘•‘}É•…Í½¹Ìˆè•á±Õ‘•‘}É•…Í½¹Ì°(€€€€€€€€‰É½ÕÁ}½Õ¹ÑÌˆè½Õ¹ÑÌ°(€€€€€€€€‰Í¡•‘Õ±•}ÕÍ•ˆè€‰Í¡•‘Õ±”ˆ¥¸…Ù…¥±…‰±”°(€€€€€€€€‰Ý•…Ñ¡•É}ÕÍ•ˆè€‰Ý•…Ñ¡•Èˆ¥¸…Ù…¥±…‰±”°(€€€ô(()‘•˜}ÉÕ±•}‰…Í•‘}™…±±‰…¬¡Ñ½‘…äè‘¥ÑmÍÑÈ°¹åt°€¨°…Ù…¥±…‰¥±¥Ñäè‘¥ÑmÍÑÈ°¹åt¤€´ø‘¥ÑmÍÑÈ°¹åtè(€€€µ…Ñ¡•Ìè±¥ÍÑmÍÑÉt€ômt(€€€Í¡½ÉÑ}Í±••À€ô€¡}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰Í±••Á}Í¡½ÉÑ}ÍÑÉ•…¬ˆ¤¤½È€À¤€øô€È(€€€ÍÑÉ•ÍÌ€ô‰½½°¡Ñ½‘…ä¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…œˆ¤¤½È‰½½°¡Ñ½‘…ä¹•Ð ‰¹½Ñ•Í}ÍÑÉ•ÍÍ}™±…}±…|Äˆ¤¤(€€€±…Ñ•}½ÕÑ¥¹œ€ô‰½½°¡Ñ½‘…ä¹•Ð ‰±…Ñ•}½ÕÑ¥¹}™±…œˆ¤¤(€€€‘É¥¹­¥¹œ€ô‰½½°¡Ñ½‘…ä¹•Ð ‰¹½Ñ•Í}¡…Í}‘É¥¹­¥¹œˆ¤¤(€€€¡¥¡}™…Ð€ô‰½½°¡Ñ½‘…ä¹•Ð ‰¡¥¡}™…Ñ}™±…œˆ¤¤½È€ ¡}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰™…Ñ}ÙÍ|Ý‘}‘•±Ñ„ˆ¤¤½È€À¤€ø€ÄÈ¤(€€€¡¥¡}­…°€ô€¡}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰­…±}ÙÍ|Ý‘}‘•±Ñ„ˆ¤¤½È€À¤€ø€ÌÔÀ(€€€Í¡•‘Õ±•}‘•¹Í”€ô€¡}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰Í¡•‘Õ±•}Í…µ•}‘…å}•Ù•¹Ñ}½Õ¹Ðˆ¤¤½È€À¤€øô€Ì(€€€ÍÁ•¹‘}ÍÁ¥­”€ô€¡}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰ÍÁ•¹‘¥¹}ÙÍ|Ý‘}‘•±Ñ„ˆ¤¤½È€À¤€ø€ÌÀÀÀ(€€€Í½¥…±}±½…€ô‰½½°¡Ñ½‘…ä¹•Ð ‰¹½Ñ•Í}Í½¥…±}±½…‘}™±…œˆ¤¤(€€€™…Ñ¥Õ”€ô‰½½°¡Ñ½‘…ä¹•Ð ‰¹½Ñ•Í}™…Ñ¥Õ•}™±…œˆ¤¤(€€€™}ÍÁ•¹€ô€¡}Ñ½}™±½…Ð¡Ñ½‘…ä¹•Ð ‰•áÁ•¹Í•}™}½Õ¹Ðˆ¤¤½È€À¤€ø€À(€€€Ý••­•¹‘}½É}±…Ñ”€ô‰½½°¡Ñ½‘…ä¹•Ð ‰¥Í}Ý••­•¹ˆ¤¤½È±…Ñ•}½ÕÑ¥¹œ((€€€¥˜Í¡½ÉÑ}Í±••À…¹ÍÑÉ•ÍÌ…¹±…Ñ•}½ÕÑ¥¹œè(€€€€€€€µ…Ñ¡•Ì¹…ÁÁ•¹ ‹ž~·žv‡žrƒ¦žÚh€¬ÍÑÉ•ÍÌÍ¥¹…°€¬±…Ñ”½ÕÑ¥¹œˆ¤(€€€¥˜‘É¥¹­¥¹œ…¹€¡¡¥¡}™…Ð½È¡¥¡}­…°¤…¹Í¡•‘Õ±•}‘•¹Í”è(€€€€€€€µ…Ñ¡•Ì¹…ÁÁ•¹ ‹¦ŽË¦H¿’òk¦Žž’ë–R€¬ƒ¦®c¢¢Î¨¿¦®cŽ
-¯Ž·Ž«Žð€¬ƒ–öOš^—’ê#–ºk–¾–ê˜ˆ¤(€€€¥˜ÍÁ•¹‘}ÍÁ¥­”…¹Í½¥…±}±½……¹™…Ñ¥Õ”è(€€€€€€€µ…Ñ¡•Ì¹…ÁÁ•¹ ‹šR¿–ëŽ
-çŽGŽ
-“Ž
-¼€¬Í½¥…°±½…€¬™…Ñ¥Õ”ˆ¤(€€€¥˜™}ÍÁ•¹…¹Í¡½ÉÑ}Í±••À…¹Ý••­•¹‘}½É}±…Ñ”è(€€€€€€€µ…Ñ¡•Ì¹…ÁÁ•¹ ‰šR¿–ëŽŽ
-(€¬ƒž~·žv‡žr€€¬ƒ¦Çšr¬¿–’s¢†3–.WŽGŽ
-ÿŽóŽÌˆ¤((€€€µ…Ñ¡•€ô±•¸¡µ…Ñ¡•Ì¤€øô€Ä(€€€É•ÑÕÉ¸ì(€€€€€€€€‰É¥Í­}µ…Ñ¡•ˆèµ…Ñ¡•°(€€€€€€€€‰‰±•¹‘•‘}Í½É”ˆè€À¸ØÔ¥˜µ…Ñ¡••±Í”€À¸ÌÈ°(€€€€€€€€‰µ…Ñ¡•‘}™…Ñ½ÉÌˆèµ…Ñ¡•Ì°(€€€€€€€€‰¹½}…±•ÉÑ}É•…Í½¸ˆè9½¹”¥˜µ…Ñ¡••±Í”€‰™…±±‰…­}¹½}µÕ±Ñ¥}™…Ñ½É}µ…Ñ ˆ°(€€€€€€€€‰Õ¹…Ù…¥±…‰±•}É½ÕÁÌˆè…Ù…¥±…‰¥±¥Ñä¹•Ð ‰Õ¹…Ù…¥±…‰±•}É½ÕÁÌˆ°mt¤°(€€€ô(
+            "top_negative_features": [d.get("feature") for d in pattern_summary.get("deltas", []) if d.get("delta", 0) < 0][:5],
+            "confidence": confidence,
+            "reliability": reliability,
+            "evidence_sufficiency": evidence_sufficiency,
+            "skipped_reason": None,
+            "explanation_points": explanation_points,
+            "no_alert_reason": None if risk_matched else (
+                "case_similarity_weak"
+                if sim_total < medium_threshold
+                else "case_similarity_medium_but_rule_insufficient"
+            ),
+            "no_alert_reason_detail": None if risk_matched else (
+                "case_similarity_below_medium_threshold"
+                if sim_total < medium_threshold
+                else "case_similarity_medium_but_rule_insufficient"
+            ),
+            "model_used": {"recent": recent_model.get("model"), "long_term": longterm_model.get("model")},
+            "history_count": len(train),
+            "class_balance": float(train["f_event_flag"].mean()),
+            "used_feature_groups": ["lag", "rolling", "streak", "interaction", "notes", "sleep", "weather", "weekday"],
+            "input_groups_available": availability["available_groups"],
+            "input_groups_unavailable": availability["unavailable_groups"],
+            "excluded_reasons": availability["excluded_reasons"],
+            "feature_count": int(len(work.columns)),
+            "feature_group_counts": availability["group_counts"],
+            "notes_labeling_ok": labels_usable,
+            "notes_labeling_quality": "low" if merge_quality_low else "high",
+            "schedule_features_used": availability["schedule_used"],
+            "weather_features_used": availability["weather_used"],
+            "fallback_used": fallback_used,
+            "fallback_details": fallback_meta,
+            "blended_score": final_score,
+            "data_status": "degraded" if fallback_used or overall_missing_rate >= 0.6 else "ok",
+            "forbidden_inputs_used": False,
+            "history_days_loaded": len(histories),
+            "f_event_count": int(train["f_event_flag"].sum()),
+            "usable_f_event_count": int(similarity.get("usable_f_event_count", 0)),
+            "event_case_count": len(event_cases),
+            "top_case_matches": similarity.get("top_case_matches", []),
+            "top_case_match_scores": similarity.get("top_case_match_scores", []),
+            "matched_case_dates": similarity.get("matched_case_dates", []),
+            "matched_case_types": similarity.get("matched_case_types", []),
+            "matched_pre_patterns": similarity.get("matched_pre_patterns", []),
+            "similarity_score_total": similarity.get("score_total"),
+            "similarity_score_overlap": similarity.get("score_overlap"),
+            "similarity_score_sequence": similarity.get("score_sequence"),
+            "similarity_score_type": similarity.get("score_type"),
+            "model_score_recent": recent_score,
+            "model_score_longterm": long_score,
+            "final_alert_basis": (
+                "ml_or_similarity_or_rule_threshold"
+                if risk_matched
+                else "below_threshold"
+            ),
+            "final_alert_basis_detail": (
+                "forbidden_today_features_used" if forbidden_used else
+                "final_high_score" if (final_score is not None and final_score >= 0.70) else
+                "case_similarity_high" if sim_total >= 0.72 else
+                "final_medium_plus_rule_high" if (final_score is not None and final_score >= 0.55 and rule_score >= 5) else
+                "rule_only_medium" if rule_score >= 3 else
+                "below_threshold"
+            ),
+            "ml_probability": ml_probability,
+            "final_score": final_score,
+            "ml_model_used": "logistic_regression" if (recent_model.get("score") is not None or longterm_model.get("score") is not None) else None,
+            "ml_skipped_reason": ml_skip_reason or (recent_model.get("skipped_reason") if recent_model.get("skipped_reason") else longterm_model.get("skipped_reason")),
+            "ml_training_days": ml_training_days,
+            "ml_positive_event_count": ml_positive_event_count,
+            "f_risk_rule_score": int(rule_score),
+            "f_risk_rule_hits": rule_meta.get("hits", []),
+            "f_risk_rule_protective_hits": rule_meta.get("protective_hits", []),
+            "f_risk_level": risk_level,
+            "forbidden_today_features_used": forbidden_used,
+            "forbidden_today_features_used_detail": [name for name in forbidden_feature_names if name in prediction_feature_names],
+            "prediction_feature_names": prediction_feature_names,
+            "excluded_today_feature_names": forbidden_feature_names,
+            "f_risk_backtest_days": int(min(30, len(train))),
+            "f_risk_backtest_precision": None,
+            "f_risk_backtest_recall": None,
+            "f_risk_backtest_false_positive_count": None,
+            "f_risk_backtest_missed_event_count": None,
+            "f_risk_backtest_status": "not_implemented",
+            "f_risk_threshold_used": min_level,
+            "study_features_used": bool(available_study_cols and study_has_values),
+            "study_feature_names": study_feature_names,
+            "study_feature_missing_reason": (
+                None if (available_study_cols and study_has_values)
+                else "study_columns_missing" if not available_study_cols
+                else "study_values_all_null"
+            ),
+            "study_missing_rate": study_missing_rate,
+            "sleep_missing_rate": sleep_missing_rate,
+            "notes_missing_rate": notes_missing_rate,
+            "meal_missing_rate": meal_missing_rate,
+            "location_missing_rate": location_missing_rate,
+            "overall_feature_missing_rate": overall_missing_rate,
+            "effective_feature_count": effective_feature_count,
+            "total_feature_count": total_feature_count,
+            "study_target_minutes_per_day": int(os.getenv("F_RISK_STUDY_TARGET_MINUTES_PER_DAY", "0") or "0"),
+            "study_heavy_day_minutes_threshold": int(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180"),
+        }
+    )
+    if forbidden_used:
+        risk_json["risk_matched"] = False
+        risk_json["no_alert_reason"] = "forbidden_today_features_used"
+        risk_matched = False
+    logging.info(
+        "[FRisk][Cases] history_days_loaded=%s f_event_count=%s usable_f_event_count=%s event_case_count=%s top_case_matches=%s",
+        risk_json["history_days_loaded"],
+        risk_json["f_event_count"],
+        risk_json["usable_f_event_count"],
+        risk_json["event_case_count"],
+        risk_json["matched_case_dates"][:3],
+    )
+    logging.info(
+        "[FRisk][Similarity] total=%s overlap=%s sequence=%s type=%s strength=%s",
+        risk_json["similarity_score_total"],
+        risk_json["similarity_score_overlap"],
+        risk_json["similarity_score_sequence"],
+        risk_json["similarity_score_type"],
+        sim_level,
+    )
+    logging.info(
+        "[FRisk][Decision] risk_matched=%s basis=%s no_alert_reason=%s rule_match_count=%s model_support=%s",
+        risk_matched,
+        risk_json["final_alert_basis"],
+        risk_json["no_alert_reason"],
+        rule_count,
+        model_support,
+    )
+    logging.info(
+        "f_risk_stage_a_summary target_date=%s feature_count=%s feature_group_counts=%s available=%s unavailable=%s excluded=%s fallback_used=%s model_recent=%s model_long=%s history_count=%s class_balance=%.3f risk_recent=%s risk_long=%s risk_blended=%s matched=%s protective=%s no_alert_reason=%s forbidden_inputs_used=%s",
+        prediction_date,
+        risk_json["feature_count"],
+        risk_json["feature_group_counts"],
+        risk_json["input_groups_available"],
+        risk_json["input_groups_unavailable"],
+        risk_json["excluded_reasons"],
+        fallback_used,
+        recent_model.get("model"),
+        longterm_model.get("model"),
+        risk_json["history_count"],
+        risk_json["class_balance"],
+        risk_json["risk_probability_recent"],
+        risk_json["risk_probability_longterm"],
+        blended,
+        risk_json["matched_risk_factors"],
+        risk_json["matched_protective_factors"],
+        risk_json["no_alert_reason"],
+        risk_json["forbidden_inputs_used"],
+    )
+
+    if not risk_matched:
+        return FRiskResult(
+            None,
+            blended,
+            f"no_alert:{risk_json['no_alert_reason']}",
+            matched,
+            None,
+            {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "note_label_audit": note_audit},
+        )
+
+    text = _compose_case_alert_text(risk_json)
+    stage_b_fallback_used = False
+    fallback_reason = None
+    if not text:
+        text, stage_b_fallback_used, fallback_reason = _render_f_risk_alert(
+        risk_json=risk_json,
+        model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
+        )
+    if text is None:
+        return FRiskResult(
+            None,
+            blended,
+            "stage_b_failed",
+            matched,
+            "stage_b_failed",
+            {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "render_fallback_used": stage_b_fallback_used, "fallback_reason": fallback_reason},
+        )
+
+    return FRiskResult(
+        text,
+        blended,
+        f"model=recent:{recent_model.get('model')} long:{longterm_model.get('model')} score={blended:.3f}",
+        matched,
+        None,
+        {"risk_json": risk_json, "pattern": pattern_summary, "recent_model": recent_model, "longterm_model": longterm_model, "fallback_used": fallback_used, "render_fallback_used": stage_b_fallback_used, "fallback_reason": fallback_reason},
+    )
+
+
+
+
+def _load_histories_with_bulk_fallback(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:
+    base = datetime.strptime(target_date, "%Y-%m-%d")
+    start = (base - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    url = f"{daily_log_read_url.rstrip('/')}/history?start={start}&end={target_date}"
+    try:
+        payload = fetch_json(url, bearer_token)
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if isinstance(items, list):
+            histories: list[DailyLogSummary] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                day = str(item.get("target_date") or "").strip()
+                if not day:
+                    continue
+                summary = _build_summary_from_history_item(item)
+                if summary is None:
+                    summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
+                if summary:
+                    histories.append(summary)
+            if histories:
+                logging.info("f_risk_history_bulk_fetch_success count=%s", len(histories))
+                return histories
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("f_risk_history_bulk_fetch_failed error=%s", exc)
+
+    return _load_histories(daily_log_read_url=daily_log_read_url, bearer_token=bearer_token, target_date=target_date, days=days)
+
+
+def _build_summary_from_history_item(item: dict[str, Any]) -> Optional[DailyLogSummary]:
+    target_date = str(item.get("target_date") or "").strip()
+    page_id = str(item.get("page_id") or "").strip()
+    if not target_date or not page_id:
+        return None
+    sleep_duration = _to_float(item.get("sleep_duration_min"))
+    task_details = [
+        DoneTaskDetail(
+            title=str(raw.get("title") or ""),
+            done_date=str(raw.get("done_date") or "") or None,
+            event_date=str(raw.get("event_date") or "") or None,
+        )
+        for raw in (item.get("done_tasks_detail") or [])
+        if isinstance(raw, dict)
+    ]
+    expenses_total = _to_float(item.get("expenses_total"))
+    return DailyLogSummary(
+        target_date=target_date,
+        date=item.get("date"),
+        target_date_value=target_date,
+        page_id=page_id,
+        title=str(item.get("title") or ""),
+        summary_text="",
+        summary_html="",
+        mail_id="",
+        source=None,
+        diary=None,
+        meal_summary=item.get("meal_summary"),
+        meal_photos=[],
+        place=item.get("place"),
+        activity_summary=item.get("activity_summary"),
+        done_count=item.get("done_count"),
+        done_tasks=[str(value) for value in (item.get("done_tasks") or [])],
+        done_tasks_detail=task_details,
+        drop_count=item.get("drop_count"),
+        drop_tasks=[str(value) for value in (item.get("drop_tasks") or [])],
+        kcal=_to_float(item.get("kcal")),
+        protein=_to_float(item.get("protein")),
+        fat=_to_float(item.get("fat")),
+        carb=_to_float(item.get("carb")),
+        expenses_total=expenses_total,
+        expenses=ExpenseSummary(total=expenses_total or 0.0, count=0, top=[], remaining=0),
+        location_summary=item.get("location_summary"),
+        location_summary_source=item.get("location_summary_source"),
+        mood=item.get("mood"),
+        notes=item.get("notes"),
+        weight=_to_float(item.get("weight")),
+        sleep_start=item.get("sleep_start"),
+        sleep_end=item.get("sleep_end"),
+        sleep_duration_min=sleep_duration,
+        resolved_sleep_duration_min=sleep_duration,
+        resolved_sleep_duration_hours=round(sleep_duration / 60.0, 2) if sleep_duration else None,
+        resolved_sleep_duration_text=None,
+        sleep_duration_source="history_api",
+        sleep_score=item.get("sleep_score"),
+        sleep_source=item.get("sleep_source"),
+        readiness_stars=_to_float(item.get("readiness_stars")),
+        readiness_hrv=item.get("readiness_hrv"),
+        readiness_bpm=item.get("readiness_bpm"),
+        baseline_hrv=_to_float(item.get("baseline_hrv")),
+        baseline_waking_bpm=_to_float(item.get("baseline_waking_bpm")),
+        sleep_heart_rate=_to_float(item.get("sleep_heart_rate")),
+        deep_duration_min=_to_float(item.get("deep_duration_min")),
+        rem_duration_min=_to_float(item.get("rem_duration_min")),
+        sleep_analysis_jp=None,
+        today_condition_forecast_jp=None,
+        today_advice=None,
+        study_minutes=item.get("study_minutes"),
+        study_sessions=item.get("study_sessions"),
+        study_last_used_at=item.get("study_last_used_at"),
+        weather_code=item.get("weather_code"),
+        weather_temp_max_c=item.get("weather_temp_max_c"),
+        weather_temp_min_c=item.get("weather_temp_min_c"),
+        weather_precip_probability_max=item.get("weather_precip_probability_max"),
+        weather_input_hash=item.get("weather_input_hash"),
+        expense_f_count=item.get("expense_f_count"),
+        expense_f_total=item.get("expense_f_total"),
+        expense_f_merchants=item.get("expense_f_merchants"),
+        expense_f_categories=item.get("expense_f_categories"),
+        f_risk_score=item.get("f_risk_score"),
+        f_risk_reason=item.get("f_risk_reason"),
+        f_risk_input_hash=item.get("f_risk_input_hash"),
+        notes_stress_flag=item.get("notes_stress_flag"),
+        notes_sleep_issue_flag=item.get("notes_sleep_issue_flag"),
+        notes_fatigue_flag=item.get("notes_fatigue_flag"),
+        notes_social_load_flag=item.get("notes_social_load_flag"),
+        notes_label_input_hash=item.get("notes_label_input_hash"),
+        notes_flags_json=item.get("notes_flags_json"),
+        notes_tags_json=item.get("notes_tags_json"),
+    )
+
+
+def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:
+    base = datetime.strptime(target_date, "%Y-%m-%d")
+    out: list[DailyLogSummary] = []
+    fetch_interval_seconds = max(
+        0.0, float(os.getenv("F_RISK_HISTORY_FETCH_INTERVAL_SECONDS", "0.4") or "0.4")
+    )
+    for offset in range(days):
+        day = (base - timedelta(days=offset)).strftime("%Y-%m-%d")
+        try:
+            summary = read_daily_log(daily_log_read_url=daily_log_read_url, target_date=day, bearer_token=bearer_token)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("f_risk_history_single_fetch_failed date=%s error=%s", day, exc)
+            break
+        if summary:
+            out.append(summary)
+        if fetch_interval_seconds > 0 and offset < (days - 1):
+            time.sleep(fetch_interval_seconds)
+    return out
+
+
+def _hydrate_expense_f_from_expenses_db(histories: list[DailyLogSummary]) -> list[DailyLogSummary]:
+    if not histories:
+        return histories
+    if not (os.getenv("NOTION_TOKEN", "").strip() and os.getenv("EXPENSES_DB_ID", "").strip()):
+        if os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
+            return [replace(item, expense_f_data_status="query_failed") for item in histories]
+        logging.info("f_risk_expense_hydration_skipped reason=credentials_unavailable_non_ci")
+        return histories
+    target_dates = [item.target_date for item in histories]
+    aggregates = aggregate_expense_f_for_dates(target_dates)
+    hydrated: list[DailyLogSummary] = []
+    for item in histories:
+        aggregate = aggregates.get(item.target_date)
+        if not aggregate:
+            hydrated.append(item)
+            continue
+        if aggregate.data_status not in {"ok", "no_results"}:
+            hydrated.append(replace(item, expense_f_data_status=aggregate.data_status))
+            continue
+        hydrated.append(
+            replace(
+                item,
+                expense_f_count=aggregate.count,
+                expense_f_total=aggregate.total,
+                expense_f_merchants=" / ".join(aggregate.merchants),
+                expense_f_categories=None,
+                expense_f_first_time=aggregate.first_time,
+                expense_f_last_time=aggregate.last_time,
+                expense_f_data_status=aggregate.data_status,
+            )
+        )
+    return hydrated
+
+
+def _explore_patterns(train: Any) -> dict[str, Any]:
+    risk_days = train[train["f_event_flag"] == 1]
+    safe_days = train[train["f_event_flag"] == 0]
+    features = [
+        "sleep_hours", "sleep_short_streak", "notes_stress_flag", "notes_social_load_flag", "notes_has_late_work",
+        "spending_total_rolling_mean_7d", "weather_precip_probability_max", "is_weekend", "drinking_x_low_sleep",
+    ]
+    deltas: list[dict[str, Any]] = []
+    for feature in features:
+        if feature not in train.columns:
+            continue
+        risk_mean = float(risk_days[feature].fillna(0).mean()) if len(risk_days) else 0.0
+        safe_mean = float(safe_days[feature].fillna(0).mean()) if len(safe_days) else 0.0
+        deltas.append({"feature": feature, "delta": round(risk_mean - safe_mean, 3), "risk_mean": round(risk_mean, 3), "safe_mean": round(safe_mean, 3)})
+    return {"deltas": sorted(deltas, key=lambda x: abs(x["delta"]), reverse=True)[:8]}
+
+
+def _fit_model(train: Any, today_row: Any, *, sample_weight_mode: str = "uniform") -> dict[str, Any]:
+    import importlib
+
+    if importlib.util.find_spec("sklearn") is None:
+        return {"skipped_reason": "ml_lib_not_installed"}
+
+    try:
+        from sklearn.compose import ColumnTransformer
+        from sklearn.impute import SimpleImputer
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+        x, y, today_x, cols_num, cols_cat = _build_xy(train, today_row)
+        pre = ColumnTransformer(
+            transformers=[
+                ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]), cols_num),
+                ("cat", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("oh", OneHotEncoder(handle_unknown="ignore"))]), cols_cat),
+            ]
+        )
+        model = Pipeline([("pre", pre), ("clf", LogisticRegression(max_iter=800, class_weight="balanced"))])
+        if sample_weight_mode == "recency_decay":
+            n = len(x)
+            weights = [0.97 ** (n - i - 1) for i in range(n)]
+            model.fit(x, y, clf__sample_weight=weights)
+        else:
+            model.fit(x, y)
+        score = float(model.predict_proba(today_x)[0][1])
+        return {"score": score, "model": "logistic_regression", "skipped_reason": None}
+    except Exception:
+        return {"skipped_reason": "fit_exception"}
+
+
+def _build_xy(train: Any, today_row: Any):
+    features = [
+        "sleep_hours_lag_1", "sleep_short_streak", "social_load_streak", "late_work_streak", "exercise_streak",
+        "sleep_short_x_social_load", "stress_x_late_work", "drinking_x_low_sleep", "high_carb_x_low_sleep",
+        "weather_precip_probability_max_lag_1",
+        "notes_stress_flag_lag_1", "notes_has_drinking_lag_3", "is_weekend", "place", "location_summary",
+        "kcal_vs_7d_delta", "protein_vs_7d_delta", "fat_vs_7d_delta", "task_completion_ratio",
+        "drop_vs_7d_delta", "done_vs_7d_delta", "weather_bad_flag", "weather_temp_range_c",
+        "late_outing_flag", "multi_stop_flag", "schedule_same_day_event_count",
+        "study_minutes_lag_1", "study_sessions_lag_1", "study_minutes_rolling_sum_7d", "study_minutes_rolling_mean_7d",
+        "study_zero_day_streak_lag_1", "study_heavy_day_flag_lag_1", "study_under_target_flag_lag_1", "study_consistency_score_7d",
+    ]
+    for feature in features:
+        if feature not in train.columns:
+            train[feature] = None
+        if feature not in today_row.columns:
+            today_row[feature] = None
+    x = train[features].copy()
+    y = train["f_event_flag"].astype(int)
+    today_x = today_row[features].copy()
+    cols_num = [c for c in x.columns if c not in {"place", "location_summary"}]
+    cols_cat = ["place", "location_summary"]
+    return x, y, today_x, cols_num, cols_cat
+
+
+def _derive_matched_features(today: dict[str, Any]) -> list[str]:
+    matched: list[str] = []
+    if _to_float(today.get("sleep_short_streak")) and _to_float(today.get("sleep_short_streak")) >= 2:
+        matched.append("ç¡çœ çŸ­ç¸®ãŒé€£ç¶š")
+    if bool(today.get("notes_stress_flag_lag_1")):
+        matched.append("ç›´è¿‘ã§ã‚¹ãƒˆãƒ¬ã‚¹ä¿¡å·")
+    if _to_float(today.get("stress_x_late_work")) and _to_float(today.get("stress_x_late_work")) >= 1:
+        matched.append("ã‚¹ãƒˆãƒ¬ã‚¹Ã—é…ã„ç¨¼åƒã®é‡ãªã‚Š")
+    if _to_float(today.get("drinking_x_low_sleep")) and _to_float(today.get("drinking_x_low_sleep")) >= 1:
+        matched.append("é£²é…’Ã—çŸ­ç¡çœ ã®é‡ãªã‚Š")
+    if bool(today.get("is_weekend")):
+        matched.append("é€±æœ«ãƒã‚¤ã‚¢ã‚¹")
+    if _to_float(today.get("fat_vs_7d_delta")) and _to_float(today.get("fat_vs_7d_delta")) > 10:
+        matched.append("è„‚è³ªæ‘‚å–ãŒç›´è¿‘å¹³å‡ã‚ˆã‚Šé«˜ã„")
+    if _to_float(today.get("task_completion_ratio")) is not None and _to_float(today.get("task_completion_ratio")) < 0.35:
+        matched.append("ã‚¿ã‚¹ã‚¯é€²æ—ãŒä½Žä¸‹")
+    if bool(today.get("late_outing_flag")):
+        matched.append("å¤œè¡Œå‹•ãƒ‘ã‚¿ãƒ¼ãƒ³")
+    if _to_float(today.get("schedule_same_day_event_count")) and _to_float(today.get("schedule_same_day_event_count")) >= 3:
+        matched.append("å½“æ—¥äºˆå®šå¯†åº¦ãŒé«˜ã„")
+    return matched
+
+
+def _derive_protective_features(today: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    if _to_float(today.get("exercise_streak")) and _to_float(today.get("exercise_streak")) >= 2:
+        items.append("é‹å‹•ç¶™ç¶š")
+    if bool(today.get("notes_has_money_saved")):
+        items.append("ç¯€ç´„ã‚·ã‚°ãƒŠãƒ«")
+    return items
+
+
+def _score_rule_based_risk(today: dict[str, Any]) -> dict[str, Any]:
+    score = 0
+    hits: list[str] = []
+    protective: list[str] = []
+    if (_to_float(today.get("sleep_hours_lag_1")) or 24) < 6:
+        score += 2
+        hits.append("sleep_hours_lag_1<6")
+    if (_to_float(today.get("sleep_short_streak")) or 0) >= 2:
+        score += 2
+        hits.append("sleep_short_streak>=2")
+    if bool(today.get("notes_stress_flag_lag_1")):
+        score += 2
+        hits.append("notes_stress_flag_lag_1")
+    if bool(today.get("notes_social_load_flag_lag_1")):
+        score += 2
+        hits.append("notes_social_load_flag_lag_1")
+    if bool(today.get("is_weekend")):
+        score += 1
+        hits.append("is_weekend")
+    if (_to_float(today.get("study_zero_day_streak")) or 0) >= 2:
+        score += 2
+        hits.append("study_zero_day_streak>=2")
+    if bool(today.get("notes_has_money_saved_lag_1")):
+        score -= 1
+        protective.append("notes_has_money_saved_lag_1")
+    if (_to_float(today.get("study_consistency_score_7d")) or 0) >= 0.7:
+        score -= 1
+        protective.append("study_consistency_score_7d")
+    return {"score": score, "hits": hits, "protective_hits": protective}
+
+
+def _f_day_similarity(*, train: Any, today: dict[str, Any]) -> dict[str, Any]:
+    f_days = train[train["f_event_flag"] == 1]
+    if len(f_days) == 0:
+        return {"strength": "weak", "pattern_matches": [], "summary": "éŽåŽ»Fæ—¥ã®æ¯”è¼ƒå¯¾è±¡ãŒä¸è¶³"}
+    checks = [
+        ("sleep_short_streak", lambda v: _to_float(v) is not None and _to_float(v) >= 2),
+        ("notes_stress_flag_lag_1", lambda v: bool(v)),
+        ("stress_x_late_work", lambda v: _to_float(v) is not None and _to_float(v) >= 1),
+        ("drinking_x_low_sleep", lambda v: _to_float(v) is not None and _to_float(v) >= 1),
+    ]
+    matches: list[str] = []
+    ratio_scores: list[float] = []
+    for name, fn in checks:
+        if name not in train.columns:
+            continue
+        today_hit = fn(today.get(name))
+        if not today_hit:
+            continue
+        ratio = float(f_days[name].apply(fn).mean()) if len(f_days) else 0.0
+        if ratio >= 0.4:
+            matches.append(name)
+            ratio_scores.append(ratio)
+    mean_ratio = (sum(ratio_scores) / len(ratio_scores)) if ratio_scores else 0.0
+    strength = "strong" if len(matches) >= 3 or mean_ratio >= 0.65 else "medium" if len(matches) >= 2 else "weak"
+    return {
+        "strength": strength,
+        "pattern_matches": matches,
+        "summary": f"ç›´è¿‘æ•°æ—¥ã®ä¸¦ã³ã¯éŽåŽ»Fæ—¥ã®{strength}ä¸€è‡´ï¼ˆä¸»è¦ä¸€è‡´{len(matches)}ä»¶ï¼‰",
+    }
+
+
+def _extract_f_event_cases(train: Any, *, pre_days: int, post_days: int) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    event_idx = [i for i, v in enumerate(train["f_event_flag"].tolist()) if int(v) == 1]
+    used_dates: set[str] = set()
+    for idx in event_idx:
+        event_date = str(train.iloc[idx]["date"])
+        if event_date in used_dates:
+            continue
+        used_dates.add(event_date)
+        pre_start = max(0, idx - pre_days)
+        post_end = min(len(train), idx + post_days + 1)
+        pre_rows = train.iloc[pre_start:idx]
+        event_row = train.iloc[idx].to_dict()
+        post_rows = train.iloc[idx + 1:post_end]
+        case = {
+            "event_date": event_date,
+            "pre_rows": [r for r in pre_rows.to_dict("records")],
+            "event_day": event_row,
+            "post_rows": [r for r in post_rows.to_dict("records")],
+        }
+        case["event_type"] = _classify_f_event_type(case)
+        cases.append(case)
+    return cases
+
+
+def _classify_f_event_type(case: dict[str, Any]) -> str:
+    event_day = case.get("event_day") or {}
+    pre_rows = case.get("pre_rows") or []
+    merchants = str(event_day.get("expense_f_merchants") or "").lower()
+    late_outing = bool(event_day.get("late_outing_flag")) or any(bool(r.get("late_outing_flag")) for r in pre_rows)
+    drinking = bool(event_day.get("notes_has_drinking")) or any(bool(r.get("notes_has_drinking")) for r in pre_rows)
+    social_load = bool(event_day.get("notes_social_load_flag")) or any(bool(r.get("notes_social_load_flag")) for r in pre_rows)
+    stress = bool(event_day.get("notes_stress_flag")) or any(bool(r.get("notes_stress_flag")) for r in pre_rows)
+    detour = bool(event_day.get("multi_stop_flag")) or ("station" in merchants or "é§…" in merchants)
+    spend_delta = (_to_float(event_day.get("spending_vs_7d_delta")) or 0)
+    if late_outing and social_load:
+        return "night_outing"
+    if drinking and social_load:
+        return "drinking_social"
+    if spend_delta > 3000:
+        return "impulse_spend"
+    if stress:
+        return "stress_release"
+    if detour:
+        return "commute_detour"
+    return "unknown"
+
+
+def _build_recent_case(work: Any, *, days: int) -> dict[str, Any]:
+    recent_rows = work.tail(days).to_dict("records")
+    return {"recent_rows": recent_rows}
+
+
+def _compute_case_similarity(*, recent_case: dict[str, Any], event_cases: list[dict[str, Any]], top_n: int) -> dict[str, Any]:
+    recent_rows = recent_case.get("recent_rows") or []
+    if not event_cases or not recent_rows:
+        return {
+            "strength": "weak",
+            "summary": "éŽåŽ»Fã‚±ãƒ¼ã‚¹ã¨ã®æ¯”è¼ƒå¯¾è±¡ãŒä¸è¶³",
+            "top_case_matches": [],
+            "top_case_match_scores": [],
+            "matched_case_dates": [],
+            "matched_case_types": [],
+            "matched_pre_patterns": [],
+            "score_total": 0.0,
+            "score_overlap": 0.0,
+            "score_sequence": 0.0,
+            "score_type": 0.0,
+            "usable_f_event_count": 0,
+        }
+    scored: list[dict[str, Any]] = []
+    for case in event_cases:
+        pre_rows = case.get("pre_rows") or []
+        if not pre_rows:
+            continue
+        overlap = _feature_overlap_score(recent_rows, pre_rows)
+        sequence = _temporal_sequence_score(recent_rows, pre_rows)
+        type_score = _event_type_consistency_score(recent_rows, str(case.get("event_type") or "unknown"))
+        total = round((0.5 * overlap) + (0.35 * sequence) + (0.15 * type_score), 3)
+        scored.append({
+            "event_date": case.get("event_date"),
+            "event_type": case.get("event_type"),
+            "score_total": total,
+            "score_overlap": overlap,
+            "score_sequence": sequence,
+            "score_type": type_score,
+        })
+    if not scored:
+        return {
+            "strength": "weak",
+            "summary": "æ¯”è¼ƒå¯èƒ½ãªéŽåŽ»F pre-windowãŒä¸è¶³",
+            "top_case_matches": [],
+            "top_case_match_scores": [],
+            "matched_case_dates": [],
+            "matched_case_types": [],
+            "matched_pre_patterns": [],
+            "score_total": 0.0,
+            "score_overlap": 0.0,
+            "score_sequence": 0.0,
+            "score_type": 0.0,
+            "usable_f_event_count": 0,
+        }
+    scored = sorted(scored, key=lambda x: x["score_total"], reverse=True)
+    top = scored[:top_n]
+    best = top[0]
+    strength = "strong" if best["score_total"] >= 0.72 else "medium" if best["score_total"] >= 0.55 else "weak"
+    matched_patterns = _describe_matched_patterns(recent_rows)
+    return {
+        "strength": strength,
+        "summary": f"ç›´è¿‘{len(recent_rows)}æ—¥ã®ä¸¦ã³ã¯éŽåŽ»Få‰å…†ã¨{strength}ä¸€è‡´ï¼ˆæœ€è‰¯ä¸€è‡´ {best['event_date']}ï¼‰",
+        "top_case_matches": top,
+        "top_case_match_scores": [x["score_total"] for x in top],
+        "matched_case_dates": [str(x["event_date"]) for x in top],
+        "matched_case_types": [str(x["event_type"]) for x in top],
+        "matched_pre_patterns": matched_patterns,
+        "score_total": best["score_total"],
+        "score_overlap": best["score_overlap"],
+        "score_sequence": best["score_sequence"],
+        "score_type": best["score_type"],
+        "usable_f_event_count": len(scored),
+    }
+
+
+def _feature_overlap_score(recent_rows: list[dict[str, Any]], pre_rows: list[dict[str, Any]]) -> float:
+    keys = [
+        "sleep_short_streak", "bedtime_min", "sleep_score", "notes_stress_flag", "notes_fatigue_flag", "notes_social_load_flag",
+        "notes_sleep_issue_flag", "notes_has_drinking", "notes_has_late_work", "notes_has_social", "notes_has_regret", "notes_has_conflict",
+        "late_outing_flag", "multi_stop_flag", "outing_heavy_flag", "home_heavy_flag", "spending_vs_7d_delta", "social_spend_like_flag",
+        "convenience_store_like_flag", "kcal_vs_7d_delta", "fat_vs_7d_delta", "carb_vs_7d_delta", "high_fat_flag", "high_carb_flag",
+        "task_completion_ratio", "done_vs_7d_delta", "drop_vs_7d_delta", "schedule_same_day_event_count", "late_event_like_flag",
+        "weather_bad_flag", "weather_precip_probability_max", "weather_temp_range_c",
+    ]
+    total = 0.0
+    matched = 0.0
+    for key in keys:
+        recent_v = _to_float(recent_rows[-1].get(key)) if recent_rows else None
+        pre_v = _to_float(pre_rows[-1].get(key)) if pre_rows else None
+        if recent_v is None and pre_v is None:
+            continue
+        if (recent_v is None or abs(recent_v) < 0.05) and (pre_v is None or abs(pre_v) < 0.05):
+            continue
+        total += 1.0
+        if recent_v is None or pre_v is None:
+            continue
+        if abs(recent_v - pre_v) <= max(0.2, abs(pre_v) * 0.35):
+            matched += 1.0
+    if total <= 0:
+        return 0.0
+    return round(matched / total, 3)
+
+
+def _temporal_sequence_score(recent_rows: list[dict[str, Any]], pre_rows: list[dict[str, Any]]) -> float:
+    size = min(len(recent_rows), len(pre_rows))
+    if size <= 0:
+        return 0.0
+    score = 0.0
+    for i in range(1, size + 1):
+        recent = recent_rows[-i]
+        pre = pre_rows[-i]
+        recent_weight = 1.0 + (0.25 if i == 1 else 0.0)
+        short_sleep_match = bool((_to_float(recent.get("sleep_short_streak")) or 0) >= 2) and bool((_to_float(pre.get("sleep_short_streak")) or 0) >= 2)
+        stress_match = bool(recent.get("notes_stress_flag")) and bool(pre.get("notes_stress_flag"))
+        late_outing_match = bool(recent.get("late_outing_flag")) and bool(pre.get("late_outing_flag"))
+        score += recent_weight * (float(short_sleep_match) + float(stress_match) + float(late_outing_match)) / 3.0
+    denom = sum(1.0 + (0.25 if i == 1 else 0.0) for i in range(1, size + 1))
+    return round(score / max(denom, 1.0), 3)
+
+
+def _event_type_consistency_score(recent_rows: list[dict[str, Any]], event_type: str) -> float:
+    latest = recent_rows[-1] if recent_rows else {}
+    if event_type == "night_outing":
+        return 1.0 if bool(latest.get("late_outing_flag")) else 0.35
+    if event_type == "drinking_social":
+        return 1.0 if bool(latest.get("notes_has_drinking")) and bool(latest.get("notes_social_load_flag")) else 0.25
+    if event_type == "impulse_spend":
+        return 1.0 if (_to_float(latest.get("spending_vs_7d_delta")) or 0) > 2000 else 0.3
+    if event_type == "stress_release":
+        return 1.0 if bool(latest.get("notes_stress_flag")) else 0.3
+    if event_type == "commute_detour":
+        return 1.0 if bool(latest.get("multi_stop_flag")) else 0.3
+    return 0.2
+
+
+def _describe_matched_patterns(recent_rows: list[dict[str, Any]]) -> list[str]:
+    if not recent_rows:
+        return []
+    latest = recent_rows[-1]
+    out: list[str] = []
+    if (_to_float(latest.get("sleep_short_streak")) or 0) >= 2:
+        out.append("çŸ­ç¡çœ é€£ç¶š")
+    if bool(latest.get("notes_social_load_flag")):
+        out.append("social load")
+    if bool(latest.get("late_outing_flag")):
+        out.append("å¤œå¤–å‡ºå‚¾å‘")
+    if bool(latest.get("notes_has_drinking")):
+        out.append("drinking")
+    if bool(latest.get("notes_stress_flag")):
+        out.append("stress")
+    return out[:5]
+
+
+def _compose_case_alert_text(risk_json: dict[str, Any]) -> Optional[str]:
+    if not risk_json.get("risk_matched"):
+        return None
+    points = risk_json.get("explanation_points") or []
+    basis = "ã€".join(str(x) for x in points[:3]) if points else "çŸ­ç¡çœ ãƒ»ã‚¹ãƒˆãƒ¬ã‚¹ãƒ»éŽåŽ»ã‚±ãƒ¼ã‚¹é¡žä¼¼"
+    return (
+        "ä»Šæ—¥ã¯Fãƒªã‚¹ã‚¯ãŒé«˜ã‚ã§ã™ã€‚"
+        f"æ ¹æ‹ ã¯ã€{basis}ã§ã™ã€‚"
+        "ä»Šæ—¥ã¯å¤§ããªæ”¯å‡ºåˆ¤æ–­ã€å¯„ã‚Šé“ã€å¤œã®å¤–å‡ºã€ã‚³ãƒ³ãƒ“ãƒ‹ãƒ»å¤–é£Ÿã®è¿½åŠ è³¼å…¥ã‚’é¿ã‘ã¦ãã ã•ã„ã€‚"
+    )
+
+
+def _build_prediction_row(train: Any, *, prediction_date: str, daily_log_context_date: str) -> Any:
+    # äºˆæ¸¬å¯¾è±¡æ—¥ã®å½“æ—¥å®Ÿç¸¾ã‚’ä½¿ã‚ãªã„ãŸã‚ã€å­¦ç¿’æœ«å°¾ï¼ˆæ—¥æ¬¡ã§é€šå¸¸ã¯æ˜¨æ—¥ï¼‰ã®è¡Œã‚’åœŸå°ã«
+    # prediction_date ã‚’ä¸ŽãˆãŸã€Œä»Šæ—¥äºˆæ¸¬ç”¨ rowã€ã‚’ä½œã‚‹ã€‚ã“ã‚Œã¯äº‹å¾Œæƒ…å ±ãƒªãƒ¼ã‚¯é˜²æ­¢ã®ãŸã‚ã€‚
+    row = train.tail(1).copy()
+    if len(row) == 0:
+        return train.tail(0).copy()
+    row.loc[:, "date"] = prediction_date
+    row.loc[:, "is_weekend"] = 1 if datetime.strptime(prediction_date, "%Y-%m-%d").weekday() >= 5 else 0
+    for forbidden in ("spending_total", "expense_f_count", "expense_f_total", "spending_vs_7d_delta"):
+        if forbidden in row.columns:
+            row.loc[:, forbidden] = None
+    return row
+
+
+def _build_explanation_points(*, matched: list[str], similarity: dict[str, Any], today: dict[str, Any]) -> list[str]:
+    points: list[str] = []
+    if similarity.get("summary"):
+        points.append(str(similarity["summary"]))
+    if matched:
+        points.append(f"ä¸€è‡´ã—ãŸä¸»è¦å› : {', '.join(matched[:3])}")
+    if _to_float(today.get("sleep_short_streak")) and _to_float(today.get("sleep_short_streak")) >= 2:
+        points.append("ç›´è¿‘æ•°æ—¥ã§çŸ­ç¡çœ ãŒç¶šãã€åˆ¤æ–­è² è·ãŒä¸ŠãŒã‚Šã‚„ã™ã„ä¸¦ã³")
+    protective = _derive_protective_features(today)
+    if protective:
+        points.append(f"ä¿è­·è¦å› : {protective[0]}")
+    return points[:4]
+
+
+def _blend_scores(recent: Optional[float], long_term: Optional[float]) -> Optional[float]:
+    if recent is None and long_term is None:
+        return None
+    if recent is None:
+        return long_term
+    if long_term is None:
+        return recent
+    return 0.6 * recent + 0.4 * long_term
+
+
+def _to_float(value: object) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _missing_rate_for_prefix(today_row: Any, feature_names: list[str], prefix: str) -> float:
+    keys = [name for name in feature_names if name.startswith(prefix)]
+    if not keys:
+        return 1.0
+    safe = _ensure_columns(today_row, keys)
+    row = safe[keys]
+    return float(row.isna().mean(axis=1).iloc[0])
+
+
+def _ensure_columns(df: Any, columns: list[str]) -> Any:
+    out = df.copy()
+    for col in columns:
+        if col not in out.columns:
+            out[col] = None
+    return out
+
+
+def _build_input_availability(work: Any) -> dict[str, Any]:
+    latest = work.iloc[-1].to_dict() if len(work) else {}
+    groups = {
+        "sleep": ["sleep_hours", "sleep_score"],
+        "meal": ["kcal", "protein", "fat", "carb"],
+        "spending": ["spending_total", "expense_f_count", "expense_f_total"],
+        "tasks": ["task_done_count", "task_drop_count", "task_completion_ratio"],
+        "notes": ["notes_present_flag", "notes_signal_count"],
+        "location": ["location_present_flag", "late_outing_flag", "multi_stop_flag"],
+        "weather": ["weather_retrieved_flag", "weather_code", "weather_precip_probability_max"],
+        "schedule": ["schedule_signal_available_flag", "schedule_same_day_event_count"],
+    }
+    available: list[str] = []
+    unavailable: list[str] = []
+    excluded_reasons: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for group, keys in groups.items():
+        group_available = 0
+        for key in keys:
+            value = latest.get(key)
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            if isinstance(value, bool):
+                if value:
+                    group_available += 1
+            else:
+                group_available += 1
+        counts[group] = group_available
+        if group_available > 0:
+            available.append(group)
+        else:
+            unavailable.append(group)
+            excluded_reasons[group] = "unavailable_from_existing_read_path"
+    return {
+        "available_groups": available,
+        "unavailable_groups": unavailable,
+        "excluded_reasons": excluded_reasons,
+        "group_counts": counts,
+        "schedule_used": "schedule" in available,
+        "weather_used": "weather" in available,
+    }
+
+
+def _rule_based_fallback(today: dict[str, Any], *, availability: dict[str, Any]) -> dict[str, Any]:
+    matches: list[str] = []
+    short_sleep = (_to_float(today.get("sleep_short_streak")) or 0) >= 2
+    stress = bool(today.get("notes_stress_flag")) or bool(today.get("notes_stress_flag_lag_1"))
+    late_outing = bool(today.get("late_outing_flag"))
+    drinking = bool(today.get("notes_has_drinking"))
+    high_fat = bool(today.get("high_fat_flag")) or ((_to_float(today.get("fat_vs_7d_delta")) or 0) > 12)
+    high_kcal = (_to_float(today.get("kcal_vs_7d_delta")) or 0) > 350
+    schedule_dense = (_to_float(today.get("schedule_same_day_event_count")) or 0) >= 3
+    spend_spike = (_to_float(today.get("spending_vs_7d_delta")) or 0) > 3000
+    social_load = bool(today.get("notes_social_load_flag"))
+    fatigue = bool(today.get("notes_fatigue_flag"))
+    f_spend = (_to_float(today.get("expense_f_count")) or 0) > 0
+    weekend_or_late = bool(today.get("is_weekend")) or late_outing
+
+    if short_sleep and stress and late_outing:
+        matches.append("çŸ­ç¡çœ é€£ç¶š + stress signal + late outing")
+    if drinking and (high_fat or high_kcal) and schedule_dense:
+        matches.append("é£²é…’/ä¼šé£Ÿç¤ºå”† + é«˜è„‚è³ª/é«˜ã‚«ãƒ­ãƒªãƒ¼ + å½“æ—¥äºˆå®šå¯†åº¦")
+    if spend_spike and social_load and fatigue:
+        matches.append("æ”¯å‡ºã‚¹ãƒ‘ã‚¤ã‚¯ + social load + fatigue")
+    if f_spend and short_sleep and weekend_or_late:
+        matches.append("Fæ”¯å‡ºã‚ã‚Š + çŸ­ç¡çœ  + é€±æœ«/å¤œè¡Œå‹•ãƒ‘ã‚¿ãƒ¼ãƒ³")
+
+    matched = len(matches) >= 1
+    return {
+        "risk_matched": matched,
+        "blended_score": 0.65 if matched else 0.32,
+        "matched_factors": matches,
+        "no_alert_reason": None if matched else "fallback_no_multi_factor_match",
+        "unavailable_groups": availability.get("unavailable_groups", []),
+    }
