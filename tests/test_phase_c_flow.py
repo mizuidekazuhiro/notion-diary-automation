@@ -176,11 +176,33 @@ def test_email_disabled_still_runs_f_risk(monkeypatch) -> None:
     monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: order.append("weather") or summary)
     monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: order.append("expense_f") or {"matched": False, "reasons": []})
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: order.append("f_risk") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id, **kwargs: order.append("f_risk") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
     daily_job.run_notify_diary(config, "2026-03-20", "run")
     assert order == ["weather", "expense_f", "sleep", "f_risk", "advice", "diary"]
+
+
+def test_phase3_uses_same_jst_prediction_date_as_publish(monkeypatch) -> None:
+    summary = _summary()
+    config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(daily_job, "_f_risk_prediction_date_jst", lambda: "2026-03-21")
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
+    monkeypatch.setattr(
+        daily_job,
+        "_generate_and_save_f_risk",
+        lambda config, *, summary, run_id, target_date_override=None: captured.update(
+            {"target_date_override": target_date_override}
+        )
+        or summary,
+    )
+    monkeypatch.setattr(daily_job, "run_phase_c", lambda *_args, **kwargs: kwargs["deps"].run_f_risk(summary))
+
+    daily_job.run_notify_diary(config, "2026-03-20", "run")
+
+    assert captured["target_date_override"] == "2026-03-21"
 
 
 def test_already_notified_still_runs_generation(monkeypatch) -> None:
@@ -730,7 +752,7 @@ def test_backfill_mode_skips_weather(monkeypatch) -> None:
     monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("weather should be skipped")))
     monkeypatch.setattr(daily_job, "_compute_expense_f_alert", lambda *, summary, run_id: order.append("expense_f") or {"matched": False, "reasons": []})
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
-    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id: order.append("f_risk") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_f_risk", lambda config, *, summary, run_id, **kwargs: order.append("f_risk") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
 

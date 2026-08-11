@@ -296,17 +296,19 @@ def build_quality_report(
     snapshot_raw = _text(_get(summary, "mail_input_snapshot_json"))
     snapshot_has_meal_photos = False
     snapshot_has_location_summary = False
+    snapshot_parse_ok = False
     if snapshot_raw:
         try:
             snapshot = json.loads(snapshot_raw)
             if isinstance(snapshot, Mapping):
+                snapshot_parse_ok = True
                 snapshot_has_meal_photos = "meal_photos" in snapshot
                 snapshot_has_location_summary = "location_summary" in snapshot
         except json.JSONDecodeError:
-            pass
-    if not snapshot_has_meal_photos:
+            _add_issue(issues, "mail_snapshot_truncated_or_invalid", "warning", "mail_input_snapshot_json is truncated or invalid; field-level validation was skipped.")
+    if snapshot_parse_ok and meal_photos_count > 0 and not snapshot_has_meal_photos:
         _add_issue(issues, "mail_snapshot_missing_meal_photos", "error", "mail_input_snapshot_json does not include meal_photos.")
-    if not snapshot_has_location_summary:
+    if snapshot_parse_ok and bool(location_summary) and not snapshot_has_location_summary:
         _add_issue(issues, "mail_snapshot_missing_location_summary", "error", "mail_input_snapshot_json does not include location_summary.")
     duplicate_info = _get(summary, "duplicate_info") if isinstance(_get(summary, "duplicate_info"), Mapping) else {}
     duplicate_detected = bool(duplicate_info.get("detected"))
@@ -315,10 +317,6 @@ def build_quality_report(
     duplicate_merged_fields = duplicate_info.get("merged_fields") if isinstance(duplicate_info.get("merged_fields"), list) else []
     payload_has_location_summary_gpt = bool(_get(summary, "payload_has_location_summary_gpt", False))
     payload_has_meal_photos_raw = bool(_get(summary, "payload_has_meal_photos_raw", False))
-    if not payload_has_location_summary_gpt:
-        _add_issue(issues, "payload_missing_location_summary_gpt", "error", "Raw /api/daily_log payload does not include Location summary (GPT).")
-    if not payload_has_meal_photos_raw:
-        _add_issue(issues, "payload_missing_meal_photos", "error", "Raw /api/daily_log payload does not include Meal Photos/meal_photos.")
     if payload_has_location_summary_gpt and not location_summary:
         _add_issue(issues, "location_summary_mapping_missing", "error", "Location summary exists in payload but failed to map to summary.location_summary.")
     if payload_has_meal_photos_raw and meal_photos_count == 0:
@@ -354,6 +352,7 @@ def build_quality_report(
         "meal_photo_invalid_img_src_count": invalid_img_src_count,
         "mail_snapshot_has_meal_photos": snapshot_has_meal_photos,
         "mail_snapshot_has_location_summary": snapshot_has_location_summary,
+        "mail_snapshot_parse_ok": snapshot_parse_ok,
         "payload_has_location_summary_gpt": payload_has_location_summary_gpt,
         "payload_has_meal_photos_raw": payload_has_meal_photos_raw,
         "summary_location_summary_present": bool(location_summary),

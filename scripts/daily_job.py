@@ -88,6 +88,31 @@ WEATHER_PROVIDER = "open-meteo-jma"
 MAIL_INPUT_SNAPSHOT_MAX_CHARS = 1900
 
 
+def _f_risk_prediction_date_jst() -> str:
+    """Return the single prediction date shared by Phase 3 and Phase 4."""
+    return datetime.now(JST).date().isoformat()
+
+
+def _build_persisted_mail_snapshot(
+    *, input_snapshot: dict[str, Any], input_snapshot_raw: str, input_hash: str
+) -> tuple[str, bool]:
+    if len(input_snapshot_raw) <= MAIL_INPUT_SNAPSHOT_MAX_CHARS:
+        return input_snapshot_raw, False
+
+    compact: dict[str, Any] = {
+        "_truncated": True,
+        "_full_length": len(input_snapshot_raw),
+        "_full_sha256": input_hash,
+        "target_date": input_snapshot.get("target_date"),
+    }
+    if "meal_photos" in input_snapshot:
+        photos = input_snapshot.get("meal_photos")
+        compact["meal_photos"] = {"count": len(photos) if isinstance(photos, list) else 0}
+    if "location_summary" in input_snapshot:
+        compact["location_summary"] = {"present": bool(input_snapshot.get("location_summary"))}
+    return snapshot_json(compact), True
+
+
 @dataclass(frozen=True)
 class Config:
     mail_from: str
@@ -372,7 +397,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     )
 
     expense_f_alert = _compute_expense_f_alert(summary=summary, run_id=run_id)
-    f_risk_target_date = datetime.now(JST).date().isoformat()
+    f_risk_target_date = _f_risk_prediction_date_jst()
     f_risk_alert = _compute_f_risk_alert_runtime(
         config,
         summary=summary,
@@ -459,11 +484,11 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
     send_mail(mail_config, subject, mail.plain_text, mail.html_body)
     mail_sent_at = datetime.now(JST).replace(microsecond=0).isoformat()
     mail_version_to_save = new_version if new_version > 0 else 1
-    snapshot_to_save = input_snapshot_raw
-    snapshot_truncated = False
-    if len(snapshot_to_save) > MAIL_INPUT_SNAPSHOT_MAX_CHARS:
-        snapshot_to_save = snapshot_to_save[:MAIL_INPUT_SNAPSHOT_MAX_CHARS]
-        snapshot_truncated = True
+    snapshot_to_save, snapshot_truncated = _build_persisted_mail_snapshot(
+        input_snapshot=input_snapshot,
+        input_snapshot_raw=input_snapshot_raw,
+        input_hash=current_input_hash,
+    )
     payload = {
         "mail_input_hash": current_input_hash,
         "mail_input_snapshot": snapshot_to_save,
@@ -1913,8 +1938,14 @@ def _generate_and_save_f_risk(
     *,
     summary: "DailyLogSummary",
     run_id: str,
+    target_date_override: str | None = None,
 ) -> "DailyLogSummary":
-    runtime = _compute_f_risk_alert_runtime(config, summary=summary, run_id=run_id)
+    runtime = _compute_f_risk_alert_runtime(
+        config,
+        summary=summary,
+        run_id=run_id,
+        target_date_override=target_date_override,
+    )
     if runtime.get("data_status") in {"failed", "degraded"} or runtime.get("fallback_used") or runtime.get("skip_reason"):
         raise PhaseSemanticDegradation(
             str(runtime.get("skip_reason") or runtime.get("ml_skipped_reason") or runtime.get("data_status"))
@@ -2138,7 +2169,12 @@ def run_notify_diary(config: Config, target_date: str, run_id: str, *, backfill:
         run_expense_f=lambda summary: _compute_expense_f_alert(summary=summary, run_id=run_id),
         run_sleep=lambda summary: _generate_and_save_sleep_insights(config, summary=summary, run_id=run_id),
         run_notes_label=lambda summary: _ensure_notes_label_persisted(config, summary=summary, run_id=run_id),
-        run_f_risk=lambda summary: _generate_and_save_f_risk(config, summary=summary, run_id=run_id),
+        run_f_risk=lambda summary: _generate_and_save_f_risk(
+            config,
+            summary=summary,
+            run_id=run_id,
+            target_date_override=None if backfill else _f_risk_prediction_date_jst(),
+        ),
         run_today_advice=lambda summary: _generate_and_save_today_advice(config, summary=summary, run_id=run_id),
         run_diary=lambda summary: _generate_and_save_diary(
             config,

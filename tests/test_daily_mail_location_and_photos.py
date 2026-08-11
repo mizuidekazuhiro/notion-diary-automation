@@ -44,6 +44,29 @@ def test_location_summary_gpt_preferred_over_legacy(monkeypatch):
     assert summary.location_summary == "GPT版"
 
 
+def test_empty_location_and_meal_photo_fields_are_not_treated_as_available(monkeypatch):
+    payload = {
+        "found": True,
+        "target_date": "2026-05-07",
+        "page_id": "p1",
+        "title": "Daily Log",
+        "summary_text": "",
+        "summary_html": "",
+        "mail_id": "m1",
+        "Location summary (GPT)": "",
+        "Meal Photos": [],
+    }
+    monkeypatch.setattr("publish.read_daily_log.fetch_json", lambda *_args, **_kwargs: payload)
+
+    summary = read_daily_log(daily_log_read_url="http://dummy", target_date="2026-05-07", bearer_token=None)
+
+    assert summary is not None
+    assert summary.location_summary is None
+    assert summary.meal_photos == []
+    assert summary.payload_has_location_summary_gpt is False
+    assert summary.payload_has_meal_photos_raw is False
+
+
 def test_meal_photos_render_as_image_or_link_and_text_urls():
     payload = {
         "target_date": "2026-05-07",

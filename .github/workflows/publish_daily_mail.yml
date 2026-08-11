@@ -33,6 +33,14 @@ jobs:
           pip install -r requirements.txt
           python scripts/verify_requirements.py
 
+      - name: Restore Notes label cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/notes_labels
+          key: ${{ runner.os }}-notes-labels-v1-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-notes-labels-v1-
+
       - name: Run publish
         env:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
@@ -71,6 +79,14 @@ jobs:
           MAIL_LINK_SECRET: ${{ secrets.MAIL_LINK_SECRET }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
+          EXPENSE_F_PROP: ${{ secrets.EXPENSE_F_PROP }}
+          EXPENSE_DATE_PROP: ${{ secrets.EXPENSE_DATE_PROP }}
+          EXPENSE_RECEIVED_AT_PROP: ${{ secrets.EXPENSE_RECEIVED_AT_PROP }}
+          EXPENSE_MERCHANT_PROP: ${{ secrets.EXPENSE_MERCHANT_PROP }}
+          EXPENSE_AMOUNT_PROP: ${{ secrets.EXPENSE_AMOUNT_PROP }}
+          EXPENSE_CATEGORY_PROP: ${{ secrets.EXPENSE_CATEGORY_PROP }}
           DAILY_MAIL_ARTIFACT_DIR: artifacts/daily_mail
           DAILY_MAIL_TODAY_ADVICE_MIN_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MIN_CHARS }}
           DAILY_MAIL_TODAY_ADVICE_MAX_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MAX_CHARS }}

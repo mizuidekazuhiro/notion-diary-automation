@@ -77,6 +77,32 @@ def _summary(target_date: str, notes: str) -> DailyLogSummary:
     )
 
 
+def test_note_label_cache_reuses_result_without_openai(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NOTES_LABEL_CACHE_DISABLE", raising=False)
+    monkeypatch.setenv("NOTES_LABEL_CACHE_DIR", str(tmp_path / "notes_labels"))
+    summary = _summary("2026-03-20", "疲れた")
+    calls: list[bool] = []
+
+    def _first_call(**_kwargs: object) -> str:
+        calls.append(True)
+        return '{"rows":[{"id":"note_0000_2026-03-20","date":"2026-03-20","sentiment":"negative","flags":{"fatigue":true},"tags":["fatigue"],"confidence":0.9}]}'
+
+    first = label_notes_in_batches(summaries=[summary], chat_completion=_first_call, model="test-model")
+    audit: dict[str, object] = {}
+    second = label_notes_in_batches(
+        summaries=[summary],
+        chat_completion=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("OpenAI must not be called")),
+        model="test-model",
+        audit=audit,
+    )
+
+    assert calls == [True]
+    assert first["2026-03-20"].fatigue_flag is True
+    assert second["2026-03-20"].fatigue_flag is True
+    assert audit["cache_hit_count"] == 1
+    assert audit["api_calls"] == 0
+
+
 def test_tags_only_output_is_normalized_to_signals() -> None:
     raw = json.dumps(
         [{"date": "2026-03-20", "tags": ["fatigue", "late_work"], "meta": {"parse_quality": "medium"}}],
