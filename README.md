@@ -485,19 +485,22 @@ Daily Log repair は通常の前日 Phase A とは独立した `Daily Log Repair
 - 基準日は実行時の JST 日付です。
 - 終了日は JST の前日、開始日は終了日の6日前です（合計7日）。今日の日付は含めません。
 - 処理順は古い日付から新しい日付です。
-- 判定は Workers の Daily Log read API（`read_daily_log()`）で `missing` / `incomplete` / `complete` に分類します。
-- ページが存在しても `Diary` または `Diary Generated At` が欠ける場合は `incomplete` として修復対象です。`Today advice` / `Today Advice Generated At` は補助情報として確認できますが、`Activity Summary`、Notes、Location、Meal、Tasks、Expenses はデータが存在しない日に正当に空になるため、それだけを理由に incomplete とは判定しません。
+- 判定は Workers の Daily Log read API（`read_daily_log()`）を基礎に、`content_complete` / `source_complete` / `analysis_complete` の3軸で行います。3軸すべてが真のときだけ `complete` です。
+- `content_complete` は `Diary` と `Diary Generated At`、`analysis_complete` は `Today advice` と外部 F Risk state、`source_complete` は主要Health項目とread-onlyのExpense F query結果を確認します。
+- Healthの `no_data` / `stale` / `degraded` は `source_missing` として通知・記録しますが、処理停止理由にはしません。古いHealth値をコピーせず、必要な日記・分析修復は利用可能な入力だけで続行します。
+- Expense Fの `query_failed` / schema異常、F Riskの生成失敗・state欠損・fallback・必須観測情報欠損は完全正常とせず、再実行後も解消しなければ `repair_failed` です。
+- `Activity Summary`、Notes、Location、Meal、Tasks はデータが存在しない日に正当に空になるため、それだけを理由に incomplete とは判定しません。
 - API エラー、通信エラー、認証エラー、レスポンス解析エラーは日付単位の `repair_failed` として記録し、他の日付の処理は継続します。
 
 ### 通常処理との違い
 
-`missing` または `incomplete` の日付だけ、明示的な `target_date` を渡して次の順番で処理します。処理後はDaily Logを再取得し、`complete` になった場合だけ `repair_success` とします。
+修復が必要な日付だけ、明示的な `target_date` を渡して次の順番で処理します。処理後はDaily Log、Expense F、F Risk stateを再取得します。内容と分析が正常で、重大なsource異常がない場合だけ成功とします。Health欠損だけが残る場合は `repair_success_source_missing` として成功し、欠損通知を残します。
 
 1. Phase A: `python scripts/daily_job.py --phase ingest --target-date YYYY-MM-DD`
 2. Phase B: `python apps/location_summary_writer/src/main.py --target-date YYYY-MM-DD`
 3. Phase C: `python scripts/daily_job.py --phase notify_diary --target-date YYYY-MM-DD --backfill`
 
-Phase D（`--phase publish`）はバックフィルでは絶対に呼びません。そのため、過去日補完でメールが複数送信されることはありません。通常の前日メール配信は既存の workflow_run 連鎖（01 → 02 → 03 → 04）で従来どおり実行されます。
+Phase D（`--phase publish`）は既定では呼びません。scheduled repairでは常に無効です。manual `workflow_dispatch`で利用者が `send_mail=true` を明示した場合に限り、通常の重複防止規則を使って過去日メールを処理します。通常の前日メール配信は既存の workflow_run 連鎖（01 → 02 → 03 → 04）で従来どおり実行されます。
 
 ### Weather の扱い
 
@@ -531,14 +534,16 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 - `status=incomplete_detected`: 既存ページはあるが Phase A〜C の主要項目が不足しているため修復を開始。
 - `status=complete_skipped`: Phase A〜C 完了済みのためスキップ。
 - `status=repair_success`: Phase A → B → C の修復が成功。
+- `status=source_missing`: Health欠損だけが残り、再生成の必要がないため通知・記録して継続。
+- `status=repair_success_source_missing`: 内容・分析の修復は成功し、Health欠損だけを通知・記録して継続。
 - `status=repair_failed`: 日付単位の修復に失敗。他の日付の処理は継続します。
 
-最後に `backfill_summary scan_count=... missing_count=... incomplete_count=... complete_count=... repaired_count=... failed_count=... dry_run_count=...` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。
+最後に `backfill_summary` として、従来の件数に加えて `content_incomplete_count` / `source_missing_count` / `analysis_incomplete_count` が出ます。`failed_count` が 1 件以上ある場合、スクリプト自体は終了コード 1 で終了します。JSON/Markdown artifactにも3軸の真偽と欠損理由だけを保存し、個人データ本文は保存しません。
 
 ## Daily Log repair workflow（欠損・不完全ページ修復）
 
-`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立しています。`workflow_dispatch` では `days`、`end_date`、`dry_run` を指定できます。schedule は `7 3 * * *`（03:07 UTC / 12:07 JST）で、repository variable によるガードなしで毎日実修復を起動します。
+`Daily Log Repair`（`.github/workflows/repair_daily_logs.yml`）は通常の ingest workflow から独立しています。`workflow_dispatch` では `days`、`end_date`、`dry_run`、`send_mail` を指定できます。`send_mail` の既定値は `false` です。schedule は `0 5 * * *`（05:00 UTC / 14:00 JST）で、repository variable によるガードなしで毎日実修復を起動し、履歴メールは送りません。
 
-修復判定は `missing` / `incomplete` / `complete` の 3 段階です。既存ページで `Diary` または `Diary Generated At` が欠ける場合は `incomplete` とし、新規ページを作らず既存ページに対して Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。`Activity Summary`、Notes、Location、Meal、Tasks、Expenses、Weather、Sleep、`Mail Sent At`、`Diary Notification Sent` は単独では incomplete 判定に使いません。バックフィルでは Phase D の publish / メール送信を実行せず、過去日に現在の天気を書かないため Weather 生成もスキップします。
+修復判定は `missing` / `incomplete` / `complete` に加え、内容・source・分析の3軸をartifactへ出します。既存ページに必要な修復がある場合は Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。Healthの欠損は古い値で埋めず、`source_missing`として非停止で扱います。Expense FとF Riskはread-only/live stateを再確認します。過去日に現在の天気を書かないため Weather 生成はスキップします。Phase Dはmanual opt-in以外では実行しません。
 
 1 日でも修復に失敗した場合、他の日付の処理は継続したうえで最終終了コード 1 とし、Workflow は失敗します。全文ログ、JSON 結果、Markdown サマリーは常に artifact として保存されます。

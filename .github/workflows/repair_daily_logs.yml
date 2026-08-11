@@ -17,7 +17,7 @@ on:
         default: "false"
         type: boolean
       send_mail:
-        description: "Send each complete or repaired historical diary by email"
+        description: "Manual opt-in only: send each complete or repaired historical diary by email"
         required: false
         default: "false"
         type: boolean
