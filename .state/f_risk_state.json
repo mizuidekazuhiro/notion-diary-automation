@@ -1295,9 +1295,9 @@
       "data_status": "ok",
       "f_event_count": 26,
       "fallback_used": false,
-      "generated_at": "2026-08-11T23:35:52Z",
+      "generated_at": "2026-08-12T04:55:40Z",
       "history_count": 187,
-      "input_hash": "56441ee3ec3bc80e95cdf3bccfac95e6853e9bd80d3c79a800d3af1962625c12",
+      "input_hash": "f64c1b77961def2cb5b09f43c5871bb1a965b5b326e087a6b59cda695d576f47",
       "matched_patterns": [
         "前回Fから1日",
         "タスク進捗が低下"
@@ -1309,11 +1309,11 @@
       "risk_level": "low",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.05351866485340651,
+      "score": 0.06521145657605582,
       "similarity_score": 0.302,
       "usable_f_event_count": 26
     }
   },
-  "updated_at": "2026-08-11T23:35:53Z",
+  "updated_at": "2026-08-12T04:55:41Z",
   "version": 1
 }
