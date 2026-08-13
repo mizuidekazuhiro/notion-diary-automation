@@ -1312,8 +1312,31 @@
       "score": 0.06521145657605582,
       "similarity_score": 0.302,
       "usable_f_event_count": 26
+    },
+    "2026-08-13": {
+      "alert_text": null,
+      "data_status": "ok",
+      "f_event_count": 26,
+      "fallback_used": false,
+      "generated_at": "2026-08-13T00:39:12Z",
+      "history_count": 188,
+      "input_hash": "3c2090160745f592ed8884b4eaf5f27d49d1eb49b8ec58d7f2668137a52f24e1",
+      "matched_patterns": [
+        "前回Fから2日",
+        "睡眠短縮が連続"
+      ],
+      "ml_skipped_reason": null,
+      "no_alert_reason": "case_similarity_weak",
+      "quality_warnings": [],
+      "reason": "no_alert:case_similarity_weak",
+      "risk_level": "medium",
+      "risk_matched": false,
+      "same_score_streak": 1,
+      "score": 0.06010929136562357,
+      "similarity_score": 0.432,
+      "usable_f_event_count": 26
     }
   },
-  "updated_at": "2026-08-12T04:55:41Z",
+  "updated_at": "2026-08-13T00:39:12Z",
   "version": 1
 }
