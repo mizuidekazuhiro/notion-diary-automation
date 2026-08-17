@@ -1410,9 +1410,9 @@
       "data_status": "ok",
       "f_event_count": 26,
       "fallback_used": false,
-      "generated_at": "2026-08-16T23:29:47Z",
+      "generated_at": "2026-08-17T03:57:43Z",
       "history_count": 192,
-      "input_hash": "a4ab3ae442300f77af028fff599cdd98824fcf3f315abaa577e9e4a848c7ad60",
+      "input_hash": "9c4cf2808193325d41f33385a69ff3024dc106866ed53f61dc8e5cd5efe8b6cd",
       "matched_patterns": [
         "前回Fから6日"
       ],
@@ -1423,11 +1423,11 @@
       "risk_level": "low",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.36465124840841456,
+      "score": 0.3470649158123582,
       "similarity_score": 0.532,
       "usable_f_event_count": 26
     }
   },
-  "updated_at": "2026-08-16T23:29:48Z",
+  "updated_at": "2026-08-17T03:57:43Z",
   "version": 1
 }
