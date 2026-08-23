@@ -1533,8 +1533,30 @@
       "score": 0.016493839432694717,
       "similarity_score": 0.29,
       "usable_f_event_count": 26
+    },
+    "2026-08-23": {
+      "alert_text": null,
+      "data_status": "ok",
+      "f_event_count": 26,
+      "fallback_used": false,
+      "generated_at": "2026-08-23T03:57:02Z",
+      "history_count": 198,
+      "input_hash": "6482ba914c6f816eb7ab219b4a95b3fcd9685e9941268fc878dd2cc04549d6d1",
+      "matched_patterns": [
+        "週末バイアス"
+      ],
+      "ml_skipped_reason": null,
+      "no_alert_reason": "case_similarity_weak",
+      "quality_warnings": [],
+      "reason": "no_alert:case_similarity_weak",
+      "risk_level": "low",
+      "risk_matched": false,
+      "same_score_streak": 1,
+      "score": 0.06815759510751851,
+      "similarity_score": 0.273,
+      "usable_f_event_count": 26
     }
   },
-  "updated_at": "2026-08-22T03:49:20Z",
+  "updated_at": "2026-08-23T03:57:02Z",
   "version": 1
 }
