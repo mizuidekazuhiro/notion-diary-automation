@@ -1,5 +1,7 @@
 # notion-diary-automation
 
+> **Multi-currency safety update (2026-08-29):** Expense F now resolves the optional `Currency` property and never adds unlike currencies together. `currency_totals` preserves per-currency amounts, while legacy `aggregate.total` remains JPY-only so TWD/KRW/USD etc. cannot be mislabeled as yen. F-event detection remains count-based, so foreign-currency F rows are still detected. No implicit FX conversion is performed.
+
 > Reliability update: Health page existence is no longer treated as usable data, Expense F no longer uses the unsupported checkbox `is_empty` filter, and Today advice never substitutes an unrelated historical sleep as today's sleep. See [docs/daily-automation-reliability.md](docs/daily-automation-reliability.md) for statuses, repair semantics, the Daily Signals proposal, migration plan, and rollback.
 
 > Final quality gate: Daily Diary 04 sends any renderable mail first, then evaluates a redacted source/analysis quality report. Missing Health/Sleep is a non-blocking warning; unavailable Expense F, missing F Risk state, degraded F Risk, or fallback scoring still makes the workflow fail after delivery.
@@ -27,6 +29,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 `workflow_run.workflows` は上記 `name:` と一致しています。README の名称・YAML の `name:`・依存先は同じです。
 
 補足:
+- `Daily Diary 01 - Ingest Daily Log` は schedule でも起動します（現行 cron は `0 3 * * *` = 03:00 UTC / 12:00 JST）。
 - `Deploy Cloudflare Workers` は `main` ブランチで `CI - Test & Requirements Gate` が成功した後にのみ自動実行されます（`workflow_run` 連携）。
 - 手動 `workflow_dispatch` でも deploy できますが、通常運用は CI 成功後の自動 deploy を前提にします。
 
@@ -51,7 +54,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 
 1. weather 生成（最新 location 解決 → 天気 API）
 2. weather 保存
-3. Expenses DB の `F` 日次集計保存
+3. Expenses DB の `F` 日次集計
 4. sleep insights 生成
 5. sleep insights 保存
 6. Daily Log 再読込
@@ -87,11 +90,17 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - fallback 順序は `Location Log latest lat/lon` → `Location Log latest Place geocode` → `Daily Log Place` → `Daily Log Location summary` → `東京都` です。
 - ログは `query_status`, `latest_selected_page_id`, `latest_selected_time`, `effective_time_prop`, `effective_place_prop`, `resolved_lat_prop`, `resolved_lon_prop`, `latlon_available`, `geocode_attempted`, `geocode_query`, `fallback_used`, `weather_status` を出します。
 
-#### Expense F の schema 解決方針
-- Expense F の日次帰属は **Notion page `created_time` を唯一の基準**にします（`Date` / `Received At` は補助 debug）。
-- 主経路の必須解決は `F`, `Merchant`, `Amount` のみです。`Category` は任意です。
-- クエリは `timestamp=created_time` の期間 filter + sort で統一します。
-- `resolved_props`, `created_time_source`, `date_window_start`, `date_window_end`, `filter_strategy`, `query_exception_class`, `query_exception_message`, `matched_count`, `total_amount` をログへ出します。
+#### Expense F の schema / multi-currency 解決方針
+- 日次帰属は schema に応じて **`Date` → `Received At`（JST変換）→ Notion page `created_time`** の順で利用します。
+- 主経路の必須解決は `F`, `Merchant`, `Amount` です。`Currency`, `Category`, `Date`, `Received At` は任意です。
+- `Currency` は `EXPENSE_CURRENCY_PROP` または `Currency` / `通貨` alias から解決します。
+- `Currency` が存在しない legacy row、または値が空の row は後方互換のため JPY として扱います。
+- **異なる通貨の Amount は単純加算しません。** `JPY 5,000 + TWD 300` を `5,300円` と扱うことは禁止です。
+- 通貨別合計は `ExpenseFAggregate.currency_totals` と debug `currency_totals` に保持します。
+- 既存 renderer / feature との互換のため `aggregate.total` / debug `total_amount` は **JPY分のみ**です。TWD-only 日は `total=0`, `currency_totals={"TWD": ...}` になります。
+- Fイベント判定は `Expense F Count > 0` が主ラベルなので、外貨F行もイベントとして検知されます。
+- FX 換算は行いません。将来換算する場合は rate / timestamp / target currency を明示した別レイヤで実装します。
+- `resolved_props`, `created_time_source`, `date_window_start`, `date_window_end`, `filter_strategy`, `query_exception_class`, `query_exception_message`, `matched_count`, `total_amount`, `currency_totals`, `currency_prop_present`, `mixed_currency` をログへ出します。
 - `data_status` は `ok` / `no_results` / `query_failed` / `schema_unresolved` を厳密に使い分けます。
 
 #### Today advice の睡眠 source of truth
@@ -273,7 +282,7 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - `Study Sessions`: `number`
 - `Study Last Used At`: `date`
 - `Expense F Count`: `number`
-- `Expense F Total`: `number`
+- `Expense F Total`: `number`（JPY only。外貨は `currency_totals` debug で保持）
 - `Expense F Merchants` / `Expense F Categories` / `F Risk Alert` / `F Risk Reason` / `F Risk Matched Patterns`: `rich_text`
 - `F Risk Score`: `number`
 

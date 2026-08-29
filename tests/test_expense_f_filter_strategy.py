@@ -56,6 +56,7 @@ def test_received_at_utc_value_buckets_to_jst_date(monkeypatch):
     assert out.data_status == "ok"
     assert out.count == 1
     assert out.total == 1200
+    assert out.currency_totals == {"JPY": 1200.0}
     assert out.merchants == ["Store"]
 
 
@@ -80,6 +81,72 @@ def test_family_card_filter_uses_equals_false_only(monkeypatch):
     family = payload["filter"]["and"][-1]
     assert family == {"property": "FamilyCard", "checkbox": {"equals": False}}
     assert "is_empty" not in str(payload)
+
+
+def test_mixed_currencies_are_never_added_together(monkeypatch):
+    pages = [
+        {
+            "created_time": "2026-03-20T01:00:00Z",
+            "properties": {
+                "Date": {"type": "date", "date": {"start": "2026-03-20"}},
+                "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "Tokyo Store"}]},
+                "Amount": {"type": "number", "number": 5000},
+                "Currency": {"type": "select", "select": {"name": "JPY"}},
+            },
+        },
+        {
+            "created_time": "2026-03-20T02:00:00Z",
+            "properties": {
+                "Date": {"type": "date", "date": {"start": "2026-03-20"}},
+                "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "Taipei Store"}]},
+                "Amount": {"type": "number", "number": 300},
+                "Currency": {"type": "select", "select": {"name": "TWD"}},
+            },
+        },
+    ]
+    out, _ = _run(
+        monkeypatch,
+        {
+            "F": {"type": "checkbox"},
+            "Merchant": {"type": "rich_text"},
+            "Amount": {"type": "number"},
+            "Currency": {"type": "select"},
+            "Date": {"type": "date"},
+        },
+        results=pages,
+    )
+    assert out.count == 2
+    assert out.total == 5000
+    assert out.currency_totals == {"JPY": 5000.0, "TWD": 300.0}
+    assert out.debug_summary["currency_totals"] == {"JPY": 5000.0, "TWD": 300.0}
+    assert out.debug_summary["mixed_currency"] is True
+
+
+def test_foreign_currency_only_does_not_masquerade_as_yen(monkeypatch):
+    page = {
+        "created_time": "2026-03-20T02:00:00Z",
+        "properties": {
+            "Date": {"type": "date", "date": {"start": "2026-03-20"}},
+            "Merchant": {"type": "rich_text", "rich_text": [{"plain_text": "Taipei Store"}]},
+            "Amount": {"type": "number", "number": 300},
+            "Currency": {"type": "select", "select": {"name": "TWD"}},
+        },
+    }
+    out, _ = _run(
+        monkeypatch,
+        {
+            "F": {"type": "checkbox"},
+            "Merchant": {"type": "rich_text"},
+            "Amount": {"type": "number"},
+            "Currency": {"type": "select"},
+            "Date": {"type": "date"},
+        },
+        results=[page],
+    )
+    assert out.count == 1
+    assert out.total == 0
+    assert out.currency_totals == {"TWD": 300.0}
+    assert out.debug_summary["total_amount"] == 0
 
 
 def test_http_error_exposes_sanitized_notion_fields(monkeypatch):

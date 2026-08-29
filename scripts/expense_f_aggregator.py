@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -24,6 +24,7 @@ class ExpenseFAggregate:
     data_status: str
     debug_summary: dict[str, Any]
     skip_reason: Optional[str] = None
+    currency_totals: dict[str, float] = field(default_factory=dict)
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -117,6 +118,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
         "f": _resolve_prop_name(env_value=_env_or_none("EXPENSE_F_PROP"), aliases=["F", "f", "F判定"], schema=schema),
         "merchant": _resolve_prop_name(env_value=_env_or_none("EXPENSE_MERCHANT_PROP"), aliases=["Merchant", "店名", "支出先"], schema=schema),
         "amount": _resolve_prop_name(env_value=_env_or_none("EXPENSE_AMOUNT_PROP"), aliases=["Amount", "金額"], schema=schema),
+        "currency": _resolve_prop_name(env_value=_env_or_none("EXPENSE_CURRENCY_PROP"), aliases=["Currency", "通貨"], schema=schema),
         "category": _resolve_prop_name(env_value=_env_or_none("EXPENSE_CATEGORY_PROP"), aliases=["Category", "カテゴリ", "費目"], schema=schema),
         "date": _resolve_prop_name(env_value=_env_or_none("EXPENSE_DATE_PROP"), aliases=["Date", "日付"], schema=schema),
         "received_at": _resolve_prop_name(env_value=_env_or_none("EXPENSE_RECEIVED_AT_PROP"), aliases=["Received At", "受領日時", "Timestamp"], schema=schema),
@@ -193,7 +195,7 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 break
             cursor = data.get("next_cursor")
 
-        grouped = {d: {"total": 0.0, "merchants": [], "times": [], "count": 0} for d in target_set}
+        grouped = {d: {"currency_totals": {}, "merchants": [], "times": [], "count": 0} for d in target_set}
         for page in pages:
             props = page.get("properties", {})
             created_time = str(page.get("created_time") or "")
@@ -204,21 +206,33 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                 day_key = _parse_date_prop(props.get(names["received_at"]), as_jst_date=True) or day_key
             if not day_key or day_key not in grouped:
                 continue
+            amount = _parse_number(props.get(names["amount"])) or 0.0
+            currency = _parse_rich_text(props.get(names["currency"])) if names.get("currency") else None
+            currency = (currency or "JPY").strip().upper() or "JPY"
             grouped[day_key]["count"] += 1
-            grouped[day_key]["total"] += _parse_number(props.get(names["amount"])) or 0.0
+            currency_totals = grouped[day_key]["currency_totals"]
+            currency_totals[currency] = float(currency_totals.get(currency, 0.0)) + amount
             grouped[day_key]["merchants"].append(_parse_rich_text(props.get(names["merchant"])) or "Unknown")
             grouped[day_key]["times"].append(created_time)
 
         result: dict[str, ExpenseFAggregate] = {}
         for target_date in target_dates:
-            row = grouped.get(target_date, {"count": 0, "total": 0.0, "merchants": [], "times": []})
+            row = grouped.get(target_date, {"count": 0, "currency_totals": {}, "merchants": [], "times": []})
             times = sorted([t for t in row["times"] if t])
             count_value = int(row["count"])
             status = "ok" if count_value > 0 else "no_results"
+            currency_totals = {
+                str(currency): round(float(amount), 2)
+                for currency, amount in sorted(row["currency_totals"].items())
+            }
+            # Backward compatibility: `total` has historically been consumed as JPY
+            # and rendered with a hard-coded yen suffix. Never mix foreign currencies
+            # into that number. Foreign amounts remain available in currency_totals.
+            jpy_total = round(float(currency_totals.get("JPY", 0.0)), 2)
             result[target_date] = ExpenseFAggregate(
                 available=True,
                 count=count_value,
-                total=round(float(row["total"]), 2),
+                total=jpy_total,
                 merchants=sorted({m for m in row["merchants"] if m}),
                 first_time=times[0] if times else None,
                 last_time=times[-1] if times else None,
@@ -232,10 +246,14 @@ def aggregate_expense_f_for_dates(target_dates: list[str]) -> dict[str, ExpenseF
                     "query_exception_class": None,
                     "query_exception_message": None,
                     "matched_count": count_value,
-                    "total_amount": round(float(row["total"]), 2),
+                    "total_amount": jpy_total,
+                    "currency_totals": currency_totals,
+                    "currency_prop_present": bool(names.get("currency")),
+                    "mixed_currency": len(currency_totals) > 1,
                     "all_rows": len(pages),
                     "schema_fetch": schema_debug,
                 },
+                currency_totals=currency_totals,
             )
         return result
     except Exception as exc:  # noqa: BLE001
