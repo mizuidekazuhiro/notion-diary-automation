@@ -1643,9 +1643,9 @@
       "data_status": "ok",
       "f_event_count": 27,
       "fallback_used": false,
-      "generated_at": "2026-08-28T15:14:39Z",
+      "generated_at": "2026-08-29T09:55:35Z",
       "history_count": 204,
-      "input_hash": "3cafd6f40d68dd846ac95b2886921ee97b4325d27dae423c8a5111163bcaa005",
+      "input_hash": "0b07192a1184a312e922bf7463bbb3f51ec7b2f878c38eecaf7a6a7b76440bf1",
       "matched_patterns": [
         "前回Fから3日",
         "週末バイアス"
@@ -1657,11 +1657,11 @@
       "risk_level": "medium",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.021195531507568262,
+      "score": 0.023061702648096382,
       "similarity_score": 0.51,
       "usable_f_event_count": 27
     }
   },
-  "updated_at": "2026-08-28T15:14:40Z",
+  "updated_at": "2026-08-29T09:55:35Z",
   "version": 1
 }
