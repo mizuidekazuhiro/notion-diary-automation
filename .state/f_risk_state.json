@@ -1727,8 +1727,32 @@
       "score": 0.045180375290768376,
       "similarity_score": 0.474,
       "usable_f_event_count": 27
+    },
+    "2026-09-02": {
+      "alert_text": "今日はFリスクが高めです。根拠は、直近3日の流れは過去F前兆とmedium一致（最良一致 2026-02-09）、一致した主要因: 前回Fから1日, 直近7日でFが2回, F集中期間です。今日は大きな支出判断、寄り道、夜の外出、コンビニ・外食の追加購入を避けてください。",
+      "data_status": "ok",
+      "f_event_count": 28,
+      "fallback_used": false,
+      "generated_at": "2026-09-01T23:15:38Z",
+      "history_count": 208,
+      "input_hash": "7d8b45f5e5bb7677eeb32f31c6c6c5e0a6da5101e501fa85fa2b77808b9ac7d2",
+      "matched_patterns": [
+        "前回Fから1日",
+        "直近7日でFが2回",
+        "F集中期間"
+      ],
+      "ml_skipped_reason": null,
+      "no_alert_reason": null,
+      "quality_warnings": [],
+      "reason": "model=recent:logistic_regression long:logistic_regression score=0.723",
+      "risk_level": "high",
+      "risk_matched": true,
+      "same_score_streak": 1,
+      "score": 0.7230460346151705,
+      "similarity_score": 0.576,
+      "usable_f_event_count": 28
     }
   },
-  "updated_at": "2026-09-01T08:31:47Z",
+  "updated_at": "2026-09-01T23:15:39Z",
   "version": 1
 }
