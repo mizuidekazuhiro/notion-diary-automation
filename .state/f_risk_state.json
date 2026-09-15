@@ -2012,8 +2012,28 @@
       "score": 0.5993451833448217,
       "similarity_score": 0.294,
       "usable_f_event_count": 28
+    },
+    "2026-09-15": {
+      "alert_text": null,
+      "data_status": "ok",
+      "f_event_count": 28,
+      "fallback_used": false,
+      "generated_at": "2026-09-15T08:35:42Z",
+      "history_count": 221,
+      "input_hash": "96dd81dbbcc0a2d0aff137c6daf58249278a2d128dd50728c35918eb55161101",
+      "matched_patterns": [],
+      "ml_skipped_reason": null,
+      "no_alert_reason": "case_similarity_weak",
+      "quality_warnings": [],
+      "reason": "no_alert:case_similarity_weak",
+      "risk_level": "low",
+      "risk_matched": false,
+      "same_score_streak": 1,
+      "score": 0.1444295760982957,
+      "similarity_score": 0.337,
+      "usable_f_event_count": 28
     }
   },
-  "updated_at": "2026-09-14T08:47:39Z",
+  "updated_at": "2026-09-15T08:35:42Z",
   "version": 1
 }
