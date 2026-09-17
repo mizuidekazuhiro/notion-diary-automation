@@ -2052,8 +2052,28 @@
       "score": 0.43180908433094206,
       "similarity_score": 0.261,
       "usable_f_event_count": 28
+    },
+    "2026-09-17": {
+      "alert_text": null,
+      "data_status": "ok",
+      "f_event_count": 28,
+      "fallback_used": false,
+      "generated_at": "2026-09-17T08:34:20Z",
+      "history_count": 223,
+      "input_hash": "e9e1f7588dfa193556efbb2affa29ed673f1acab857989c8751c2d2f688e8713",
+      "matched_patterns": [],
+      "ml_skipped_reason": null,
+      "no_alert_reason": "case_similarity_weak",
+      "quality_warnings": [],
+      "reason": "no_alert:case_similarity_weak",
+      "risk_level": "medium",
+      "risk_matched": false,
+      "same_score_streak": 1,
+      "score": 0.5500489556472865,
+      "similarity_score": 0.24,
+      "usable_f_event_count": 28
     }
   },
-  "updated_at": "2026-09-16T08:28:52Z",
+  "updated_at": "2026-09-17T08:34:20Z",
   "version": 1
 }
