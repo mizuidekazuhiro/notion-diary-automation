@@ -2095,25 +2095,27 @@
     },
     "2026-09-19": {
       "alert_text": null,
-      "data_status": "failed",
-      "f_event_count": null,
+      "data_status": "ok",
+      "f_event_count": 28,
       "fallback_used": false,
-      "generated_at": "2026-09-19T07:57:04Z",
-      "history_count": null,
+      "generated_at": "2026-09-19T08:04:11Z",
+      "history_count": 225,
       "input_hash": "2970e764417668e1e1c60e271a336222597e5624b9d1d2d21e4c2908cc9a0d61",
-      "matched_patterns": [],
+      "matched_patterns": [
+        "週末バイアス"
+      ],
       "ml_skipped_reason": null,
-      "no_alert_reason": "expense_history_unavailable",
+      "no_alert_reason": "case_similarity_weak",
       "quality_warnings": [],
-      "reason": "expense_history_unavailable",
-      "risk_level": null,
+      "reason": "no_alert:case_similarity_weak",
+      "risk_level": "low",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": null,
-      "similarity_score": null,
-      "usable_f_event_count": null
+      "score": 0.013220379184962333,
+      "similarity_score": 0.219,
+      "usable_f_event_count": 28
     }
   },
-  "updated_at": "2026-09-19T07:57:04Z",
+  "updated_at": "2026-09-19T08:04:11Z",
   "version": 1
 }
