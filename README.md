@@ -556,3 +556,28 @@ python scripts/backfill_missing_diaries.py --days 7 --dry-run
 修復判定は `missing` / `incomplete` / `complete` に加え、内容・source・分析の3軸をartifactへ出します。既存ページに必要な修復がある場合は Phase A（ingest）→ Phase B（location summary）→ Phase C（`notify_diary --backfill`）を再実行します。Healthの欠損は古い値で埋めず、`source_missing`として非停止で扱います。Expense FとF Riskはread-only/live stateを再確認します。過去日に現在の天気を書かないため Weather 生成はスキップします。Phase Dはmanual opt-in以外では実行しません。
 
 1 日でも修復に失敗した場合、他の日付の処理は継続したうえで最終終了コード 1 とし、Workflow は失敗します。全文ログ、JSON 結果、Markdown サマリーは常に artifact として保存されます。
+
+
+## Workout Log integration
+
+Phase A の日次取り込みに Workout を追加しています。
+
+1. `workout_log` Worker の `GET /api/daily-summary?target_date=YYYY-MM-DD` を参照
+2. Daily Automation Worker の `POST /execute/api/daily_log/ingest_workout` で取得
+3. Daily_Log DB に以下を保存
+   - Workout Done
+   - Workout Sessions
+   - Workout Gym
+   - Workout Duration Min
+   - Workout Sets
+   - Workout Volume Kg
+   - Workout Calories
+   - Workout Exercises
+   - Workout Summary
+4. Workout Summary は Diary の生成入力と朝メールの Workout セクションに反映
+5. Workoutの変更はメール重複判定用の入力ハッシュにも含まれる
+
+Worker var:
+`WORKOUT_SUMMARY_URL = "https://workout-log.kazuhiro-mizuide.workers.dev/api/daily-summary"`
+
+Today Advice は既存ポリシー（当日の非睡眠データを根拠にしない）を維持し、Workout当日値は直接入力しません。
