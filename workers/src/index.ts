@@ -52,6 +52,9 @@ interface Env {
   EXPENSES_DB_ID?: string;
   HEALTH_DB_ID?: string;
   WORKOUT_SUMMARY_URL?: string;
+  WORKOUT_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   WORKERS_BEARER_TOKEN?: string;
   TASK_STATUS_DO?: string;
   TASK_STATUS_DONE?: string;
@@ -3818,10 +3821,13 @@ async function handleDailyLogWorkoutIngest(
 
   let workout: Record<string, any>;
   try {
-    const upstream = await fetch(summaryUrl.toString(), {
+    const requestInit: RequestInit = {
       method: "GET",
       headers: { accept: "application/json" },
-    });
+    };
+    const upstream = env.WORKOUT_SERVICE
+      ? await env.WORKOUT_SERVICE.fetch(summaryUrl.toString(), requestInit)
+      : await fetch(summaryUrl.toString(), requestInit);
     if (!upstream.ok) {
       const preview = (await upstream.text()).slice(0, 1000);
       return new Response(
