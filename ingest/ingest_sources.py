@@ -36,12 +36,12 @@ def ingest_sources(
     tasks_closed_url: str,
     health_ingest_url: str,
     expenses_ingest_url: str,
-    workout_ingest_url: str,
     daily_log_upsert_url: str,
     bearer_token: Optional[str],
     run_id: str,
     source_label: str,
     after_step: Optional[Callable[[str], None]] = None,
+    workout_ingest_url: str = "",
 ) -> IngestResult:
     def _log_patch_summary(endpoint_name: str, payload: Any) -> None:
         payload_dict = payload if isinstance(payload, dict) else {}
