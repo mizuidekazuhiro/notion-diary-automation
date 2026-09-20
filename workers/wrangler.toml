@@ -6,3 +6,7 @@ compatibility_date = "2026-01-22"
 EXPENSES_DAY_START_HOUR = "5"
 LOCATION_LOG_DB_ID = "301dec27c9aa8077879af6795e027407"
 WORKOUT_SUMMARY_URL = "https://workout-log.kazuhiro-mizuide.workers.dev/api/daily-summary"
+
+[[services]]
+binding = "WORKOUT_SERVICE"
+service = "workout-log"
