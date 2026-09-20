@@ -11,6 +11,7 @@ export const ROUTES = {
   DAILY_LOG_INGEST_PHOTOS: "/execute/api/daily_log/ingest_photos",
   DAILY_LOG_INGEST_DAILY_LOG: "/execute/api/daily_log/ingest_daily_log",
   DAILY_LOG_INGEST_EXPENSES: "/execute/api/daily_log/ingest_expenses",
+  DAILY_LOG_INGEST_WORKOUT: "/execute/api/daily_log/ingest_workout",
   DAILY_LOG_INGEST_LOCATION: "/execute/api/daily_log/ingest_location",
   DAILY_LOG_GENERATE_DIARY: "/execute/api/daily_log/generate_diary",
   DAILY_LOG_MARK_DIARY_NOTIFIED: "/execute/api/daily_log/mark_diary_notified",
