@@ -62,8 +62,9 @@ def ingest_sources(
         TasksConnector(tasks_closed_url, bearer_token),
         HealthConnector(health_ingest_url, bearer_token),
         ExpensesConnector(expenses_ingest_url, bearer_token),
-        WorkoutConnector(workout_ingest_url, bearer_token),
     ]
+    if workout_ingest_url.strip():
+        connectors.append(WorkoutConnector(workout_ingest_url, bearer_token))
 
     summary_blocks: Dict[str, Any] = {}
     raw_payload: Dict[str, Any] = {}
