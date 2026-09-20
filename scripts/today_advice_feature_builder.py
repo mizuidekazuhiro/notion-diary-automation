@@ -203,6 +203,12 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "study_sessions": _safe_float(getattr(item, "study_sessions", None)),
                 "study_last_used_at": str(getattr(item, "study_last_used_at", "") or ""),
                 "study_logged_flag": bool((_safe_float(getattr(item, "study_minutes", None)) or 0) > 0),
+                "workout_done_flag": bool(getattr(item, "workout_done", False)),
+                "workout_sessions": _safe_float(getattr(item, "workout_sessions", None)),
+                "workout_duration_min": _safe_float(getattr(item, "workout_duration_min", None)),
+                "workout_sets": _safe_float(getattr(item, "workout_sets", None)),
+                "workout_volume_kg": _safe_float(getattr(item, "workout_volume_kg", None)),
+                "workout_calories": _safe_float(getattr(item, "workout_calories", None)),
                 "expense_f_count": _safe_float(item.expense_f_count),
                 "expense_f_total": _safe_float(item.expense_f_total),
                 "transport_spend_like_flag": bool(re.search(r"交通|電車|タクシー|バス", notes_text + activity_text)),
@@ -245,7 +251,9 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
 
     df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
     numeric_targets = [
-        "sleep_hours", "sleep_score", "kcal", "protein", "fat", "carb", "spending_total", "task_done_count", "task_drop_count"
+        "sleep_hours", "sleep_score", "kcal", "protein", "fat", "carb", "spending_total",
+        "task_done_count", "task_drop_count", "workout_sessions", "workout_duration_min",
+        "workout_sets", "workout_volume_kg", "workout_calories"
     ]
     numeric_updates: dict[str, Any] = {}
     derived_cols: dict[str, Any] = {}
@@ -264,6 +272,8 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
     derived_cols["spending_vs_7d_delta"] = df["spending_total"] - df["spending_total"].rolling(7, min_periods=2).mean().shift(1)
     derived_cols["sleep_vs_7d_delta"] = derived_cols.get("sleep_hours_vs_7d_delta", np.nan)
     derived_cols["sleep_score_vs_7d_delta"] = derived_cols.get("sleep_score_vs_7d_delta", np.nan)
+    derived_cols["workout_duration_vs_7d_delta"] = derived_cols.get("workout_duration_min_vs_7d_delta", np.nan)
+    derived_cols["workout_volume_vs_7d_delta"] = derived_cols.get("workout_volume_kg_vs_7d_delta", np.nan)
     df = df.assign(**numeric_updates, **derived_cols)
 
     q = df["spending_total"].dropna()
@@ -313,6 +323,9 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
         "task_done_count",
         "task_drop_count",
         "notes_stress_flag",
+        "workout_done_flag",
+        "workout_duration_min",
+        "workout_volume_kg",
         "notes_fatigue_flag",
         "notes_social_load_flag",
         "notes_has_late_work",
