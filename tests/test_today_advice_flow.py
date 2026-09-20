@@ -249,6 +249,15 @@ def test_build_structured_comparison_uses_last_30_days_and_top_samples() -> None
         "fat",
         "carb",
         "daily_score",
+        "workout_done",
+        "workout_sessions",
+        "workout_gym",
+        "workout_duration_min",
+        "workout_sets",
+        "workout_volume_kg",
+        "workout_calories",
+        "workout_exercises",
+        "workout_summary",
     }
     assert structured["comparisons"]["meal_mood_comparison"]["high_mood"]["protein_avg"] is not None
     assert "focus_rate" in structured["comparisons"]["notes_signal_comparison"]["high_mood"]
