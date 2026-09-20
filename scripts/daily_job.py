@@ -123,6 +123,7 @@ class Config:
     daily_log_ensure_url: str
     health_ingest_url: str
     expenses_ingest_url: str
+    workout_ingest_url: str
     daily_log_read_url: str
     diary_generate_url: str
     diary_mark_notified_url: str
@@ -138,6 +139,7 @@ WORKER_ENDPOINTS = {
     "ensure": f"{WORKER_EXECUTE_BASE_PATH}/ensure",
     "ingest_health": f"{WORKER_EXECUTE_BASE_PATH}/ingest_health",
     "ingest_expenses": f"{WORKER_EXECUTE_BASE_PATH}/ingest_expenses",
+    "ingest_workout": f"{WORKER_EXECUTE_BASE_PATH}/ingest_workout",
     "generate_diary": f"{WORKER_EXECUTE_BASE_PATH}/generate_diary",
     "mark_diary_notified": f"{WORKER_EXECUTE_BASE_PATH}/mark_diary_notified",
     "read": "/api/daily_log",
@@ -181,6 +183,9 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
         ),
         expenses_ingest_url=build_worker_url(
             daily_log_upsert_url, WORKER_ENDPOINTS["ingest_expenses"]
+        ),
+        workout_ingest_url=build_worker_url(
+            daily_log_upsert_url, WORKER_ENDPOINTS["ingest_workout"]
         ),
         daily_log_read_url=build_worker_url(daily_log_upsert_url, WORKER_ENDPOINTS["read"]),
         diary_generate_url=build_worker_url(
@@ -316,6 +321,7 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         tasks_closed_url=config.tasks_closed_url,
         health_ingest_url=config.health_ingest_url,
         expenses_ingest_url=config.expenses_ingest_url,
+        workout_ingest_url=config.workout_ingest_url,
         daily_log_upsert_url=config.daily_log_upsert_url,
         bearer_token=config.bearer_token,
         run_id=run_id,
