@@ -123,13 +123,13 @@ class Config:
     daily_log_ensure_url: str
     health_ingest_url: str
     expenses_ingest_url: str
-    workout_ingest_url: str
     daily_log_read_url: str
     diary_generate_url: str
     diary_mark_notified_url: str
     bearer_token: Optional[str]
     openai_model: str
     study_reconcile_url: str = ""
+    workout_ingest_url: str = ""
     mail_cc: List[str] = field(default_factory=list)
     mail_bcc: List[str] = field(default_factory=list)
 
