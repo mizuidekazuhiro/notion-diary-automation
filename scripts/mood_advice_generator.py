@@ -527,11 +527,32 @@ def _location_pattern_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optio
     return {f"{key}_rate": round(counts[key] / len(items), 2) for key in LOCATION_PATTERN_KEYS}
 
 
+def _workout_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
+    if not items:
+        return {
+            "workout_day_rate": None,
+            "workout_sessions_avg": None,
+            "workout_duration_min_avg": None,
+            "workout_sets_avg": None,
+            "workout_volume_kg_avg": None,
+            "workout_calories_avg": None,
+        }
+    return {
+        "workout_day_rate": round(sum(1 for item in items if item.workout_done) / len(items), 2),
+        "workout_sessions_avg": _mean([_safe_float(item.workout_sessions) for item in items]),
+        "workout_duration_min_avg": _mean([_safe_float(item.workout_duration_min) for item in items]),
+        "workout_sets_avg": _mean([_safe_float(item.workout_sets) for item in items]),
+        "workout_volume_kg_avg": _mean([_safe_float(item.workout_volume_kg) for item in items]),
+        "workout_calories_avg": _mean([_safe_float(item.workout_calories) for item in items]),
+    }
+
+
 def _build_behavior_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Any]:
     snapshot = {
         **_build_metric_snapshot(items),
         "notes_recording_rate": _recording_rate(items, lambda item: item.notes),
         "meal_logged_rate": _recording_rate(items, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
+        "workout": _workout_snapshot(items),
     }
     for field in MEAL_NUMERIC_FIELDS:
         snapshot[f"{field}_avg"] = _meal_metric_avg(items, field)
@@ -620,6 +641,13 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
                 "drop_count": _trend_direction([_safe_float(item.drop_count) for item in reversed(recent_summaries[:14])]),
                 "spend_total": _trend_direction([_safe_float(item.expenses_total) for item in reversed(recent_summaries[:14])]),
             },
+            "workout_pattern": {
+                "recent_7d": _workout_snapshot(recent_7),
+                "recent_14d": _workout_snapshot(recent_14),
+                "recent_30d": _workout_snapshot(recent_30),
+                "recent_14d_duration_trend": _trend_direction([_safe_float(item.workout_duration_min) for item in reversed(recent_summaries[:14])]),
+                "recent_14d_volume_trend": _trend_direction([_safe_float(item.workout_volume_kg) for item in reversed(recent_summaries[:14])]),
+            },
             "meal_mood_comparison": {
                 "recent_7d": {f"{field}_avg": _meal_metric_avg(recent_7, field) for field in MEAL_NUMERIC_FIELDS},
                 "recent_14d": {f"{field}_avg": _meal_metric_avg(recent_14, field) for field in MEAL_NUMERIC_FIELDS},
@@ -644,6 +672,11 @@ def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequenc
             "location_pattern_comparison": {
                 "recent_7d": _location_pattern_rates(recent_7),
             },
+            "workout_pattern": {
+                "recent_7d": _workout_snapshot(recent_7),
+                "recent_14d": _workout_snapshot(recent_14),
+                "recent_30d": _workout_snapshot(recent_30),
+            },
         },
     }
 
@@ -666,6 +699,15 @@ def _build_day_record(summary: DailyLogSummary) -> dict[str, Any]:
         "protein": summary.protein,
         "fat": summary.fat,
         "carb": summary.carb,
+        "workout_done": summary.workout_done,
+        "workout_sessions": summary.workout_sessions,
+        "workout_gym": summary.workout_gym,
+        "workout_duration_min": summary.workout_duration_min,
+        "workout_sets": summary.workout_sets,
+        "workout_volume_kg": summary.workout_volume_kg,
+        "workout_calories": summary.workout_calories,
+        "workout_exercises": summary.workout_exercises,
+        "workout_summary": summary.workout_summary,
         "daily_score": normalize_mood_to_score(summary.mood),
     }
 
@@ -765,6 +807,15 @@ def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str
                 "low_mood": _location_pattern_rates(low),
                 "recent_7d": _location_pattern_rates(recent_7),
                 "good_vs_bad_delta": _delta_map(_location_pattern_rates(top_good_days), _location_pattern_rates(top_bad_days)),
+            },
+            "workout_comparison": {
+                "high_mood": _workout_snapshot(high),
+                "low_mood": _workout_snapshot(low),
+                "recent_7d": _workout_snapshot(recent_7),
+                "recent_14d": _workout_snapshot(recent_14),
+                "recent_30d": _workout_snapshot(history[:LOOKBACK_DAYS]),
+                "good_days": _workout_snapshot(top_good_days),
+                "bad_days": _workout_snapshot(top_bad_days),
             },
             "good_vs_bad_delta": {
                 "sleep_duration_min": _delta(_build_metric_snapshot(top_good_days)["sleep_duration_min_avg"], _build_metric_snapshot(top_bad_days)["sleep_duration_min_avg"]),
