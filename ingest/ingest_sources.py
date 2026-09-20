@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 from connectors.expenses import ExpensesConnector
 from connectors.health import HealthConnector
 from connectors.tasks import TasksConnector
+from connectors.workout import WorkoutConnector
 from delivery.email_templates import build_email_html, build_email_text
 from ingest.daily_log_upsert import upsert_daily_log
 
@@ -40,6 +41,7 @@ def ingest_sources(
     run_id: str,
     source_label: str,
     after_step: Optional[Callable[[str], None]] = None,
+    workout_ingest_url: str = "",
 ) -> IngestResult:
     def _log_patch_summary(endpoint_name: str, payload: Any) -> None:
         payload_dict = payload if isinstance(payload, dict) else {}
@@ -61,6 +63,8 @@ def ingest_sources(
         HealthConnector(health_ingest_url, bearer_token),
         ExpensesConnector(expenses_ingest_url, bearer_token),
     ]
+    if workout_ingest_url.strip():
+        connectors.append(WorkoutConnector(workout_ingest_url, bearer_token))
 
     summary_blocks: Dict[str, Any] = {}
     raw_payload: Dict[str, Any] = {}
@@ -76,6 +80,7 @@ def ingest_sources(
             "tasks": "tasks",
             "health": "/execute/api/daily_log/ingest_health",
             "expenses": "/execute/api/daily_log/ingest_expenses",
+            "workout": "/execute/api/daily_log/ingest_workout",
         }.get(connector.id, connector.id)
         result_payload = getattr(result, "payload", None)
         if result_payload is None:

@@ -51,6 +51,7 @@ interface Env {
   MAIL_LINK_SECRET?: string;
   EXPENSES_DB_ID?: string;
   HEALTH_DB_ID?: string;
+  WORKOUT_SUMMARY_URL?: string;
   WORKERS_BEARER_TOKEN?: string;
   TASK_STATUS_DO?: string;
   TASK_STATUS_DONE?: string;
@@ -253,6 +254,15 @@ function buildDailyLogProperties(env: Env): ExpectedProperty[] {
     { name: "Study Minutes", type: "number" },
     { name: "Study Sessions", type: "number" },
     { name: "Study Last Used At", type: "date" },
+    { name: "Workout Done", type: "checkbox" },
+    { name: "Workout Sessions", type: "number" },
+    { name: "Workout Gym", type: "rich_text" },
+    { name: "Workout Duration Min", type: "number" },
+    { name: "Workout Sets", type: "number" },
+    { name: "Workout Volume Kg", type: "number" },
+    { name: "Workout Calories", type: "number" },
+    { name: "Workout Exercises", type: "rich_text" },
+    { name: "Workout Summary", type: "rich_text" },
     { name: "Mood", type: "select" },
     { name: "Source", type: "select" },
     { name: "Weight", type: "number" },
@@ -3785,6 +3795,142 @@ async function handleDailyLogIngest(
   );
 }
 
+async function handleDailyLogWorkoutIngest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return methodNotAllowed("use POST /execute/api/daily_log/ingest_workout");
+  }
+  const authError = await requireBearerToken(request, env);
+  if (authError) return authError;
+
+  const payload = await parseJsonBody(request);
+  if (!payload) return badRequest("invalid json body");
+  const targetDateResult = resolveIngestTargetDate(payload);
+  if (!targetDateResult.ok) return badRequest(targetDateResult.reason);
+  const targetDate = targetDateResult.targetDate;
+
+  const summaryBase =
+    (env.WORKOUT_SUMMARY_URL || "https://workout-log.kazuhiro-mizuide.workers.dev/api/daily-summary").trim();
+  const summaryUrl = new URL(summaryBase);
+  summaryUrl.searchParams.set("target_date", targetDate);
+
+  let workout: Record<string, any>;
+  try {
+    const upstream = await fetch(summaryUrl.toString(), {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+    if (!upstream.ok) {
+      const preview = (await upstream.text()).slice(0, 1000);
+      return new Response(
+        JSON.stringify({
+          error: "workout_summary_fetch_failed",
+          status: upstream.status,
+          target_date: targetDate,
+          response_preview: preview,
+        }),
+        { status: 502, headers: jsonHeaders },
+      );
+    }
+    workout = await upstream.json() as Record<string, any>;
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        error: "workout_summary_fetch_failed",
+        target_date: targetDate,
+        message: error instanceof Error ? error.message : String(error),
+      }),
+      { status: 502, headers: jsonHeaders },
+    );
+  }
+
+  const dailyLogProperties = await getDatabaseProperties(env, env.DAILY_LOG_DB_ID);
+  const updateProperties: Record<string, any> = {};
+  const setIfUsable = (
+    name: string,
+    type: NotionPropertyType,
+    value: any,
+    builder: (value: any) => any,
+  ) => {
+    const resolved = canUseProperty(
+      dailyLogProperties,
+      name,
+      type,
+      `workout_ingest:${name}`,
+    );
+    if (resolved) updateProperties[resolved] = builder(value);
+  };
+
+  const workoutDone = Boolean(workout.workout_done);
+  const sessions = Number(workout.sessions || 0);
+  const gym = String(workout.gym || "");
+  const durationMin = Number(workout.duration_min || 0);
+  const sets = Number(workout.sets || 0);
+  const volumeKg = Number(workout.volume_kg || 0);
+  const calories = Number(workout.calories || 0);
+  const exercises = String(workout.exercises_text || "");
+  const summary = String(workout.summary || (workoutDone ? "トレーニング記録あり" : "トレーニング記録なし"));
+
+  setIfUsable("Workout Done", "checkbox", workoutDone, createCheckboxProperty);
+  setIfUsable("Workout Sessions", "number", sessions, createNumberProperty);
+  setIfUsable("Workout Gym", "rich_text", gym, createRichTextProperty);
+  setIfUsable("Workout Duration Min", "number", durationMin, createNumberProperty);
+  setIfUsable("Workout Sets", "number", sets, createNumberProperty);
+  setIfUsable("Workout Volume Kg", "number", volumeKg, createNumberProperty);
+  setIfUsable("Workout Calories", "number", calories, createNumberProperty);
+  setIfUsable("Workout Exercises", "rich_text", exercises, createRichTextProperty);
+  setIfUsable("Workout Summary", "rich_text", summary, createRichTextProperty);
+
+  const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
+  const existingPage = resolvedDailyLog.canonicalPage;
+  let response: Response;
+  if (existingPage) {
+    response = await notionFetch(env, `/pages/${existingPage.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: updateProperties }),
+    });
+  } else {
+    response = await notionFetch(env, "/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: env.DAILY_LOG_DB_ID },
+        properties: {
+          [TITLE_PROPERTIES.dailyLog]: createTitleProperty(`Daily Log｜${targetDate}`),
+          "Target Date": createDateProperty(targetDate),
+          Date: createDateProperty(targetDate),
+          ...updateProperties,
+        },
+      }),
+    });
+  }
+
+  if (!response.ok) {
+    return notionErrorResponse(response, "handleDailyLogWorkoutIngest.upsert");
+  }
+  const pageId = existingPage ? existingPage.id : (await response.json()).id;
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      target_date: targetDate,
+      page_id: pageId,
+      updated: true,
+      workout_done: workoutDone,
+      sessions,
+      gym,
+      duration_min: durationMin,
+      sets,
+      volume_kg: volumeKg,
+      calories,
+      exercises,
+      summary,
+    }),
+    { headers: jsonHeaders },
+  );
+}
+
 async function handleDailyLogExpensesIngest(
   request: Request,
   env: Env,
@@ -5386,6 +5532,15 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       study_minutes: studyMinutes,
       study_sessions: studySessions,
       study_last_used_at: studyLastUsedAt,
+      workout_done: getCheckboxFromProperty(page.properties?.["Workout Done"]),
+      workout_sessions: getNumberFromProperty(page.properties?.["Workout Sessions"]),
+      workout_gym: getPlainTextFromRichText(page.properties?.["Workout Gym"]),
+      workout_duration_min: getNumberFromProperty(page.properties?.["Workout Duration Min"]),
+      workout_sets: getNumberFromProperty(page.properties?.["Workout Sets"]),
+      workout_volume_kg: getNumberFromProperty(page.properties?.["Workout Volume Kg"]),
+      workout_calories: getNumberFromProperty(page.properties?.["Workout Calories"]),
+      workout_exercises: getPlainTextFromRichText(page.properties?.["Workout Exercises"]),
+      workout_summary: getPlainTextFromRichText(page.properties?.["Workout Summary"]),
       diary_input_hash: diaryInputHash,
       today_advice_input_hash: todayAdviceInputHash,
       diary_generated_at: diaryGeneratedAt,
@@ -5691,6 +5846,7 @@ export default {
         [ROUTES.DAILY_LOG_INGEST_PHOTOS]: () => handleDailyLogPhotosIngest(request, env),
         [ROUTES.DAILY_LOG_INGEST_DAILY_LOG]: () => handleDailyLogIngest(request, env),
         [ROUTES.DAILY_LOG_INGEST_EXPENSES]: () => handleDailyLogExpensesIngest(request, env),
+        [ROUTES.DAILY_LOG_INGEST_WORKOUT]: () => handleDailyLogWorkoutIngest(request, env),
         [ROUTES.DAILY_LOG_INGEST_LOCATION]: () => handleDailyLogLocationIngest(request, env),
         [ROUTES.DAILY_LOG_GENERATE_DIARY]: () => handleDailyLogGenerateDiary(request, env),
         [ROUTES.DAILY_LOG_MARK_DIARY_NOTIFIED]: () =>

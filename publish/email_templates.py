@@ -359,6 +359,15 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
         payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
     )
     study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    workout_done = bool(payload.get("workout_done")) if isinstance(payload, Mapping) else False
+    workout_sessions = _safe_int(payload.get("workout_sessions") if isinstance(payload, Mapping) else None)
+    workout_gym = _optional_text(payload.get("workout_gym") if isinstance(payload, Mapping) else None)
+    workout_duration_min = _safe_float(payload.get("workout_duration_min") if isinstance(payload, Mapping) else None)
+    workout_sets = _safe_int(payload.get("workout_sets") if isinstance(payload, Mapping) else None)
+    workout_volume_kg = _safe_float(payload.get("workout_volume_kg") if isinstance(payload, Mapping) else None)
+    workout_calories = _safe_float(payload.get("workout_calories") if isinstance(payload, Mapping) else None)
+    workout_exercises = _optional_text(payload.get("workout_exercises") if isinstance(payload, Mapping) else None)
+    workout_summary = _optional_text(payload.get("workout_summary") if isinstance(payload, Mapping) else None)
     f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
     f_risk_matched = False
     f_risk_alert = None
@@ -426,6 +435,30 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 for label, value in study_rows
             )
             + "</table></td></tr></table></td></tr>"
+        )
+    workout_html = ""
+    if workout_done:
+        workout_rows = [
+            ("ジム", workout_gym or "—"),
+            ("時間", f"{int(workout_duration_min)}分" if workout_duration_min is not None else "—"),
+            ("セット数", str(workout_sets) if workout_sets is not None else "—"),
+            ("Volume", f"{int(workout_volume_kg):,} kg" if workout_volume_kg is not None else "—"),
+            ("推定消費", f"{int(workout_calories)} kcal" if workout_calories is not None else "—"),
+            ("種目", workout_exercises or "—"),
+        ]
+        workout_html = (
+            "<tr><td style=\"padding: 0 24px 16px 24px;\">"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #c7d2fe; border-radius: 12px; padding: 16px; background:#eef2ff;\">"
+            "<tr><td><h2 style=\"margin: 0 0 12px 0; font-size: 16px;\">🏋️ Workout</h2>"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">"
+            + "".join(
+                f"<tr><td style=\"padding: 6px 0; font-size: 13px; color: #6b7280; vertical-align:top;\">{html.escape(label)}</td>"
+                f"<td style=\"padding: 6px 0; font-size: 14px; color: #111827;\">{html.escape(value)}</td></tr>"
+                for label, value in workout_rows
+            )
+            + "</table>"
+            + (f"<div style=\"margin-top:10px;font-size:13px;color:#4b5563;\">{html.escape(workout_summary)}</div>" if workout_summary else "")
+            + "</td></tr></table></td></tr>"
         )
     weather_html = ""
     if weather_summary:
@@ -627,6 +660,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
             {f_risk_html}
             {expense_f_alert_html}
             {study_html}
+            {workout_html}
 
             <tr>
               <td style=\"padding: 0 24px 16px 24px;\">
@@ -793,6 +827,15 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         payload.get("study_last_used_at") if isinstance(payload, Mapping) else None
     )
     study_last_used_at = _format_sleep_clock(study_last_used_at_raw) or study_last_used_at_raw
+    workout_done = bool(payload.get("workout_done")) if isinstance(payload, Mapping) else False
+    workout_sessions = _safe_int(payload.get("workout_sessions") if isinstance(payload, Mapping) else None)
+    workout_gym = _optional_text(payload.get("workout_gym") if isinstance(payload, Mapping) else None)
+    workout_duration_min = _safe_float(payload.get("workout_duration_min") if isinstance(payload, Mapping) else None)
+    workout_sets = _safe_int(payload.get("workout_sets") if isinstance(payload, Mapping) else None)
+    workout_volume_kg = _safe_float(payload.get("workout_volume_kg") if isinstance(payload, Mapping) else None)
+    workout_calories = _safe_float(payload.get("workout_calories") if isinstance(payload, Mapping) else None)
+    workout_exercises = _optional_text(payload.get("workout_exercises") if isinstance(payload, Mapping) else None)
+    workout_summary = _optional_text(payload.get("workout_summary") if isinstance(payload, Mapping) else None)
     f_risk_payload = payload.get("f_risk_alert_payload") if isinstance(payload, Mapping) else None
     f_risk_matched = False
     f_risk_alert = None
@@ -862,6 +905,19 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             f"- セッション数: {study_sessions if study_sessions is not None else '—'}",
             f"- 最終利用: {study_last_used_at or '—'}",
         ]
+    if workout_done:
+        lines += [
+            "",
+            "🏋️ Workout",
+            f"- ジム: {workout_gym or '—'}",
+            f"- 時間: {int(workout_duration_min)}分" if workout_duration_min is not None else "- 時間: —",
+            f"- セット数: {workout_sets if workout_sets is not None else '—'}",
+            f"- Volume: {int(workout_volume_kg):,} kg" if workout_volume_kg is not None else "- Volume: —",
+            f"- 推定消費: {int(workout_calories)} kcal" if workout_calories is not None else "- 推定消費: —",
+            f"- 種目: {workout_exercises or '—'}",
+        ]
+        if workout_summary:
+            lines.append(f"- Summary: {workout_summary}")
     if f_risk_matched and f_risk_alert:
         lines += ["", "F Risk Alert", f_risk_alert]
         if f_risk_score != "—":

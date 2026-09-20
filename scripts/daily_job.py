@@ -129,6 +129,7 @@ class Config:
     bearer_token: Optional[str]
     openai_model: str
     study_reconcile_url: str = ""
+    workout_ingest_url: str = ""
     mail_cc: List[str] = field(default_factory=list)
     mail_bcc: List[str] = field(default_factory=list)
 
@@ -138,6 +139,7 @@ WORKER_ENDPOINTS = {
     "ensure": f"{WORKER_EXECUTE_BASE_PATH}/ensure",
     "ingest_health": f"{WORKER_EXECUTE_BASE_PATH}/ingest_health",
     "ingest_expenses": f"{WORKER_EXECUTE_BASE_PATH}/ingest_expenses",
+    "ingest_workout": f"{WORKER_EXECUTE_BASE_PATH}/ingest_workout",
     "generate_diary": f"{WORKER_EXECUTE_BASE_PATH}/generate_diary",
     "mark_diary_notified": f"{WORKER_EXECUTE_BASE_PATH}/mark_diary_notified",
     "read": "/api/daily_log",
@@ -181,6 +183,9 @@ def load_config(*, need_mail: bool, need_tasks: bool) -> Config:
         ),
         expenses_ingest_url=build_worker_url(
             daily_log_upsert_url, WORKER_ENDPOINTS["ingest_expenses"]
+        ),
+        workout_ingest_url=build_worker_url(
+            daily_log_upsert_url, WORKER_ENDPOINTS["ingest_workout"]
         ),
         daily_log_read_url=build_worker_url(daily_log_upsert_url, WORKER_ENDPOINTS["read"]),
         diary_generate_url=build_worker_url(
@@ -316,6 +321,7 @@ def run_ingest(config: Config, target_date: str, run_id: str) -> None:
         tasks_closed_url=config.tasks_closed_url,
         health_ingest_url=config.health_ingest_url,
         expenses_ingest_url=config.expenses_ingest_url,
+        workout_ingest_url=config.workout_ingest_url,
         daily_log_upsert_url=config.daily_log_upsert_url,
         bearer_token=config.bearer_token,
         run_id=run_id,
@@ -648,6 +654,15 @@ def build_diary_input_fields(summary: "DailyLogSummary", *, voice_diary_notes_te
         ("Study Minutes", str(summary.study_minutes) if summary.study_minutes is not None else None),
         ("Study Sessions", str(summary.study_sessions) if summary.study_sessions is not None else None),
         ("Study Last Used At", summary.study_last_used_at),
+        ("Workout Done", "yes" if summary.workout_done else None),
+        ("Workout Sessions", str(summary.workout_sessions) if summary.workout_sessions is not None else None),
+        ("Workout Gym", summary.workout_gym),
+        ("Workout Duration Min", str(summary.workout_duration_min) if summary.workout_duration_min is not None else None),
+        ("Workout Sets", str(summary.workout_sets) if summary.workout_sets is not None else None),
+        ("Workout Volume Kg", str(summary.workout_volume_kg) if summary.workout_volume_kg is not None else None),
+        ("Workout Calories", str(summary.workout_calories) if summary.workout_calories is not None else None),
+        ("Workout Exercises", summary.workout_exercises),
+        ("Workout Summary", summary.workout_summary),
     ]
 
     used: dict[str, str] = {}
