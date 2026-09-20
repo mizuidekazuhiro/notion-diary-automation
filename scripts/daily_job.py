@@ -654,6 +654,15 @@ def build_diary_input_fields(summary: "DailyLogSummary", *, voice_diary_notes_te
         ("Study Minutes", str(summary.study_minutes) if summary.study_minutes is not None else None),
         ("Study Sessions", str(summary.study_sessions) if summary.study_sessions is not None else None),
         ("Study Last Used At", summary.study_last_used_at),
+        ("Workout Done", "yes" if summary.workout_done else None),
+        ("Workout Sessions", str(summary.workout_sessions) if summary.workout_sessions is not None else None),
+        ("Workout Gym", summary.workout_gym),
+        ("Workout Duration Min", str(summary.workout_duration_min) if summary.workout_duration_min is not None else None),
+        ("Workout Sets", str(summary.workout_sets) if summary.workout_sets is not None else None),
+        ("Workout Volume Kg", str(summary.workout_volume_kg) if summary.workout_volume_kg is not None else None),
+        ("Workout Calories", str(summary.workout_calories) if summary.workout_calories is not None else None),
+        ("Workout Exercises", summary.workout_exercises),
+        ("Workout Summary", summary.workout_summary),
     ]
 
     used: dict[str, str] = {}
