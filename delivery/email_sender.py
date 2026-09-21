@@ -88,5 +88,6 @@ def send_email(
             server.sendmail(mail_from, recipients, message.as_string())
     except Exception:
         logger.exception(
-            "Failed to send email via SMTP. The job will continue without stopping."
+            "Failed to send email via SMTP. Aborting so delivery metadata is not persisted."
         )
+        raise
