@@ -1,5 +1,24 @@
 # 司法試験 Study API
 
+## 伊藤塾の手動入力画面
+
+既存Workerの `/study` を開きます。開始日・開始時刻はJSTで入力し、時間を
+15/30/45/60/90/120分、±5分または直接入力で指定します。終了日時と学習日を
+送信前に確認できます。学習日は既存設定（標準は終了時刻の午前4時区切り）に従います。
+
+登録用トークンには既存の `WORKERS_BEARER_TOKEN` を使用します。トークンは
+HTMLに埋め込まず、URLやブラウザストレージにも保存しません。ページを開き直した場合は再入力します。
+新しいWorker、Notion integration、Cloudflare secretの追加は不要です。
+
+画面は同一オリジンの `POST /execute/api/study/session` へ `app=Itojuku`,
+`source=manual` を送ります。開始・終了・Deviceが同じ入力は同じSession IDになり、
+通信失敗後やページを開き直した後も同じ内容で再送できます。送信中は操作を無効にします。
+既存APIの重複確認を再利用するため、複数端末からの完全に同時の送信に対する原子的な保証はありません。
+
+登録後は既存のDaily Log再集計と朝メールのStudy欄に反映されます。
+Daily Logがまだない場合は、後続の日次ジョブで再集計されます。
+入力画面だけの確認ではNotionへテスト用の学習記録を作成しないでください。
+
 既存Cloudflare Worker内で、Notion `App Usage Sessions` とDaily LogのStudy値を更新します。認証はいずれも次のBearer tokenです。
 
 ```http
