@@ -37,6 +37,7 @@ import { TITLE_PROPERTIES } from "./config/title_properties";
 import { dispatchRoute } from "./http/router";
 import { buildDuplicateMergePatch, chooseCanonicalDailyLogPage, extractDailyLogDateFromTitle, isPageMatchedByDateOrTitle } from "./domain/daily_log_resolver";
 import { ROUTES } from "./http/routes";
+import { handleStudyEntry } from "./application/study_entry";
 import {
   handleStudyAnkiDaily,
   handleStudyReconcile,
@@ -5861,6 +5862,7 @@ export default {
         [ROUTES.MOOD_NOTES_EXECUTE]: () => handleMoodNotesExecute(request, env),
         [ROUTES.MOOD_NOTES_INGEST]: () => handleMoodNotesIngest(request, env),
         [ROUTES.DAILY_LOG_ENSURE]: () => handleDailyLogEnsure(request, env),
+        [ROUTES.STUDY_ENTRY]: () => Promise.resolve(handleStudyEntry(request, env)),
         [ROUTES.STUDY_SESSION]: () => handleStudySession(request, env),
         [ROUTES.STUDY_ANKI_DAILY]: () => handleStudyAnkiDaily(request, env),
         [ROUTES.STUDY_RECONCILE]: () => handleStudyReconcile(request, env),
