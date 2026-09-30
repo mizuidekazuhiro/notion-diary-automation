@@ -2335,9 +2335,9 @@
       "data_status": "ok",
       "f_event_count": 29,
       "fallback_used": false,
-      "generated_at": "2026-09-29T23:49:14Z",
+      "generated_at": "2026-09-30T09:32:40Z",
       "history_count": 236,
-      "input_hash": "d815f123ada84bf1f7b1ab82a2c3c8cd31803853af829824891825921f45bf34",
+      "input_hash": "e6e9301d78ea78fdc4f7984357f0a9f463698de035994baf38c8fcc2b8af13c3",
       "matched_patterns": [
         "前回Fから6日"
       ],
@@ -2348,11 +2348,11 @@
       "risk_level": "low",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.040079654519064534,
+      "score": 0.03430593310434829,
       "similarity_score": 0.51,
       "usable_f_event_count": 29
     }
   },
-  "updated_at": "2026-09-29T23:49:15Z",
+  "updated_at": "2026-09-30T09:32:41Z",
   "version": 1
 }
