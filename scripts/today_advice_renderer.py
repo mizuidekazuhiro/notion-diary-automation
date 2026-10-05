@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable, Mapping
 
 from publish.read_daily_log import DailyLogSummary
+from scripts.daily_mail_quality import today_advice_char_limits, today_advice_length_valid
 
 INTERNAL_NOTES_TERMS = ("Notesの記録品質", "品質が低い", "parse", "unknown_rate", "unknown")
 
@@ -143,9 +144,10 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
 
     if analysis_json.get("today_sleep_context", {}).get("sleep_available") is False and analysis_json.get("matched_patterns_count", 0) == 0:
         return _fallback_text()
+    min_chars, max_chars = today_advice_char_limits()
     prompt = (
         "analysis JSONのみを根拠にToday adviceを日本語4〜6文で作成。"
-        "文字数は260〜420字。"
+        f"文字数は空白・改行を除いて{min_chars}〜{max_chars}字。"
         "3〜5文。最初の文は必ずしも睡眠から始めない。"
         "構成順は『強い根拠→直近7日または30日の傾向→今日の実務上の注意点→最初の一手』。"
         "睡眠は optional。today_sleep_context.sleep_should_mention が true のときだけ睡眠へ言及する。"
@@ -171,6 +173,9 @@ def render_today_advice_from_analysis(*, analysis_json: Mapping[str, Any], model
         if sentence_count > 10:
             return _fallback_text()
         if any(term in generated for term in INTERNAL_NOTES_TERMS):
+            return _fallback_text()
+        if not today_advice_length_valid(generated):
+            # Use the evidence-based fallback, never pad with invented facts.
             return _fallback_text()
         return generated
     except Exception:

@@ -61,6 +61,8 @@ jobs:
           EXPENSE_AMOUNT_PROP: ${{ secrets.EXPENSE_AMOUNT_PROP }}
           EXPENSE_CATEGORY_PROP: ${{ secrets.EXPENSE_CATEGORY_PROP }}
           OPENAI_MODEL: gpt-4.1-mini
+          DAILY_MAIL_TODAY_ADVICE_MIN_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MIN_CHARS }}
+          DAILY_MAIL_TODAY_ADVICE_MAX_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MAX_CHARS }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python scripts/daily_job.py --phase notify_diary
