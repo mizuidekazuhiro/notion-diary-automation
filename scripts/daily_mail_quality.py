@@ -54,6 +54,18 @@ def _compact_len(value: str) -> int:
     return len(re.sub(r"\s+", "", value or ""))
 
 
+def today_advice_char_limits() -> tuple[int, int]:
+    return (
+        _env_int("DAILY_MAIL_TODAY_ADVICE_MIN_CHARS", DEFAULT_TODAY_ADVICE_MIN_CHARS),
+        _env_int("DAILY_MAIL_TODAY_ADVICE_MAX_CHARS", DEFAULT_TODAY_ADVICE_MAX_CHARS),
+    )
+
+
+def today_advice_length_valid(value: str) -> bool:
+    minimum, maximum = today_advice_char_limits()
+    return minimum <= _compact_len(value) <= maximum
+
+
 def _safe_float(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
@@ -96,8 +108,7 @@ def build_quality_report(
     f_risk_state_read_ok: bool | None = None,
     expense_f_status_override: str | None = None,
 ) -> dict[str, object]:
-    min_chars = _env_int("DAILY_MAIL_TODAY_ADVICE_MIN_CHARS", DEFAULT_TODAY_ADVICE_MIN_CHARS)
-    max_chars = _env_int("DAILY_MAIL_TODAY_ADVICE_MAX_CHARS", DEFAULT_TODAY_ADVICE_MAX_CHARS)
+    min_chars, max_chars = today_advice_char_limits()
     issues: list[dict[str, object]] = []
 
     if summary is None:

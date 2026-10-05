@@ -362,11 +362,13 @@ def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
     _patch_history_result(monkeypatch, generator, [target, *histories])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "これは最終本文です。")
+    generated = "これは直近7日の行動記録を踏まえて最初のタスクの進め方を具体的に確認するための最終本文です。" * 5
+    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: generated)
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
-    assert "これは最終本文です。" in result.judgment_json["analysis_audit"]["final_text"]["text"]
+    assert result.today_advice == result.judgment_json["analysis_audit"]["final_text"]["text"]
+    assert result.today_advice == generated
 
 
 def test_sleep_duration_zero_marked_invalid() -> None:

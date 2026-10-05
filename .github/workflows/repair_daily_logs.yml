@@ -92,6 +92,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           OPENAI_MODEL: gpt-4.1-mini
+          DAILY_MAIL_TODAY_ADVICE_MIN_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MIN_CHARS }}
+          DAILY_MAIL_TODAY_ADVICE_MAX_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MAX_CHARS }}
           TZ: "Asia/Tokyo"
         run: |
           set -o pipefail

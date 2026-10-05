@@ -27,6 +27,7 @@ from publish.read_daily_log import read_daily_log
 from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import render_mail
 from publish.send_mail import MailConfig, send_mail
+from scripts.daily_mail_quality import today_advice_length_valid
 from scripts.mail_dedupe import (
     MAIL_INPUT_HASH_FIELDS,
     build_mail_input_snapshot,
@@ -1124,7 +1125,7 @@ def _generate_and_save_today_advice(
         bool((summary.diary or "").strip()),
         json.dumps(debug_summary, ensure_ascii=False, sort_keys=True, default=str),
     )
-    if has_today_advice and not input_changed:
+    if has_today_advice and not input_changed and today_advice_length_valid(summary.today_advice or ""):
         logging.info(
             "phase_c_today_advice_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input current_input_hash=%s previous_input_hash=%s input_hash_changed=%s input_summary=%s",
             summary.target_date,

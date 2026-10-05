@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts import daily_job, voice_diary_notes
 from scripts.location_for_weather import ResolvedLocation
@@ -286,7 +288,8 @@ def test_weather_roundtrip_compare_ignores_unfetched_fields() -> None:
     assert "weather_precip_probability_max" in status["ignored_fields"]
 
 
-def test_today_advice_existing_with_same_hash_skips(monkeypatch) -> None:
+@pytest.mark.parametrize("valid_length", [True, False])
+def test_today_advice_existing_with_same_hash_skips_only_valid_length(monkeypatch, valid_length) -> None:
     summary = _summary(today_advice="existing advice")
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     save_calls: list[dict[str, object]] = []
@@ -312,17 +315,23 @@ def test_today_advice_existing_with_same_hash_skips(monkeypatch) -> None:
             },
         }
     )
-    summary = _summary(today_advice="existing advice", today_advice_input_hash=current_hash)
+    advice = "既存の助言。" * 40 if valid_length else "existing advice"
+    summary = _summary(today_advice=advice, today_advice_input_hash=current_hash)
 
     monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
-    monkeypatch.setattr(daily_job, "generate_today_advice", lambda **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    generation_calls = []
+    def generate(**kwargs):
+        generation_calls.append(kwargs)
+        return SimpleNamespace(today_advice="再生成した助言。" * 30, history_count=30, high_mood_sample_count=0, low_mood_sample_count=0, judgment_json={})
+    monkeypatch.setattr(daily_job, "generate_today_advice", generate)
     monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
 
     result = daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
     assert result == summary
-    assert save_calls == []
+    assert len(generation_calls) == (0 if valid_length else 1)
+    assert len(save_calls) == (0 if valid_length else 1)
 
 
 def test_resolve_target_date_defaults_to_yesterday_and_supports_today_mode(monkeypatch) -> None:
