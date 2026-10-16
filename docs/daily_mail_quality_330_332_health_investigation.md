@@ -87,7 +87,7 @@ Daily Logの生成・品質判定コードには変更が必要な証拠がな�
 - 上流全体: 70件中68件PASS、学習ログ03:00/04:00境界の2件FAIL。修正前も同じ2件FAIL（56件中54件PASS）。今回の変更とは独立。
 - 上流サービスのstrict TypeScript検査: 修正前後とも既存の `scalePercent` union型エラー1件。同じエラーのみであり、型検査全体PASSとは主張しない。
 - 下流: `test_health_freshness`, `test_ingest_health_quality_gate`, `test_notion_readonly_canary`, `test_sleep_resolution`, `test_daily_mail_quality`, `test_enforce_daily_quality_gate`, `test_workflow_contracts`: 合計39件PASS。
-- `git diff --check`: PASS。下流全398件の再実行はしていない。今回は下流実装に変更なし。
+- `git diff --check`: PASS。下流全体のローカル再実行はしていない。今回は下流実装に変更なし。PR作成後のGitHub CI結果はPRのChecksを参照。
 
 ## 外部で必要な操作と判定
 
