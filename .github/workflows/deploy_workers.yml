@@ -24,11 +24,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Confirm the tested revision is current main
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          current="$(gh api repos/${{ github.repository }}/commits/main --jq .sha)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$current" = "$TESTED_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "A newer main revision exists; skipping this stale automatic deployment."
+          fi
       - name: Deploy to Cloudflare Workers
+        if: steps.revision.outputs.current == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: workers
-          command: deploy
+          command: deploy --var APP_VERSION:${{ github.event.workflow_run.head_sha || github.sha }}

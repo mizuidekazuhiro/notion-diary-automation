@@ -137,7 +137,9 @@ def test_lag_pattern_decision_thresholds() -> None:
     labels = {h.target_date: parse_note_label_json('[{"date":"%s","fatigue_flag":true,"sentiment_label":"negative","sentiment_score":-1}]' % h.target_date, [{"date": h.target_date, "notes": h.notes}])[0] for h in histories}
     df = build_daily_feature_table(histories, labels)
     result = analyze_exploratory_patterns(df)
-    assert len(result["univariate_summary"]) >= 8
+    assert result["target_counts"]["valid"] == 11
+    assert result["univariate_summary"] == []
+    assert result["reason_codes"] == ["insufficient_valid_targets"]
     assert "top_combination_patterns_for_low_mood" in result
 
 
@@ -191,8 +193,9 @@ def test_analysis_json_weakens_notes_assertion_when_label_quality_low() -> None:
         lightgbm_summary={"available": False, "sample_size": 0},
         notes_label_quality={"notes_parse_success_rate": 0.4, "label_quality_low": True},
     )
-    assert "疲労系Notes" in payload["recent_7d_summary"]["behavior_trend"][1]
-    assert any("断定を抑制" in x for x in payload["evidence_used"])
+    assert payload["data_quality"]["notes_label_quality"]["label_quality_low"] is True
+    assert payload["risk_level"] == "unknown"
+    assert "回復優先" not in payload["primary_focus"]
 
 
 def test_gpt_failure_fallback_message() -> None:
@@ -201,8 +204,8 @@ def test_gpt_failure_fallback_message() -> None:
         model="x",
         chat_completion=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    assert "回復優先" in text
-    assert "午前中の重い判断" in text
+    assert "助言は控えます" in text
+    assert "回復優先" not in text and "午前中の重い判断" not in text
 
 
 def test_no_pattern_no_evidence_returns_unknown_pattern_message() -> None:
@@ -211,7 +214,7 @@ def test_no_pattern_no_evidence_returns_unknown_pattern_message() -> None:
         model="x",
         chat_completion=lambda **kwargs: "一般論です。",
     )
-    assert "限定的" in text
+    assert "十分な記録がない" in text
 
 
 def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
@@ -288,8 +291,8 @@ def test_notes_label_count_reflected_in_audit_log(monkeypatch) -> None:
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
     notes = result.judgment_json["analysis_audit"]["notes_labeling"]
-    assert notes["total_count"] == len(histories)
-    assert notes["non_empty_count"] == len([h for h in histories if (h.notes or "").strip()])
+    assert notes["total_count"] == len(histories) + 1  # The diary day is historical for next-day advice.
+    assert notes["non_empty_count"] == len([h for h in [target, *histories] if (h.notes or "").strip()])
 
 
 def test_notes_quality_warning_when_non_empty_but_no_signals(monkeypatch) -> None:
@@ -368,7 +371,8 @@ def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
     assert result.today_advice == result.judgment_json["analysis_audit"]["final_text"]["text"]
-    assert result.today_advice == generated
+    assert result.today_advice != generated
+    assert result.judgment_json["analysis_json"]["final_status"] == "insufficient_data"
 
 
 def test_sleep_duration_zero_marked_invalid() -> None:
@@ -385,7 +389,7 @@ def test_invalid_sleep_not_treated_as_short_sleep() -> None:
         pytest.skip("pandas not installed")
     h = _summary(1, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0)
     df = build_daily_feature_table([h], {})
-    assert bool(df.iloc[0]["sleep_lt_6h_flag"]) is False
+    assert __import__("pandas").isna(df.iloc[0]["sleep_lt_6h_flag"])
 
 
 def test_invalid_sleep_excluded_from_sleep_lag_features() -> None:
@@ -579,7 +583,7 @@ def test_today_advice_prompt_prefers_exploratory_evidence() -> None:
         model="x",
         chat_completion=lambda **kwargs: kwargs["user_prompt"],
     )
-    assert "analysis=" in got
+    assert "助言は控えます" in got  # Counts alone are not usable evidence.
 
 
 def test_leakage_columns_excluded_from_rankings() -> None:
@@ -603,6 +607,8 @@ def test_lightgbm_failure_has_specific_reason() -> None:
     assert result["skipped_reason"] in {
         "lightgbm_not_installed",
         "insufficient_samples",
+        "insufficient_valid_targets",
+        "insufficient_class_support",
         "single_class_target",
         "too_many_missing_values",
         "unsupported_dtype",
@@ -620,5 +626,5 @@ def test_fallback_text_does_not_add_new_causality() -> None:
         model="x",
         chat_completion=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    assert "午前の判断負荷" in text and "最初の一手" in text
-    assert "限定的" in text or "過去傾向" in text
+    assert "助言は控えます" in text
+    assert "午前の判断負荷" not in text and "最初の一手" not in text

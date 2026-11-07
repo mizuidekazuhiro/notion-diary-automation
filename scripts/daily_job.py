@@ -25,9 +25,9 @@ from ingest.http_client import post_json
 from ingest.ingest_sources import ingest_sources
 from publish.read_daily_log import read_daily_log
 from publish.render_diary_notification_mail import render_diary_notification_mail
-from publish.render_mail import render_mail
+from publish.render_mail import MailContent, render_mail
 from publish.send_mail import MailConfig, send_mail
-from scripts.daily_mail_quality import today_advice_length_valid
+from scripts.daily_mail_quality import today_advice_char_limits, today_advice_length_valid
 from scripts.mail_dedupe import (
     MAIL_INPUT_HASH_FIELDS,
     build_mail_input_snapshot,
@@ -36,7 +36,11 @@ from scripts.mail_dedupe import (
     sha256_hex,
     snapshot_json,
 )
-from scripts.diary_generator import generate_diary_from_daily_log
+from scripts.diary_generator import generate_diary_result
+from scripts.ai_models import generation_signature, model_for
+from scripts.data_status import metric_status, source_states
+from scripts.delivery_journal import DeliveryJournal
+from scripts.mail_preflight import preflight_report, rendered_hash, save_delivery_report
 from scripts.expense_f_aggregator import aggregate_daily_expense_f
 from scripts.f_risk_state_store import FRiskStateStore
 from scripts.f_risk_generator import generate_f_risk
@@ -479,7 +483,12 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         normalized_previous_version,
         new_version,
     )
+    subject = f"【更新版】{mail.subject}" if is_update_mail and not mail.subject.startswith("【更新版】") else mail.subject
+    mail = MailContent(subject=subject, plain_text=mail.plain_text, html_body=mail.html_body)
+    quality_report = preflight_report(summary, mail, expense_f=expense_f_alert_for_render, f_risk=f_risk_alert, run_id=run_id)
+    save_delivery_report(quality_report)
     if not should_send:
+        save_delivery_report(quality_report, delivery_status="skipped_unchanged")
         logging.info(
             "mail_send_skipped target_date=%s skip_reason=input_hash_unchanged persisted_hash=%s current_hash=%s",
             target_date,
@@ -487,8 +496,32 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             current_input_hash,
         )
         return
-    subject = f"【更新版】{mail.subject}" if is_update_mail and not mail.subject.startswith("【更新版】") else mail.subject
-    send_mail(mail_config, subject, mail.plain_text, mail.html_body)
+    if quality_report.get("error_count", 0):
+        save_delivery_report(quality_report, delivery_status="blocked_by_quality")
+        raise RuntimeError("mail_preflight_failed")
+    recipients_hash = sha256_hex(json.dumps([config.mail_to, config.mail_cc, config.mail_bcc], sort_keys=True))
+    delivery_key = sha256_hex(f"daily-mail:{summary.target_date}:{current_input_hash}:{recipients_hash}")
+    journal = DeliveryJournal()
+    if not journal.claim(delivery_key, rendered_hash(mail)):
+        state = journal.previous_state.get("state", "uncertain")
+        save_delivery_report(quality_report, delivery_status="sent" if state == "sent" else "uncertain",
+                             duplicate_prevented=True, metadata_status="not_verified")
+        logging.warning("mail_duplicate_prevented target_date=%s previous_delivery_state=%s", target_date, state)
+        return
+    try:
+        send_mail(mail_config, subject, mail.plain_text, mail.html_body)
+    except Exception:
+        try:
+            journal.finish("uncertain")
+        finally:
+            save_delivery_report(quality_report, delivery_status="uncertain", metadata_status="not_attempted")
+        raise
+    try:
+        journal.finish("sent")
+    except Exception as exc:
+        logging.warning("mail_delivery_receipt_save_failed error_type=%s", type(exc).__name__)
+        save_delivery_report(quality_report, delivery_status="sent", receipt_status="failed")
+    save_delivery_report(quality_report, delivery_status="sent", metadata_status="pending")
     mail_sent_at = datetime.now(JST).replace(microsecond=0).isoformat()
     mail_version_to_save = new_version if new_version > 0 else 1
     snapshot_to_save, snapshot_truncated = _build_persisted_mail_snapshot(
@@ -518,7 +551,8 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             exc.__class__.__name__,
             str(exc),
         )
-        raise
+        save_delivery_report(quality_report, metadata_status="failed", post_delivery_check="not_attempted")
+        return
     max_attempts = _get_mail_metadata_persist_verify_retries()
     backoff_seconds = _get_mail_metadata_persist_verify_backoff_seconds()
     last_persisted_hash: str | None = None
@@ -556,6 +590,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
             last_persisted_mail_sent_at_present = persisted_mail_sent_at_present
             last_persisted_mail_input_snapshot_present = persisted_mail_input_snapshot_present
             if persisted_ok:
+                save_delivery_report(quality_report, metadata_status="saved", post_delivery_check="success")
                 return
         except Exception as exc:
             logging.warning(
@@ -574,13 +609,7 @@ def run_publish(config: Config, target_date: str, run_id: str) -> None:
         current_input_hash,
         mail_version_to_save,
     )
-    raise RuntimeError(
-        "mail metadata persistence verification failed after retries: "
-        f"target_date={summary.target_date} expected_hash={current_input_hash} last_persisted_hash={last_persisted_hash or ''} "
-        f"expected_version={mail_version_to_save} last_persisted_version={last_persisted_version} "
-        f"last_persisted_mail_sent_at_present={last_persisted_mail_sent_at_present} "
-        f"last_persisted_mail_input_snapshot_present={last_persisted_mail_input_snapshot_present} attempts={max_attempts}"
-    )
+    save_delivery_report(quality_report, metadata_status="unverified", post_delivery_check="failed")
 
 
 def _build_done_tasks_detail_text(summary: "DailyLogSummary") -> str:
@@ -664,7 +693,21 @@ def build_diary_input_fields(summary: "DailyLogSummary", *, voice_diary_notes_te
         ("Workout Calories", str(summary.workout_calories) if summary.workout_calories is not None else None),
         ("Workout Exercises", summary.workout_exercises),
         ("Workout Summary", summary.workout_summary),
+        ("Data Status", json.dumps({**source_states(summary),
+                                   "study": {"status": metric_status(summary, "study", summary.study_minutes)},
+                                   "workout": {"status": metric_status(summary, "workout", summary.workout_duration_min)}}, ensure_ascii=False)),
     ]
+    if getattr(summary, "location_evidence_json", None):
+        try:
+            location_evidence = json.loads(summary.location_evidence_json)
+            stays = location_evidence.get("main_sessions")
+            if isinstance(stays, list) and stays and all(isinstance(stay, dict) and stay.get("start_iso") and stay.get("end_iso") for stay in stays):
+                candidates.extend([
+                    ("Location Stays", json.dumps(stays, ensure_ascii=False)),
+                    ("Location Window", json.dumps(location_evidence.get("window", {}), ensure_ascii=False)),
+                ])
+        except (ValueError, TypeError, AttributeError):
+            logging.warning("diary_location_evidence_invalid target_date=%s", summary.target_date)
 
     used: dict[str, str] = {}
     skipped: list[str] = []
@@ -756,6 +799,8 @@ def _build_diary_hash_payload(
         if (field_value or "").strip()
     )
     hash_payload = {
+        "generation_policy": {**generation_signature("diary", ("scripts/diary_generator.py", "scripts/ai_models.py")),
+                              "consistency_model": model_for("consistency")},
         "target_date": summary.target_date,
         "diary_input_fields": diary_input_fields,
     }
@@ -924,6 +969,8 @@ def _generate_and_save_sleep_insights(
     summary: "DailyLogSummary",
     run_id: str,
 ) -> "DailyLogSummary":
+    from scripts.data_status import mask_unavailable_summary
+    summary = mask_unavailable_summary(summary)
     history_summaries = load_recent_daily_logs(
         daily_log_read_url=config.daily_log_read_url,
         bearer_token=config.bearer_token,
@@ -1057,6 +1104,48 @@ def _generate_and_save_sleep_insights(
     return refreshed_summary or summary
 
 
+def _advice_generation_policy() -> dict[str, Any]:
+    return {**generation_signature("advice", (
+        "scripts/today_advice_renderer.py", "scripts/advice_evidence.py", "scripts/today_advice_feature_builder.py",
+        "scripts/today_advice_pattern_analyzer.py", "scripts/today_advice_regression.py", "scripts/today_advice_lightgbm.py",
+        "scripts/mood_advice_generator.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py",
+    )), "notes_model": model_for("notes"), "max_chars": today_advice_char_limits()[1]}
+
+
+def _generation_metadata(summary: Any, stage: str, metadata: dict[str, Any]) -> str:
+    try:
+        previous = json.loads(getattr(summary, "generation_metadata", None) or "{}")
+    except (ValueError, TypeError):
+        previous = {}
+    if not isinstance(previous, dict):
+        previous = {}
+    previous[stage] = {key: value for key, value in metadata.items() if key != "text"}
+    return json.dumps(previous, ensure_ascii=False, separators=(",", ":"))
+
+
+def _verify_generation_readback(config: Any, target_date: str, expected: dict[str, Any]) -> Any:
+    refreshed = _refresh_daily_log_summary(config, target_date)
+    if refreshed is None:
+        raise RuntimeError("generation_readback_unavailable")
+    mismatches = []
+    for key, value in expected.items():
+        if key.endswith("_generated_at"):
+            continue
+        actual = getattr(refreshed, key, None)
+        if key in {"generation_metadata", "diary_evidence_json"}:
+            try:
+                equal = json.loads(actual or "null") == json.loads(value)
+            except (ValueError, TypeError):
+                equal = False
+        else:
+            equal = str(actual or "").replace("\r\n", "\n").strip() == str(value or "").replace("\r\n", "\n").strip()
+        if not equal:
+            mismatches.append(key)
+    if mismatches:
+        raise RuntimeError("generation_readback_mismatch fields=" + ",".join(mismatches))
+    return refreshed
+
+
 def _generate_and_save_today_advice(
     config: Config,
     *,
@@ -1082,6 +1171,7 @@ def _generate_and_save_today_advice(
     today_state = context["today_state"]
     structured = context["structured"]
     today_advice_hash_payload = {
+        "generation_policy": _advice_generation_policy(),
         "judgment_input": context["judgment_input"],
         "today_facts": {
             "today_sleep": today_state.get("today_sleep", {}),
@@ -1125,7 +1215,8 @@ def _generate_and_save_today_advice(
         bool((summary.diary or "").strip()),
         json.dumps(debug_summary, ensure_ascii=False, sort_keys=True, default=str),
     )
-    if has_today_advice and not input_changed and today_advice_length_valid(summary.today_advice or ""):
+    previous_status = _stage_generation_status(summary, "advice")
+    if has_today_advice and not input_changed and previous_status in {"success", "insufficient_data"}:
         logging.info(
             "phase_c_today_advice_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input current_input_hash=%s previous_input_hash=%s input_hash_changed=%s input_summary=%s",
             summary.target_date,
@@ -1158,6 +1249,7 @@ def _generate_and_save_today_advice(
         daily_log_read_url=config.daily_log_read_url,
         bearer_token=config.bearer_token,
         target_date=summary.target_date,
+        generation_context=context,
     )
     if not advice_result or not advice_result.today_advice.strip():
         logging.info(
@@ -1179,14 +1271,27 @@ def _generate_and_save_today_advice(
         advice_result.low_mood_sample_count,
         advice_result.judgment_json.get("evidence_used", []),
     )
+    advice_payload = {
+        "today_advice": advice_result.today_advice,
+        "today_advice_input_hash": current_input_hash,
+        "today_advice_generated_at": _utc_timestamp(),
+        "generation_metadata": _generation_metadata(summary, "advice", {
+            **advice_result.judgment_json.get("analysis_json", {}).get("generation", {}),
+            "status": advice_result.judgment_json.get("analysis_json", {}).get("final_status", "failed"),
+            "fallback_used": advice_result.judgment_json.get("analysis_json", {}).get("fallback_used", True),
+            "reflection_date": summary.target_date, "target_date": context.get("advice_target_date"),
+            "target_counts": advice_result.judgment_json.get("analysis_json", {}).get("target_counts", {}),
+            "risk_level": advice_result.judgment_json.get("analysis_json", {}).get("risk_level", "unknown"),
+            "input_hash": current_input_hash,
+            "repetition_diagnosis": {"same_text_as_previous": summary.today_advice == advice_result.today_advice,
+                                     "input_changed": input_changed,
+                                     "assessment_status": advice_result.judgment_json.get("analysis_json", {}).get("assessment_status")},
+        }),
+    }
     save_result = _save_daily_log_fields(
         config,
         target_date=summary.target_date,
-        payload={
-            "today_advice": advice_result.today_advice,
-            "today_advice_input_hash": current_input_hash,
-            "today_advice_generated_at": _utc_timestamp(),
-        },
+        payload=advice_payload,
     )
     logging.info(
         "phase_c_today_advice_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s",
@@ -1199,8 +1304,17 @@ def _generate_and_save_today_advice(
         previous_input_hash,
         input_changed,
     )
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-    return refreshed_summary or summary
+    result_summary = _verify_generation_readback(config, summary.target_date, advice_payload)
+    if advice_result.judgment_json.get("analysis_json", {}).get("fallback_used"):
+        raise PhaseSemanticDegradation("today_advice_generation_degraded")
+    return result_summary
+
+
+def _stage_generation_status(summary: Any, stage: str) -> str:
+    try:
+        return str(json.loads(getattr(summary, "generation_metadata", None) or "{}").get(stage, {}).get("status") or "")
+    except (ValueError, AttributeError, TypeError):
+        return ""
 
 
 def _ensure_notes_label_persisted(
@@ -1224,7 +1338,7 @@ def _ensure_notes_label_persisted(
     labels = label_notes_in_batches(
         summaries=[summary],
         chat_completion=chat_completion,
-        model=config.openai_model,
+        model=model_for("notes"),
         audit=note_audit,
     )
     label = labels.get(summary.target_date)
@@ -1236,7 +1350,7 @@ def _ensure_notes_label_persisted(
             False,
         )
         return summary
-    payload = build_notes_label_persistence_payload(summary=summary, label=label, model=config.openai_model)
+    payload = build_notes_label_persistence_payload(summary=summary, label=label, model=model_for("notes"))
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=payload)
     logging.info(
         "phase_c_notes_label_saved target_date(JST)=%s run_id=%s updated=%s reason=%s persisted_hit_count=%s",
@@ -1427,6 +1541,9 @@ def _generate_and_save_weather(
         "weather_retrieved_at": weather.retrieved_at,
         "weather_input_hash": current_input_hash,
         "weather_generated_at": _utc_timestamp(),
+        "generation_metadata": _generation_metadata(summary, "weather", {
+            "target_date": weather_forecast_date_jst, "status": "success", "provider": WEATHER_PROVIDER,
+        }),
     }
     logging.info(
         "weather_summary_generated=%s daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s resolution_method=%s precipitation_sum=%s weather_summary_chars=%s",
@@ -2023,7 +2140,7 @@ def _generate_and_save_diary(
         refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
         return refreshed_summary or summary
 
-    if has_diary and not input_changed:
+    if has_diary and not input_changed and _stage_generation_status(summary, "diary") == "success":
         logging.info(
             "phase_c_diary_skip target_date(JST)=%s run_id=%s skip_reason=unchanged_input current_input_hash=%s previous_input_hash=%s input_hash_changed=%s input_summary=%s",
             summary.target_date,
@@ -2042,7 +2159,8 @@ def _generate_and_save_diary(
         refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
         return refreshed_summary or summary
 
-    generated_diary = generate_diary_from_daily_log(diary_input_fields, summary.target_date)
+    diary_result = generate_diary_result(diary_input_fields, summary.target_date)
+    generated_diary = diary_result.text
     logging.info(
         "phase_c_diary_generated target_date(JST)=%s run_id=%s generated_properties=%s chars=%s",
         summary.target_date,
@@ -2050,15 +2168,21 @@ def _generate_and_save_diary(
         ["diary"],
         len(generated_diary.strip()),
     )
-    save_result = _save_daily_log_fields(
-        config,
-        target_date=summary.target_date,
-        payload={
+    diary_payload = {
             "diary": generated_diary,
             "diary_input_hash": current_input_hash,
             "diary_generated_at": _utc_timestamp(),
-        },
-    )
+            "diary_evidence_json": json.dumps({**diary_result.evidence, "source_page_id": summary.page_id,
+                                               "text_hash": hashlib.sha256(generated_diary.strip().encode()).hexdigest(),
+                                               "input_hash": current_input_hash}, ensure_ascii=False, separators=(",", ":")),
+            "generation_metadata": _generation_metadata(summary, "diary", {
+                "status": diary_result.status, "method": diary_result.method, "fallback_used": diary_result.fallback_used,
+                "rejection_reasons": diary_result.rejection_reasons, "model": diary_result.model,
+                "consistency_model": model_for("consistency"), "prompt_version": diary_result.prompt_version,
+                "input_hash": current_input_hash, "target_date": summary.target_date,
+            }),
+    }
+    save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=diary_payload)
     logging.info(
         "phase_c_diary_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s current_input_hash=%s previous_input_hash=%s input_hash_changed=%s",
         summary.target_date,
@@ -2070,10 +2194,12 @@ def _generate_and_save_diary(
         previous_input_hash,
         input_changed,
     )
-    if voice_notes:
+    refreshed_summary = _verify_generation_readback(config, summary.target_date, diary_payload)
+    if voice_notes and diary_result.status == "success" and save_result.get("updated"):
         mark_voice_diary_notes_used(voice_notes, daily_log_page_id=summary.page_id)
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
-    return refreshed_summary or summary
+    if diary_result.fallback_used:
+        raise PhaseSemanticDegradation("diary_generation_degraded")
+    return refreshed_summary
 
 
 def _notify_phase_c(

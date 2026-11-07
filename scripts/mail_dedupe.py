@@ -28,6 +28,7 @@ class MailDedupeDecision:
 
 MAIL_INPUT_HASH_FIELDS = (
     "target_date",
+    "source_status",
     "diary_input_hash",
     "today_advice_input_hash",
     "weather_input_hash",
@@ -126,6 +127,9 @@ def _normalize_value(value: Any) -> Any:
 
 
 def build_mail_input_snapshot(summary: Any, *, expense_f_alert: dict[str, Any], f_risk_alert: dict[str, Any]) -> dict[str, Any]:
+    from scripts.data_status import source_states
+    source_status = {key: {name: state[name] for name in ("status", "reason", "source") if name in state}
+                     for key, state in source_states(summary).items() if isinstance(state, dict)}
     expense_top: list[dict[str, Any]] = []
     expenses = getattr(summary, "expenses", None)
     if expenses and getattr(expenses, "top", None):
@@ -148,6 +152,7 @@ def build_mail_input_snapshot(summary: Any, *, expense_f_alert: dict[str, Any], 
     ]
 
     raw: dict[str, Any] = {
+        "source_status": source_status,
         "target_date": getattr(summary, "target_date", None),
         "diary_input_hash": getattr(summary, "diary_input_hash", None),
         "today_advice_input_hash": getattr(summary, "today_advice_input_hash", None),
@@ -198,6 +203,7 @@ def build_mail_input_snapshot(summary: Any, *, expense_f_alert: dict[str, Any], 
         "workout_exercises": getattr(summary, "workout_exercises", None),
         "workout_summary": getattr(summary, "workout_summary", None),
         "f_risk_alert": {
+            "data_status": f_risk_alert.get("data_status"),
             "matched": f_risk_alert.get("matched"),
             "score": f_risk_alert.get("score"),
             "reason": f_risk_alert.get("reason"),

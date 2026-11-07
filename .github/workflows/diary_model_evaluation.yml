@@ -1,0 +1,68 @@
+name: Diary Models - Read-only Evaluation
+on:
+  workflow_dispatch:
+  push:
+    branches: ["fix/diary-evidence-integrity"]
+jobs:
+  controls:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[model-controls]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MAX_RETRIES: "0"
+        run: python scripts/check_model_controls.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diary-model-controls-${{ github.run_id }}
+          path: artifacts/model_controls
+          retention-days: 7
+  evaluate:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[diary-eval]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt cryptography
+      - name: Verify Notes cache persistence with synthetic content
+        uses: actions/cache@v4
+        with:
+          path: .cache/notes_labels
+          key: ${{ runner.os }}-notes-labels-v2-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-notes-labels-v2-
+      - run: python -c "from pathlib import Path; p=Path('.cache/notes_labels'); p.mkdir(parents=True,exist_ok=True); (p/'cache_canary.json').write_text('{\"synthetic_canary\":true}')"
+      - name: Compare without Notion writes or mail
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
+          STAY_SESSIONS_DB_ID: ${{ secrets.STAY_SESSIONS_DB_ID }}
+          TASK_DB_ID: ${{ secrets.TASK_DB_ID }}
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
+          PROMPT_DB_ID: ${{ secrets.PROMPT_DB_ID }}
+          DIARY_EVAL_PUBLIC_KEY: ${{ vars.DIARY_EVAL_PUBLIC_KEY }}
+          DIARY_EVAL_MAX_USD: ${{ vars.DIARY_EVAL_MAX_USD || '1.50' }}
+          OPENAI_MAX_RETRIES: "1"
+        run: python scripts/evaluate_diary_models.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diary-model-evaluation-${{ github.run_id }}
+          path: artifacts/model_evaluation
+          retention-days: 7

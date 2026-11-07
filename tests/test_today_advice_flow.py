@@ -314,7 +314,9 @@ def test_generation_context_excludes_today_non_sleep_fields_from_inputs(monkeypa
     assert "historical_context" in judgment_input
     assert "today_state" not in judgment_input
     assert "notes" not in judgment_input["today_sleep"]
-    assert judgment_input["structured_historical_comparison"]["counts"]["history_days"] == 1
+    assert judgment_input["structured_historical_comparison"]["counts"]["history_days"] == 2
+    assert context["reflection_date"] == "2026-03-20"
+    assert context["advice_target_date"] == "2026-03-21"
     assert judgment_input["top_good_days"][0]["notes"] == "過去メモ"
 
 
@@ -397,14 +399,14 @@ def test_generate_today_advice_ignores_same_day_non_sleep_zero_and_missing_field
 
     assert result is not None
     advice = result.today_advice
-    assert "睡眠" in advice
+    assert result.judgment_json["analysis_json"]["risk_level"] == "unknown"
     assert len(advice) > 20
     assert "今日はメモがない" not in advice
     assert "タスク完了がゼロ" not in advice
     assert "食事記録がない" not in advice
     assert "支出が少ない" not in advice
     assert "停滞" not in advice
-    assert any("睡眠" in item or "sleep" in item.lower() for item in result.judgment_json["evidence_used"])
+    assert result.judgment_json["analysis_json"]["assessment_status"] == "insufficient_data"
     assert any("7日" in item or "done" in item.lower() for item in result.judgment_json["evidence_used"])
 
 
@@ -431,8 +433,8 @@ def test_generation_context_surfaces_recent_7d_non_sleep_patterns(monkeypatch) -
     recording = context["today_state"]["historical_recording_patterns"]
     assert behavior["recent_7d_avg"]["done_count_avg"] is not None
     assert behavior["recent_7d_vs_30d"]["spend_total"] in {"up", "down", "flat"}
-    assert recording["notes_recording_rate_7d"] == 0.71
-    assert recording["meal_logged_rate_7d"] == 1.0
+    assert recording["notes_recording_rate_7d"] == 0.57
+    assert recording["meal_logged_rate_7d"] == 0.86
 
 
 def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) -> None:
@@ -477,10 +479,11 @@ def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) 
     )
 
     assert result is not None
-    assert len(prompts) >= 1
+    # Historical-note extraction may run, but three days cannot trigger advice generation.
+    assert all("rows" in json.loads(prompt) for prompt in prompts)
     combined_prompt = "\n".join(prompts)
     assert "当日の場所" not in combined_prompt
-    assert "sleep" in combined_prompt.lower()
+    assert result.judgment_json["analysis_json"]["assessment_status"] == "insufficient_data"
     context = generator.build_today_advice_generation_context(
         daily_log_read_url="read",
         bearer_token=None,
@@ -544,7 +547,8 @@ def test_lightgbm_today_contribution_uses_selected_sleep_candidate_values() -> N
     if "sleep_score" in by_feature:
         assert by_feature["sleep_score"] == 94.0
     assert out.get("feature_row_date_used_as_today") == "2026-03-28"
-    assert out.get("contribution_feature_scope") == "target_date_proxy"
+    assert out.get("contribution_feature_scope") == "observed_target_date_only"
+    assert out["prediction_probability_for_today"] is None
 
 
 def test_structured_comparison_includes_meal_notes_location_signals() -> None:
@@ -572,7 +576,8 @@ def test_structured_comparison_includes_meal_notes_location_signals() -> None:
     location = structured["comparisons"]["location_pattern_comparison"]
     assert location["high_mood"]["office_heavy_day_rate"] == 1.0
     assert location["low_mood"]["home_heavy_day_rate"] == 1.0
-    assert location["low_mood"]["late_outing_day_rate"] == 0.5
+    # Neither "夜まで" nor a daytime route establishes late-night activity.
+    assert location["low_mood"]["late_outing_day_rate"] is None
 
 
 def test_generation_context_adds_structured_non_sleep_comparisons(monkeypatch) -> None:
@@ -594,7 +599,8 @@ def test_generation_context_adds_structured_non_sleep_comparisons(monkeypatch) -
     assert "notes_signal_comparison" in structured
     assert "location_pattern_comparison" in structured
     assert "today_sleep" in context["judgment_input"]
-    assert "当日" not in json.dumps(context["judgment_input"], ensure_ascii=False)
+    assert context["advice_target_date"] == "2026-03-21"
+    assert all(item.target_date < context["advice_target_date"] for item in context["historical_summaries"])
 
 
 def test_generate_today_advice_requires_recent_and_good_bad_evidence(monkeypatch) -> None:
@@ -625,10 +631,10 @@ def test_generate_today_advice_requires_recent_and_good_bad_evidence(monkeypatch
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
 
     assert result is not None
-    assert "睡眠" in result.today_advice
+    assert result.judgment_json["analysis_json"]["assessment_status"] == "insufficient_data"
     assert len(result.today_advice) > 20
-    assert any(item.startswith("sleep:") for item in result.judgment_json["evidence_used"])
-    assert any(item.startswith("recent_7d:") for item in result.judgment_json["evidence_used"])
+    assert result.judgment_json["analysis_json"]["risk_level"] == "unknown"
+    assert "午前の早い段階で最重要" not in result.today_advice
     assert len(result.judgment_json["evidence_used"]) >= 2
     assert "meal_signal" in result.judgment_json
     assert "notes_pattern_signal" in result.judgment_json

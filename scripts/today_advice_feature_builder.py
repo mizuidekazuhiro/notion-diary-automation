@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import re
 import os
+import json
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from publish.read_daily_log import DailyLogSummary
 from scripts.note_batch_labeler import NoteLabel
 from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_target_date
+from scripts.data_status import metric_available, source_states, UNAVAILABLE
+from scripts.location_features import extract_location_flags
 
 FORBIDDEN_GPT_FIELDS = {
     "diary",
@@ -52,6 +55,8 @@ def _safe_float(value: object) -> float | None:
 
 
 def _sleep_validity(summary: DailyLogSummary) -> tuple[bool, str | None, float | None]:
+    if source_states(summary).get("sleep", {}).get("status") in UNAVAILABLE:
+        return False, "sleep_source_unavailable", None
     all_invalid = summary.sleep_duration_min is None and summary.sleep_start is None and summary.sleep_end is None
     if all_invalid:
         return False, "missing_all_sleep_fields", None
@@ -74,14 +79,7 @@ def _sleep_validity(summary: DailyLogSummary) -> tuple[bool, str | None, float |
 
 
 def _extract_location_flags(text: str) -> dict[str, bool]:
-    normalized = text.lower()
-    return {
-        "late_outing_flag": ("late_outing_day" in normalized) or ("late outing" in normalized),
-        "multi_stop_flag": ("multi_stop_day" in normalized) or ("multi stop" in normalized),
-        "home_heavy_flag": ("home_heavy_day" in normalized) or ("home heavy" in normalized) or ("自宅中心" in text),
-        "office_heavy_flag": ("office_heavy_day" in normalized) or ("office heavy" in normalized) or ("オフィス" in text),
-        "outing_heavy_flag": ("outing_heavy_day" in normalized) or ("outing heavy" in normalized),
-    }
+    return extract_location_flags(text)
 
 
 def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels: Mapping[str, NoteLabel]) -> Any:
@@ -229,7 +227,10 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
                 "weather_temp_min_c": _safe_float(item.weather_temp_min_c),
                 "weather_precip_probability_max": _safe_float(item.weather_precip_probability_max),
                 "weather_code": _safe_float(item.weather_code),
-                "weather_bad_flag": bool((_safe_float(item.weather_precip_probability_max) or 0) >= 60 or (_safe_float(item.weather_code) or 0) >= 60),
+                "weather_bad_flag": (
+                    bool((_safe_float(item.weather_precip_probability_max) or 0) >= 60 or (_safe_float(item.weather_code) or 0) >= 60)
+                    if item.weather_precip_probability_max is not None or item.weather_code is not None else np.nan
+                ),
                 "weather_temp_range_c": (
                     (_safe_float(item.weather_temp_max_c) - _safe_float(item.weather_temp_min_c))
                     if _safe_float(item.weather_temp_max_c) is not None and _safe_float(item.weather_temp_min_c) is not None
@@ -250,6 +251,67 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
         )
 
     df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+    if df.empty:
+        return df
+    for col in df.select_dtypes(include=["bool"]).columns:
+        if col not in {"sleep_valid_flag", "notes_present_flag", "meal_logged_flag", "location_present_flag"}:
+            df[col] = df[col].astype(float)
+    # Absence/parse failure is not a negative behavioral observation.
+    for index, item in enumerate(sorted(histories, key=lambda value: value.target_date)):
+        label = note_labels.get(item.target_date)
+        notes_known = bool((item.notes or "").strip()) and label is not None and not label.tag_extract_failed
+        if not notes_known:
+            for col in df.columns:
+                if col.startswith("notes_") and col not in {"notes_present_flag", "notes_parse_quality_score"}:
+                    df.at[index, col] = np.nan
+        if source_states(item).get("nutrition", {}).get("status") in UNAVAILABLE:
+            for col in ("kcal", "protein", "fat", "carb", "low_protein_flag", "high_fat_flag", "high_carb_flag"):
+                df.at[index, col] = np.nan
+        try:
+            weather_date = json.loads(item.generation_metadata or "{}").get("weather", {}).get("target_date")
+        except (ValueError, TypeError, AttributeError):
+            weather_date = None
+        if weather_date != item.target_date:
+            for col in ("weather_bad_flag", "weather_code", "weather_temp_max_c", "weather_temp_min_c", "weather_precip_probability_max", "weather_temp_range_c"):
+                df.at[index, col] = np.nan
+        if not ((item.notes or "").strip() or (item.activity_summary or "").strip()):
+            for col in ("transport_spend_like_flag", "social_spend_like_flag", "social_event_like_flag", "movement_intensity_like_flag"):
+                df.at[index, col] = np.nan
+        if not ((item.notes or "").strip() or (item.activity_summary or "").strip() or (item.meal_summary or "").strip()):
+            df.at[index, "convenience_store_like_flag"] = np.nan
+        for col in location_flags:
+            if not (item.location_summary or "").strip():
+                df.at[index, col] = np.nan
+        for field, raw in (("task_done_count", item.done_count), ("task_drop_count", item.drop_count)):
+            if raw is None:
+                df.at[index, field] = np.nan
+        if item.done_count is None:
+            df.at[index, "done_low_flag"] = np.nan
+        if item.drop_count is None:
+            df.at[index, "drop_high_flag"] = np.nan
+        if item.done_count is None or item.drop_count is None:
+            df.at[index, "task_completion_ratio"] = np.nan
+            df.at[index, "task_balance_bad_flag"] = np.nan
+        if getattr(item, "workout_done", None) is None or not metric_available(item, "workout", getattr(item, "workout_duration_min", None)):
+            df.at[index, "workout_done_flag"] = np.nan
+            for col in ("workout_sessions", "workout_duration_min", "workout_sets", "workout_volume_kg", "workout_calories"):
+                df.at[index, col] = np.nan
+        if not metric_available(item, "study", getattr(item, "study_minutes", None)):
+            df.at[index, "study_logged_flag"] = np.nan
+            df.at[index, "study_minutes"] = np.nan
+            df.at[index, "study_sessions"] = np.nan
+        for col, raw in (("low_protein_flag", item.protein), ("high_fat_flag", item.fat), ("high_carb_flag", item.carb)):
+            if raw is None:
+                df.at[index, col] = np.nan
+        if not (item.meal_summary or "").strip() and all(v is None for v in (item.kcal, item.protein, item.fat, item.carb)):
+            for col in ("overeating_like_flag", "eating_out_like_flag", "late_meal_like_flag"):
+                df.at[index, col] = np.nan
+    # Calendar days, rather than adjacent recorded rows, define lag and windows.
+    if not df["date"].duplicated().any():
+        calendar = pd.date_range(df["date"].min(), df["date"].max()).strftime("%Y-%m-%d")
+        df = df.set_index("date").reindex(calendar).rename_axis("date").reset_index()
+        for col in ("sleep_valid_flag", "notes_present_flag", "meal_logged_flag", "location_present_flag"):
+            df[col] = df[col].eq(True)
     numeric_targets = [
         "sleep_hours", "sleep_score", "kcal", "protein", "fat", "carb", "spending_total",
         "task_done_count", "task_drop_count", "workout_sessions", "workout_duration_min",
@@ -278,8 +340,8 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
 
     q = df["spending_total"].dropna()
     threshold = float(q.quantile(0.75)) if len(q) else float("inf")
-    df["spending_high_flag"] = df["spending_total"].fillna(0) >= threshold
-    df["sleep_lt_6h_flag"] = (df["sleep_valid_flag"]) & (df["sleep_hours"] < 6)
+    df["spending_high_flag"] = (df["spending_total"] >= threshold).astype(float).where(df["spending_total"].notna())
+    df["sleep_lt_6h_flag"] = (df["sleep_hours"] < 6).astype(float).where(df["sleep_valid_flag"] & df["sleep_hours"].notna())
 
 
     # aliases required by regression/exploratory naming
@@ -291,7 +353,7 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
         ("notes_sleep_issue_flag", "notes_has_sleep_issue"),
     ]:
         if src in df.columns and dst not in df.columns:
-            alias_cols[dst] = df[src].fillna(False).astype(bool)
+            alias_cols[dst] = pd.to_numeric(df[src], errors="coerce")
     if alias_cols:
         df = df.assign(**alias_cols)
 
@@ -299,9 +361,7 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
     df["data_quality_score"] = df[quality_cols].astype(int).mean(axis=1).round(2)
     df = df.copy()
     df = _add_temporal_features(df=df, np=np)
-    df["forbidden_inputs_used"] = False
-    df["forbidden_inputs_used_detail"] = ""
-    return df
+    return df.assign(forbidden_inputs_used=False, forbidden_inputs_used_detail="")
 
 
 def _is_weekend(date_text: str) -> bool:
@@ -348,10 +408,10 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
             derived_cols[f"{col}_rolling_sum_{w}d"] = series.rolling(w, min_periods=1).sum().shift(1)
             derived_cols[f"{col}_rolling_mean_{w}d"] = series.rolling(w, min_periods=1).mean().shift(1)
 
-    derived_cols["sleep_short_flag"] = (df["sleep_valid_flag"].fillna(False) & (df["sleep_hours"].fillna(99) < 6)).astype(int)
-    derived_cols["social_load_flag"] = df["notes_social_load_flag"].fillna(False).astype(int)
-    derived_cols["late_work_flag"] = df["notes_has_late_work"].fillna(False).astype(int) if "notes_has_late_work" in df else 0
-    derived_cols["exercise_flag"] = df["notes_has_exercise"].fillna(False).astype(int) if "notes_has_exercise" in df else 0
+    derived_cols["sleep_short_flag"] = (df["sleep_hours"] < 6).astype(float).where(df["sleep_valid_flag"].fillna(False))
+    derived_cols["social_load_flag"] = pd.to_numeric(df["notes_social_load_flag"], errors="coerce")
+    derived_cols["late_work_flag"] = pd.to_numeric(df["notes_has_late_work"], errors="coerce") if "notes_has_late_work" in df else np.nan
+    derived_cols["exercise_flag"] = pd.to_numeric(df["notes_has_exercise"], errors="coerce") if "notes_has_exercise" in df else np.nan
     if "study_minutes" in df.columns:
         study_series = pd.to_numeric(df["study_minutes"], errors="coerce")
         study_baseline_7d = study_series.rolling(7, min_periods=2).mean().shift(1)
@@ -360,15 +420,19 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
         target_minutes = float(target_minutes_raw) if target_minutes_raw else None
         heavy_threshold = float(os.getenv("F_RISK_STUDY_HEAVY_DAY_MINUTES", "180") or "180")
         derived_cols["study_under_target_flag"] = (
-            (study_series < target_minutes).astype(int) if target_minutes is not None else pd.Series([0] * len(df), index=df.index)
+            (study_series < target_minutes).astype(float).where(study_series.notna()) if target_minutes is not None else pd.Series(np.nan, index=df.index)
         )
-        derived_cols["study_heavy_day_flag"] = ((study_series >= heavy_threshold) | (study_series >= (study_baseline_7d.fillna(0) + 90))).astype(int)
-        logged = df["study_logged_flag"].fillna(False).astype(int) if "study_logged_flag" in df else pd.Series([0] * len(df), index=df.index)
+        derived_cols["study_heavy_day_flag"] = ((study_series >= heavy_threshold) | (study_series >= (study_baseline_7d + 90))).astype(float).where(study_series.notna())
+        logged = (study_series > 0).astype(float).where(study_series.notna())
         derived_cols["study_consistency_score_7d"] = logged.rolling(7, min_periods=1).mean().shift(1)
         zero_streak = []
         streak = 0
         for value in logged.tolist():
-            if int(value) == 0:
+            if pd.isna(value):
+                streak = 0
+                zero_streak.append(np.nan)
+                continue
+            if value == 0:
                 streak += 1
             else:
                 streak = 0
@@ -389,20 +453,27 @@ def _add_temporal_features(*, df: Any, np: Any) -> Any:
         streak_cols[out] = _streak_count(df[src])
     interaction_cols = {
         "sleep_short_x_social_load": df["sleep_short_flag"] * df["social_load_flag"],
-        "fatigue_x_spending_spike": df["notes_fatigue_flag"].fillna(False).astype(int) * (df["spending_vs_7d_delta"].fillna(0) > 0).astype(int),
-        "stress_x_late_work": df["notes_stress_flag"].fillna(False).astype(int) * df["late_work_flag"],
-        "drinking_x_low_sleep": df["notes_has_drinking"].fillna(False).astype(int) * df["sleep_short_flag"],
-        "high_carb_x_low_sleep": (df["carb_vs_7d_delta"].fillna(0) > 0).astype(int) * df["sleep_short_flag"],
-        "exercise_x_recovery": df["exercise_flag"] * df["notes_recovery_like_flag"].fillna(False).astype(int),
+        "fatigue_x_spending_spike": df["notes_fatigue_flag"] * (df["spending_vs_7d_delta"] > 0).astype(float).where(df["spending_vs_7d_delta"].notna()),
+        "stress_x_late_work": df["notes_stress_flag"] * df["late_work_flag"],
+        "drinking_x_low_sleep": df["notes_has_drinking"] * df["sleep_short_flag"],
+        "high_carb_x_low_sleep": (df["carb_vs_7d_delta"] > 0).astype(float).where(df["carb_vs_7d_delta"].notna()) * df["sleep_short_flag"],
+        "exercise_x_recovery": df["exercise_flag"] * df["notes_recovery_like_flag"],
     }
     df = pd.concat([df, pd.DataFrame({**streak_cols, **interaction_cols}, index=df.index)], axis=1).copy()
-    return df.replace({np.inf: np.nan, -np.inf: np.nan})
+    numeric_cols = df.select_dtypes(include=["number"]).columns
+    df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
+    return df
 
 
-def _streak_count(series: Any) -> list[int]:
+def _streak_count(series: Any) -> list[float]:
+    import pandas as pd
     streak = 0
     out: list[int] = []
-    for value in series.fillna(0).astype(int).tolist():
+    for value in series.tolist():
+        if pd.isna(value):
+            streak = 0
+            out.append(float("nan"))
+            continue
         if value:
             streak += 1
         else:

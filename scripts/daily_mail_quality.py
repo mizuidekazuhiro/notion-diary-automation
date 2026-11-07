@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Mapping
 
@@ -56,7 +57,7 @@ def _compact_len(value: str) -> int:
 
 def today_advice_char_limits() -> tuple[int, int]:
     return (
-        _env_int("DAILY_MAIL_TODAY_ADVICE_MIN_CHARS", DEFAULT_TODAY_ADVICE_MIN_CHARS),
+        1,  # Evidence sets the length. Never pad to a configured minimum.
         _env_int("DAILY_MAIL_TODAY_ADVICE_MAX_CHARS", DEFAULT_TODAY_ADVICE_MAX_CHARS),
     )
 
@@ -123,6 +124,43 @@ def build_quality_report(
 
     target_date = _text(_get(summary, "target_date")) or _text(_get(summary, "date"))
     today_advice = _text(_get(summary, "today_advice"))
+    try:
+        generation = json.loads(_text(_get(summary, "generation_metadata")) or "{}")
+        advice_generation = generation.get("advice", {})
+    except (ValueError, TypeError, AttributeError):
+        generation, advice_generation = {}, {}
+    insufficient_advice = advice_generation.get("status") == "insufficient_data"
+    if insufficient_advice and _has_any(today_advice, ("回復優先", "高リスク", "リスクが高い")):
+        _add_issue(issues, "strong_advice_from_missing_data", "error", "判定材料が不足しているのに強い助言が含まれています。")
+    if re.search(r"analysis_json|risk_level|single_class_target|no_signal_note|parse_quality", today_advice):
+        _add_issue(issues, "today_advice_internal_terms", "error", "助言本文に内部の処理項目が含まれています。")
+    if re.search(r"(?:確率|リスク|可能性)[^。\n]{0,20}\d+(?:\.\d+)?[%％]", today_advice):
+        _add_issue(issues, "uncalibrated_personal_probability", "error", "説明できる検証がない個人の数値確率が含まれています。")
+    evidence_text = _text(_get(summary, "diary_evidence_json"))
+    if evidence_text:
+        try:
+            from scripts.diary_generator import validate_sentences
+            evidence = json.loads(evidence_text)
+            import hashlib
+            actual_diary = _text(_get(summary, "diary"))
+            if (evidence.get("target_date") != target_date
+                    or evidence.get("input_hash") != _get(summary, "diary_input_hash")
+                    or evidence.get("text_hash") != hashlib.sha256(actual_diary.strip().encode()).hexdigest()):
+                _add_issue(issues, "diary_evidence_mismatch", "error", "送信する日記と検証した本文・対象日・入力版が一致しません。")
+            if evidence.get("claims"):
+                expected_text = target_date + "\n" + "\n".join(item.get("text", "") for item in evidence["claims"])
+                if actual_diary.strip() != expected_text.strip():
+                    _add_issue(issues, "diary_claim_text_mismatch", "error", "検証した各文と送信する日記が一致しません。")
+            if evidence.get("claims") and validate_sentences(evidence["claims"], evidence.get("inputs", {})):
+                _add_issue(issues, "diary_claims_not_grounded", "error", "日記の文と情報源・確度・計算済み数値の照合に失敗しました。")
+        except (ValueError, TypeError, AttributeError):
+            _add_issue(issues, "diary_evidence_invalid", "error", "日記の検証情報を読み取れません。")
+    if advice_generation.get("fallback_used") or advice_generation.get("status") in {"failed", "degraded"}:
+        _add_issue(issues, "today_advice_fallback_used", "warning", "助言は代替文です。生成方式と棄却理由を確認してください。")
+    if advice_generation.get("target_date"):
+        expected_advice_date = (date.fromisoformat(target_date) + timedelta(days=1)).isoformat()
+        if advice_generation["target_date"] != expected_advice_date:
+            _add_issue(issues, "advice_target_date_mismatch", "error", "日記と今日への助言の対象日が一致しません。")
     today_advice_chars = _compact_len(today_advice)
 
     health_available_fields = [name for name in MAJOR_HEALTH_FIELDS if _safe_float(_get(summary, name)) is not None]
@@ -246,9 +284,9 @@ def build_quality_report(
     else:
         if today_advice_chars < min_chars or today_advice_chars > max_chars:
             _add_issue(issues, "today_advice_length_out_of_range", "warning", f"Today advice length is {today_advice_chars}; expected {min_chars}-{max_chars} compact chars.")
-        if not _has_any(today_advice, TREND_TERMS):
+        if not insufficient_advice and not _has_any(today_advice, TREND_TERMS):
             _add_issue(issues, "today_advice_missing_trend_evidence", "warning", "Today advice does not appear to mention recent or historical trend evidence.")
-        if not _has_any(today_advice, NON_SLEEP_TERMS):
+        if not insufficient_advice and not _has_any(today_advice, NON_SLEEP_TERMS):
             _add_issue(issues, "today_advice_sleep_only_risk", "warning", "Today advice may be sleep-only and may not connect to historical behavior patterns.")
         matched_generic = [phrase for phrase in GENERIC_PHRASES if phrase in today_advice]
         if matched_generic:

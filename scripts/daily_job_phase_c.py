@@ -122,7 +122,15 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
 
     try:
         summary = deps.run_today_advice(summary)
-        step_status["today_advice"] = "success"
+        try:
+            import json
+            status = json.loads(getattr(summary, "generation_metadata", None) or "{}").get("advice", {}).get("status")
+        except (ValueError, TypeError, AttributeError):
+            status = None
+        step_status["today_advice"] = "degraded" if status == "insufficient_data" else "success"
+    except PhaseSemanticDegradation:
+        step_status["today_advice"] = "degraded"
+        summary = deps.refresh_summary(config, summary.target_date) or summary
     except Exception:
         step_status["today_advice"] = "failed"
         logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)
@@ -132,6 +140,9 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
     try:
         summary = deps.run_diary(summary)
         step_status["diary"] = "success"
+    except PhaseSemanticDegradation:
+        step_status["diary"] = "degraded"
+        summary = deps.refresh_summary(config, summary.target_date) or summary
     except Exception:
         step_status["diary"] = "failed"
         logging.info("phase_c_step_summary target_date(JST)=%s run_id=%s step_status=%s", target_date, run_id, step_status)

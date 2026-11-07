@@ -14,6 +14,8 @@ import {
   queryDatabaseAll,
 } from "./infrastructure/notion/client";
 import { formatMealSummary } from "./domain/meal_summary";
+import { validateWorkoutSummary } from "./domain/workout_summary";
+import { mergeIngestSourceStatus } from "./domain/source_status";
 import {
   buildFallbackLocationSummary,
   resolveLocationWindow,
@@ -45,6 +47,7 @@ import {
 } from "./application/study_session";
 
 interface Env {
+  APP_VERSION?: string;
   NOTION_TOKEN: string;
   INBOX_DB_ID: string;
   TASK_DB_ID: string;
@@ -407,8 +410,8 @@ function methodNotAllowed(message = "method not allowed"): Response {
   });
 }
 
-function healthCheck(): Response {
-  return new Response(JSON.stringify({ status: "ok" }), {
+function healthCheck(env: Env): Response {
+  return new Response(JSON.stringify({ status: "ok", version: env.APP_VERSION || "unknown" }), {
     headers: jsonHeaders,
   });
 }
@@ -2656,6 +2659,8 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   });
 
   const resolvedPageId = pageId ?? existingPage?.id;
+  const sourceStatus = mergeIngestSourceStatus(dataJson, getPlainTextFromRichText(existingPage?.properties?.["Data Status JSON"]) || "{}");
+  if (sourceStatus) properties["Data Status JSON"] = createRichTextProperty(sourceStatus);
   const { sanitizedProperties, removedEmptyMealPhotos } =
     sanitizeMealPhotosPatchProperties(properties);
   logDailyLogPatchKeys({
@@ -2863,6 +2868,9 @@ async function handleDailyLogHealthIngest(
     last_valid_at: lastValidAt,
     completeness: healthCompleteness,
     available_fields: availableHealthFields,
+    source_availability: {
+      sleep: { status: (sleepStart || sleepEnd || sleepDurationMin !== null || sleepScore !== null) ? "observed" : "missing" },
+    },
     error_code:
       healthStatus === "stale"
         ? "data_date_mismatch"
@@ -2877,7 +2885,8 @@ async function handleDailyLogHealthIngest(
     `Health ingest quality for ${targetDate}: status=${healthQuality.status} completeness=${healthQuality.completeness} available_fields=${healthQuality.available_fields.join(",") || "none"} error_code=${healthQuality.error_code || "none"}`,
   );
 
-  if (healthQuality.status === "no_data" || healthQuality.status === "stale") {
+  // Keep the eight-field completeness warning while accepting valid timestamp-only sleep.
+  if (healthQuality.status === "stale" || (healthQuality.status === "no_data" && !sleepStart && !sleepEnd)) {
     return new Response(
       JSON.stringify({
         ok: true,
@@ -3870,7 +3879,10 @@ async function handleDailyLogWorkoutIngest(
     if (resolved) updateProperties[resolved] = builder(value);
   };
 
-  const workoutDone = Boolean(workout.workout_done);
+  if (!validateWorkoutSummary(workout, targetDate)) {
+    return jsonResponse({ error: "workout_summary_invalid", data_status: "parse_failed", target_date: targetDate, updated: false }, 502);
+  }
+  const workoutDone = workout.workout_done;
   const sessions = Number(workout.sessions || 0);
   const gym = String(workout.gym || "");
   const durationMin = Number(workout.duration_min || 0);
@@ -3892,6 +3904,13 @@ async function handleDailyLogWorkoutIngest(
 
   const resolvedDailyLog = await resolveDailyLogPageForDate(env, targetDate);
   const existingPage = resolvedDailyLog.canonicalPage;
+  if (hasPropertyType(dailyLogProperties, "Data Status JSON", "rich_text")) {
+    let states: Record<string, any> = {};
+    try { states = JSON.parse(getPlainTextFromRichText(existingPage?.properties?.["Data Status JSON"]) || "{}"); } catch { /* replace malformed source status */ }
+    updateProperties["Data Status JSON"] = createRichTextProperty(JSON.stringify({ ...states, workout: {
+      status: sessions === 0 ? "confirmed_zero" : "observed", checked_at: new Date().toISOString(), target_date: targetDate,
+    } }));
+  }
   let response: Response;
   if (existingPage) {
     response = await notionFetch(env, `/pages/${existingPage.id}`, {
@@ -4363,7 +4382,8 @@ async function handleDailyLogGenerateDiary(
     !diaryInputHash &&
     !todayAdviceInputHash &&
     !diaryGeneratedAt &&
-    !todayAdviceGeneratedAt
+    !todayAdviceGeneratedAt &&
+    !["generation_metadata", "diary_evidence_json", "data_status_json", "location_evidence_json"].some((key) => typeof payload[key] === "string")
   ) {
     return jsonResponse({
       ok: true,
@@ -4401,6 +4421,25 @@ async function handleDailyLogGenerateDiary(
   }
   if (todayAdvice) {
     updateProperties["Today advice"] = createRichTextPropertyWithLimit(todayAdvice, DIARY_RICH_TEXT_LIMIT);
+  }
+  for (const [inputKey, propertyName] of [
+    ["generation_metadata", "Generation Metadata"],
+    ["diary_evidence_json", "Diary Evidence JSON"],
+    ["data_status_json", "Data Status JSON"],
+    ["location_evidence_json", "Location Evidence JSON"],
+  ]) {
+    if (typeof payload[inputKey] === "string") {
+      if (!hasPropertyType(dailyLogProperties, propertyName, "rich_text")) {
+        return jsonResponse({ error: "generation_evidence_schema_unavailable", property: propertyName, updated: false }, 409);
+      }
+      try {
+        const value = JSON.parse(payload[inputKey]);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected object");
+      } catch {
+        return jsonResponse({ error: "generation_evidence_invalid_json", property: propertyName, updated: false }, 422);
+      }
+      updateProperties[propertyName] = createRichTextProperty(payload[inputKey]);
+    }
   }
   const weatherSummaryPropertyName = getWeatherSummaryPropertyName(env);
   const weatherSummaryTextResolved =
@@ -5506,6 +5545,10 @@ async function handleDailyLogRead(request: Request, env: Env): Promise<Response>
       mail_version: mailMetadata.mailVersion,
       source,
       diary,
+      generation_metadata: getPlainTextFromRichText(properties["Generation Metadata"]) || null,
+      diary_evidence_json: getPlainTextFromRichText(properties["Diary Evidence JSON"]) || null,
+      data_status_json: getPlainTextFromRichText(properties["Data Status JSON"]) || null,
+      location_evidence_json: getPlainTextFromRichText(properties["Location Evidence JSON"]) || null,
       meal_summary: mealSummary,
       "Meal Photos": mealPhotosRaw,
       meal_photos: mealPhotos,
@@ -5636,6 +5679,18 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
         date: getDateStartFromProperty(p.Date),
         page_id: page.id,
         title: getPlainTextFromTitle(p[TITLE_PROPERTIES.dailyLog]) || "",
+        generation_metadata: getPlainTextFromRichText(p["Generation Metadata"]) || null,
+        diary: getPlainTextFromRichText(p["Diary"]) || null,
+        diary_input_hash: getPlainTextFromRichText(p["Diary Input Hash"]) || null,
+        diary_evidence_json: getPlainTextFromRichText(p["Diary Evidence JSON"]) || null,
+        today_advice: getPlainTextFromRichText(p["Today advice"]) || null,
+        today_advice_input_hash: getPlainTextFromRichText(p["Today Advice Input Hash"]) || null,
+        weather_summary: getPlainTextFromRichText(p["Weather Summary"]) || null,
+        weather_location: getPlainTextFromRichText(p["Weather Location"]) || null,
+        weather_retrieved_at: getDateTimeFromProperty(p["Weather Retrieved At"]),
+        expense_f_data_status: getStringFromProperty(p["Expense F Data Status"]) || null,
+        data_status_json: getPlainTextFromRichText(p["Data Status JSON"]) || null,
+        location_evidence_json: getPlainTextFromRichText(p["Location Evidence JSON"]) || null,
         activity_summary: getPlainTextFromRichText(p["Activity Summary"]) || null,
         notes: getPlainTextFromRichText(p[getDailyLogNotesPropertyName(env)]) || null,
         location_summary: location.locationSummary,
@@ -5656,6 +5711,15 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
         study_minutes: _historyNumber(p, "Study Minutes"),
         study_sessions: _historyNumber(p, "Study Sessions"),
         study_last_used_at: getDateTimeFromProperty(p["Study Last Used At"]),
+        workout_done: _historyBool(p, "Workout Done"),
+        workout_sessions: _historyNumber(p, "Workout Sessions"),
+        workout_duration_min: _historyNumber(p, "Workout Duration Min"),
+        workout_sets: _historyNumber(p, "Workout Sets"),
+        workout_volume_kg: _historyNumber(p, "Workout Volume Kg"),
+        workout_calories: _historyNumber(p, "Workout Calories"),
+        workout_gym: getPlainTextFromRichText(p["Workout Gym"]) || null,
+        workout_exercises: getPlainTextFromRichText(p["Workout Exercises"]) || null,
+        workout_summary: getPlainTextFromRichText(p["Workout Summary"]) || null,
         sleep_start: getDateTimeFromProperty(p[healthNames.sleepStart]),
         sleep_end: getDateTimeFromProperty(p[healthNames.sleepEnd]),
         sleep_duration_min: _historyNumber(p, healthNames.sleepDurationMin),
@@ -5674,6 +5738,10 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
         notes_fatigue_flag: _historyBool(p, "Notes Fatigue Flag"),
         notes_social_load_flag: _historyBool(p, "Notes Social Load Flag"),
         notes_label_input_hash: getPlainTextFromRichText(p["Notes Label Input Hash"]) || null,
+        notes_label_model: getPlainTextFromRichText(p["Notes Label Model"]) || null,
+        notes_label_generated_at: getDateTimeFromProperty(p["Notes Label Generated At"]),
+        notes_sentiment_label: getStringFromProperty(p["Notes Sentiment Label"]),
+        notes_sentiment_score: _historyNumber(p, "Notes Sentiment Score"),
         notes_flags_json: getPlainTextFromRichText(p["Notes Flags JSON"]) || null,
         notes_tags_json: getPlainTextFromRichText(p["Notes Tags JSON"]) || null,
         weather_code: _historyNumber(p, "Weather Code"),
@@ -5871,7 +5939,7 @@ export default {
             ? handleTaskPromoteConfirm(request)
             : Promise.resolve(methodNotAllowed("use GET /confirm/tasks/promote")),
         [ROUTES.TASKS_PROMOTE_EXECUTE]: () => handleTaskPromoteExecute(request, env),
-        [ROUTES.HEALTH]: () => Promise.resolve(healthCheck()),
+        [ROUTES.HEALTH]: () => Promise.resolve(healthCheck(env)),
       });
 
       if (routed) {

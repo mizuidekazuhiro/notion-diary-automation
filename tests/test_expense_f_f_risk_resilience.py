@@ -238,7 +238,7 @@ def test_f_risk_note_labeler_signature_and_no_typeerror(monkeypatch: pytest.Monk
     assert result.skip_reason in {"insufficient_samples", "model_unavailable", None}
     assert [item.target_date for item in captured["summaries"]] == [item.target_date for item in histories]
     assert callable(captured["chat_completion"])
-    assert captured["model"] == "gpt-4.1-mini"
+    assert captured["model"] == "gpt-6-luna"  # Shared OPENAI_MODEL must not override extraction.
 
 
 def test_notify_diary_continues_when_f_risk_raises(monkeypatch: pytest.MonkeyPatch) -> None:

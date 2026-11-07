@@ -1,4 +1,5 @@
 from __future__ import annotations
+from scripts.ai_models import model_for
 
 import json
 import logging
@@ -209,7 +210,7 @@ def generate_f_risk(
     labels = label_notes_in_batches(
         summaries=histories,
         chat_completion=chat_completion,
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        model=model_for("notes"),
         audit=note_audit,
     )
     labels_usable = bool(note_audit.get("labels_usable", not note_audit.get("labeling_failed", False)))
@@ -533,7 +534,7 @@ def generate_f_risk(
     if not text:
         text, stage_b_fallback_used, fallback_reason = _render_f_risk_alert(
         risk_json=risk_json,
-        model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
+        model=os.getenv("F_RISK_FINAL_MODEL", "").strip() or model_for("advice"),
         )
     if text is None:
         return FRiskResult(
@@ -587,95 +588,11 @@ def _load_histories_with_bulk_fallback(*, daily_log_read_url: str, bearer_token:
 
 
 def _build_summary_from_history_item(item: dict[str, Any]) -> Optional[DailyLogSummary]:
+    from publish.read_daily_log import parse_daily_log_payload
     target_date = str(item.get("target_date") or "").strip()
-    page_id = str(item.get("page_id") or "").strip()
-    if not target_date or not page_id:
+    if not target_date or not item.get("page_id"):
         return None
-    sleep_duration = _to_float(item.get("sleep_duration_min"))
-    task_details = [
-        DoneTaskDetail(
-            title=str(raw.get("title") or ""),
-            done_date=str(raw.get("done_date") or "") or None,
-            event_date=str(raw.get("event_date") or "") or None,
-        )
-        for raw in (item.get("done_tasks_detail") or [])
-        if isinstance(raw, dict)
-    ]
-    expenses_total = _to_float(item.get("expenses_total"))
-    return DailyLogSummary(
-        target_date=target_date,
-        date=item.get("date"),
-        target_date_value=target_date,
-        page_id=page_id,
-        title=str(item.get("title") or ""),
-        summary_text="",
-        summary_html="",
-        mail_id="",
-        source=None,
-        diary=None,
-        meal_summary=item.get("meal_summary"),
-        meal_photos=[],
-        place=item.get("place"),
-        activity_summary=item.get("activity_summary"),
-        done_count=item.get("done_count"),
-        done_tasks=[str(value) for value in (item.get("done_tasks") or [])],
-        done_tasks_detail=task_details,
-        drop_count=item.get("drop_count"),
-        drop_tasks=[str(value) for value in (item.get("drop_tasks") or [])],
-        kcal=_to_float(item.get("kcal")),
-        protein=_to_float(item.get("protein")),
-        fat=_to_float(item.get("fat")),
-        carb=_to_float(item.get("carb")),
-        expenses_total=expenses_total,
-        expenses=ExpenseSummary(total=expenses_total or 0.0, count=0, top=[], remaining=0),
-        location_summary=item.get("location_summary"),
-        location_summary_source=item.get("location_summary_source"),
-        mood=item.get("mood"),
-        notes=item.get("notes"),
-        weight=_to_float(item.get("weight")),
-        sleep_start=item.get("sleep_start"),
-        sleep_end=item.get("sleep_end"),
-        sleep_duration_min=sleep_duration,
-        resolved_sleep_duration_min=sleep_duration,
-        resolved_sleep_duration_hours=round(sleep_duration / 60.0, 2) if sleep_duration else None,
-        resolved_sleep_duration_text=None,
-        sleep_duration_source="history_api",
-        sleep_score=item.get("sleep_score"),
-        sleep_source=item.get("sleep_source"),
-        readiness_stars=_to_float(item.get("readiness_stars")),
-        readiness_hrv=item.get("readiness_hrv"),
-        readiness_bpm=item.get("readiness_bpm"),
-        baseline_hrv=_to_float(item.get("baseline_hrv")),
-        baseline_waking_bpm=_to_float(item.get("baseline_waking_bpm")),
-        sleep_heart_rate=_to_float(item.get("sleep_heart_rate")),
-        deep_duration_min=_to_float(item.get("deep_duration_min")),
-        rem_duration_min=_to_float(item.get("rem_duration_min")),
-        sleep_analysis_jp=None,
-        today_condition_forecast_jp=None,
-        today_advice=None,
-        study_minutes=item.get("study_minutes"),
-        study_sessions=item.get("study_sessions"),
-        study_last_used_at=item.get("study_last_used_at"),
-        weather_code=item.get("weather_code"),
-        weather_temp_max_c=item.get("weather_temp_max_c"),
-        weather_temp_min_c=item.get("weather_temp_min_c"),
-        weather_precip_probability_max=item.get("weather_precip_probability_max"),
-        weather_input_hash=item.get("weather_input_hash"),
-        expense_f_count=item.get("expense_f_count"),
-        expense_f_total=item.get("expense_f_total"),
-        expense_f_merchants=item.get("expense_f_merchants"),
-        expense_f_categories=item.get("expense_f_categories"),
-        f_risk_score=item.get("f_risk_score"),
-        f_risk_reason=item.get("f_risk_reason"),
-        f_risk_input_hash=item.get("f_risk_input_hash"),
-        notes_stress_flag=item.get("notes_stress_flag"),
-        notes_sleep_issue_flag=item.get("notes_sleep_issue_flag"),
-        notes_fatigue_flag=item.get("notes_fatigue_flag"),
-        notes_social_load_flag=item.get("notes_social_load_flag"),
-        notes_label_input_hash=item.get("notes_label_input_hash"),
-        notes_flags_json=item.get("notes_flags_json"),
-        notes_tags_json=item.get("notes_tags_json"),
-    )
+    return parse_daily_log_payload({**item, "found": True}, target_date=target_date)
 
 
 def _load_histories(*, daily_log_read_url: str, bearer_token: Optional[str], target_date: str, days: int) -> list[DailyLogSummary]:

@@ -1,66 +1,52 @@
+"""The former minimum-length contract caused fabricated, repetitive advice."""
 from types import SimpleNamespace
+import json
 
 import pytest
 
 from scripts.daily_mail_quality import build_quality_report, today_advice_length_valid
-from scripts.today_advice_renderer import render_today_advice_from_analysis
+from scripts.today_advice_renderer import render_today_advice_result
 
 
-@pytest.mark.parametrize("length", [201, 210, 194, 194, 0, 381, 420])
-def test_out_of_range_generation_uses_fallback_without_filling_health(length):
-    # Reproduce all four incident lengths with the same missing-sleep state.
-    analysis = {
-        "today_sleep_context": {"sleep_available": False, "sleep_hours": None},
-        "matched_patterns_count": 1,
-        "primary_focus": "回復優先",
-        "recent_7d_summary": {"behavior_trend": ["直近7日で夜遅い外出が0回", "疲労系Notesが0日"]},
-    }
+@pytest.mark.parametrize("length", [20, 194, 201, 210, 220, 380])
+def test_short_supported_output_is_kept_without_padding(length):
     generated = "あ" * length
-    text = render_today_advice_from_analysis(
-        analysis_json=analysis, model="test", chat_completion=lambda **kwargs: generated,
-    )
-    assert text != generated
-    assert today_advice_length_valid(text)
-    assert "直近7日で夜遅い外出が0回" in text
-    assert "睡眠" not in text
-    summary = SimpleNamespace(target_date="2026-10-04", today_advice=text)
-    report = build_quality_report(summary, mail_plain_text="Today advice", mail_html="")
+    result = render_today_advice_result(analysis_json={"target_counts": {"valid": 12}, "evidence_used": ["observed"]},
+        model="test", chat_completion=lambda **kw: generated)
+    assert result.text == generated
+    assert result.status == "success" and not result.fallback_used
+    assert today_advice_length_valid(result.text)
+
+
+@pytest.mark.parametrize("length", [0, 381, 420])
+def test_empty_or_overlong_output_records_rejection(length):
+    result = render_today_advice_result(analysis_json={"evidence_used": ["observed"]}, model="test",
+        chat_completion=lambda **kw: "あ" * length)
+    assert result.status == "degraded" and result.fallback_used
+    assert result.rejection_reason == ("empty_generation" if length == 0 else "output_too_long")
+    assert len(result.text) < 100
+    assert "20〜30分" not in result.text
+
+
+def test_insufficiency_is_short_and_does_not_create_length_warning_or_trend():
+    result = render_today_advice_result(analysis_json={"target_counts": {"valid": 0}}, model="test",
+        chat_completion=lambda **kw: pytest.fail("no evidence must not call AI"))
+    summary = SimpleNamespace(target_date="2026-11-05", today_advice=result.text,
+        generation_metadata=json.dumps({"advice": {"status": result.status, "fallback_used": False}}))
+    report = build_quality_report(summary, mail_plain_text="Today advice", mail_html="<p>Today advice</p>")
     codes = {issue["code"] for issue in report["issues"]}
     assert {"health_no_data", "today_sleep_no_data"} <= codes
     assert "today_advice_length_out_of_range" not in codes
-    assert analysis["today_sleep_context"]["sleep_hours"] is None
+    assert "today_advice_missing_trend_evidence" not in codes
+    assert result.status == "insufficient_data" and not result.fallback_used
 
 
-@pytest.mark.parametrize("length", [220, 380])
-def test_boundary_generation_is_preserved(length):
-    generated = "あ" * length
-    assert render_today_advice_from_analysis(
-        analysis_json={"matched_patterns_count": 1}, model="test",
-        chat_completion=lambda **kwargs: generated,
-    ) == generated
-
-
-def test_compact_count_and_configured_prompt_use_same_limits(monkeypatch):
+def test_configured_minimum_cannot_force_padding_but_maximum_is_enforced(monkeypatch):
     monkeypatch.setenv("DAILY_MAIL_TODAY_ADVICE_MIN_CHARS", "240")
     monkeypatch.setenv("DAILY_MAIL_TODAY_ADVICE_MAX_CHARS", "360")
-    generated = "あ" * 125 + " \n" + "あ" * 125
-    def chat(**kwargs):
-        assert "240〜360" in kwargs["user_prompt"]
-        assert "空白・改行を除いて" in kwargs["user_prompt"]
-        return generated
-    assert render_today_advice_from_analysis(
-        analysis_json={"matched_patterns_count": 1}, model="test", chat_completion=chat,
-    ) == generated.strip()
-
-
-@pytest.mark.parametrize("failure", ["exception", "no_pattern"])
-def test_existing_fallback_paths_meet_default_length(failure):
-    def chat(**kwargs):
-        raise RuntimeError("unavailable")
-    text = render_today_advice_from_analysis(
-        analysis_json={
-            "matched_patterns_count": 0 if failure == "no_pattern" else 1,
-            "today_sleep_context": {"sleep_available": False},
-        }, model="test", chat_completion=chat,
-    )
-    assert today_advice_length_valid(text)
+    def chat(**kw):
+        assert "上限360字" in kw["user_prompt"]
+        return "記録から新たな提案はありません。"
+    result = render_today_advice_result(analysis_json={"evidence_used": ["observed"]}, model="test", chat_completion=chat)
+    assert result.status == "success"
+    assert result.text == "記録から新たな提案はありません。"

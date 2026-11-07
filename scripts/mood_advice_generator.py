@@ -7,21 +7,25 @@ import math
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 
 import requests
 
-from publish.read_daily_log import DailyLogSummary, read_daily_log
+from publish.read_daily_log import DailyLogSummary, parse_daily_log_payload, read_daily_log
+from ingest.http_client import fetch_json
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from scripts.note_batch_labeler import label_notes_in_batches
 from scripts.openai_chat_utils import chat_completion as shared_chat_completion
 from scripts.today_advice_feature_builder import build_daily_feature_table
 from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
 from scripts.today_advice_lightgbm import run_lightgbm_low_mood
-from scripts.today_advice_renderer import build_analysis_json, render_today_advice_from_analysis
+from scripts.today_advice_renderer import build_analysis_json, render_today_advice_result
 from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_for_target_date
+from scripts.ai_models import model_for
 from scripts.today_advice_audit import (
     TodayAdviceAuditLogger,
     count_missing,
@@ -153,50 +157,7 @@ def _dump_today_advice_debug_log(*,
     advice_input_summary: Mapping[str, Any],
     prompt_text: str,
 ) -> None:
-    try:
-        advice_input_json = json.dumps(advice_input, ensure_ascii=False, indent=2, default=str)
-        advice_summary_json = json.dumps(advice_input_summary, ensure_ascii=False, indent=2, default=str)
-        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA START ===")
-        print(advice_input_json)
-        print(f"=== TODAY ADVICE {debug_kind} INPUT DATA END ===")
-        print()
-        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY START ===")
-        print(advice_summary_json)
-        print(f"=== TODAY ADVICE {debug_kind} INPUT SUMMARY END ===")
-        print()
-        print(f"=== TODAY ADVICE {debug_kind} MODEL START ===")
-        print(model)
-        print(f"=== TODAY ADVICE {debug_kind} MODEL END ===")
-        print()
-        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE START ===")
-        print(target_date)
-        print(f"=== TODAY ADVICE {debug_kind} TARGET DATE END ===")
-        print()
-        print(f"=== TODAY ADVICE {debug_kind} PROMPT START ===")
-        print(prompt_text)
-        print(f"=== TODAY ADVICE {debug_kind} PROMPT END ===")
-    except Exception as exc:
-        logging.warning("today_advice_debug_print_failed kind=%s stage=%s error=%s", debug_kind, stage, exc)
-
-    try:
-        debug_dir = os.path.join(os.getcwd(), "debug")
-        os.makedirs(debug_dir, exist_ok=True)
-        debug_payload = {
-            "stage": stage,
-            "target_date": target_date,
-            "model": model,
-            "advice_input": advice_input,
-            "advice_input_summary": advice_input_summary,
-            "prompt_text": prompt_text,
-        }
-        debug_path = os.path.join(debug_dir, f"today_advice_{stage}_{debug_kind.lower()}_{target_date}.json")
-        with open(debug_path, "w", encoding="utf-8") as debug_file:
-            json.dump(debug_payload, debug_file, ensure_ascii=False, indent=2, default=str)
-        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE START ===")
-        print(debug_path)
-        print(f"=== TODAY ADVICE {debug_kind} DEBUG FILE END ===")
-    except Exception as exc:
-        logging.warning("today_advice_debug_file_failed kind=%s stage=%s error=%s", debug_kind, stage, exc)
+    logging.info("today_advice_debug_private_content_omitted kind=%s stage=%s model=%s", debug_kind, stage, model)
 
 
 def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], structured: Mapping[str, Any], today_state: Mapping[str, Any], stage: str, evidence_used: Sequence[str], notes_used: bool, prompt_tokens: Optional[int], token_counting_method: str) -> dict[str, Any]:
@@ -344,6 +305,43 @@ def _load_daily_logs_for_period_with_debug(
     summaries: list[DailyLogSummary] = []
     failed_dates: list[str] = []
     missing_dates: list[str] = []
+
+    started = time.perf_counter()
+    parts = urlsplit(daily_log_read_url)
+    if parts.scheme in {"https", "http"} and os.getenv("TODAY_ADVICE_HISTORY_MODE", "bulk") == "bulk":
+        query = urlencode({"start": min(requested_dates), "end": max(requested_dates)})
+        url = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") + "/history", query, ""))
+        try:
+            payload = fetch_json(url, bearer_token)
+            if not isinstance(payload.get("items"), list):
+                raise ValueError("history_contract_invalid")
+            by_date: dict[str, list[dict[str, Any]]] = {}
+            for item in payload["items"]:
+                day = item.get("target_date") if isinstance(item, dict) else None
+                if day in requested_dates:
+                    by_date.setdefault(day, []).append(item)
+            for day in requested_dates:
+                candidates = by_date.get(day, [])
+                if not candidates:
+                    missing_dates.append(day)
+                    continue
+                # Contradictory pages are excluded, rather than multiplying support
+                # or guessing which outcome/measurement is true.
+                observations = [{key: value for key, value in item.items() if key not in {"page_id", "title", "last_edited_time"}}
+                                for item in candidates]
+                if any(row != observations[0] for row in observations[1:]):
+                    failed_dates.append(day)
+                    continue
+                parsed = parse_daily_log_payload({**candidates[0], "found": True}, target_date=day)
+                if parsed is not None:
+                    summaries.append(parsed)
+            logging.info("today_advice_history_load_done mode=bulk requests=1 loaded=%s missing=%s failed=%s elapsed_ms=%s",
+                         len(summaries), len(missing_dates), len(failed_dates), int((time.perf_counter()-started)*1000))
+            return TodayAdviceHistoryLoadResult(summaries, requested_dates, failed_dates, missing_dates, include_next_day)
+        except Exception as exc:
+            logging.warning("today_advice_history_bulk_failed error_type=%s", type(exc).__name__)
+            # Failure is not absence. Do not fan out 31 requests into a failing API.
+            return TodayAdviceHistoryLoadResult([], requested_dates, list(requested_dates), [], include_next_day)
 
     logging.info("today_advice_history_load_start target_date=%s days=%s include_next_day=%s", target_date, days, include_next_day)
     for day in requested_dates:
@@ -500,31 +498,14 @@ def _notes_signal_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optional[
 
 
 def _extract_location_patterns(summary: Optional[str]) -> dict[str, bool]:
-    text = _safe_text(summary) or ""
-    home = any(keyword in text for keyword in ["自宅", "家", "在宅", "家中心"])
-    office = any(keyword in text for keyword in ["オフィス", "出社", "会社", "職場"])
-    outing = any(keyword in text for keyword in ["外出", "移動", "外", "買い物", "カフェ", "出かけ"])
-    late = any(keyword in text for keyword in ["深夜", "夜遅", "終電", "22:", "23:", "24:", "夜まで"])
-    multi = any(keyword in text for keyword in ["→", "→", "巡", "複数", "移動多", "立ち寄", "はしご"]) or text.count("・") >= 2
-    return {
-        "home_heavy_day": home and not office,
-        "office_heavy_day": office,
-        "outing_heavy_day": outing,
-        "late_outing_day": late,
-        "multi_stop_day": multi,
-    }
+    from scripts.location_features import extract_location_flags
+    return {key.replace("_flag", "_day"): value for key, value in extract_location_flags(summary or "").items()}
 
 
 def _location_pattern_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
-    if not items:
-        return {f"{key}_rate": None for key in LOCATION_PATTERN_KEYS}
-    counts = {key: 0 for key in LOCATION_PATTERN_KEYS}
-    for item in items:
-        patterns = _extract_location_patterns(item.location_summary)
-        for key, matched in patterns.items():
-            if matched:
-                counts[key] += 1
-    return {f"{key}_rate": round(counts[key] / len(items), 2) for key in LOCATION_PATTERN_KEYS}
+    observations = [_extract_location_patterns(item.location_summary) for item in items]
+    return {f"{key}_rate": (round(sum(row[key] is True for row in observations) / sum(row[key] is not None for row in observations), 2)
+            if any(row[key] is not None for row in observations) else None) for key in LOCATION_PATTERN_KEYS}
 
 
 def _workout_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
@@ -857,16 +838,20 @@ def build_today_advice_generation_context(
         bearer_token=bearer_token,
         target_date=target_date,
         days=LOOKBACK_DAYS,
-        include_next_day=False,
+        include_next_day=True,
     )
     history = history_result.summaries
     if not history:
         return None
 
-    today_summary = next((item for item in history if item.target_date == target_date), history[0])
-    historical_summaries = [item for item in history if item.target_date != target_date and item.target_date < target_date]
+    today_summary = next((item for item in history if item.target_date == target_date), None)
+    if today_summary is None:
+        logging.warning("today_advice_target_page_missing target_date=%s", target_date)
+        return None
+    historical_summaries = [item for item in history if item.target_date <= target_date]
+    advice_target_date = (datetime.strptime(target_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     sleep_candidates, selected_sleep_candidate, sleep_properties_source = _resolve_today_sleep_candidates(
-        target_date=target_date,
+        target_date=advice_target_date,
         today_summary=today_summary,
         history=history,
     )
@@ -881,6 +866,8 @@ def build_today_advice_generation_context(
         today_state["today_sleep"]["sleep_available"] = True
         today_state["today_sleep"]["duration_source"] = selected_sleep_candidate.get("duration_source")
     else:
+        for key in ("sleep_duration_min", "sleep_score", "sleep_start", "sleep_end"):
+            today_state["today_sleep"][key] = None
         today_state["today_sleep"]["sleep_available"] = False
         today_state["today_sleep"]["duration_source"] = "missing"
     today_sleep_context = {
@@ -939,6 +926,8 @@ def build_today_advice_generation_context(
         "sleep_properties_source": sleep_properties_source,
         "today_sleep_context": today_sleep_context,
         "history_debug": history_debug,
+        "reflection_date": target_date,
+        "advice_target_date": advice_target_date,
     }
 
 
@@ -1099,8 +1088,9 @@ def generate_today_advice(
     daily_log_read_url: str,
     bearer_token: Optional[str],
     target_date: str,
+    generation_context: Mapping[str, Any] | None = None,
 ) -> Optional[MoodAdviceResult]:
-    context = build_today_advice_generation_context(
+    context = generation_context if generation_context is not None else build_today_advice_generation_context(
         daily_log_read_url=daily_log_read_url,
         bearer_token=bearer_token,
         target_date=target_date,
@@ -1119,8 +1109,8 @@ def generate_today_advice(
     today_sleep_context = dict(context.get("today_sleep_context") or {})
     debug_enabled = is_today_advice_debug_enabled()
     audit = TodayAdviceAuditLogger(target_date=target_date, debug=debug_enabled)
-    final_model = os.getenv("TODAY_ADVICE_FINAL_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_FINAL_MODEL)).strip() or DEFAULT_FINAL_MODEL
-    mini_model = os.getenv("TODAY_ADVICE_MINI_MODEL", DEFAULT_MINI_MODEL).strip() or DEFAULT_MINI_MODEL
+    final_model = model_for("advice")
+    mini_model = model_for("notes")
 
     fetched_count = len(history)
     usable_count = len(historical_summaries)
@@ -1487,7 +1477,7 @@ def generate_today_advice(
         lightgbm_summary = run_lightgbm_low_mood(
             feature_df,
             today_feature_overrides=lightgbm_today_overrides or None,
-            today_feature_date=target_date,
+            today_feature_date=context["advice_target_date"],
         )
         audit.put("lightgbm", lightgbm_summary)
         audit.info(
@@ -1530,7 +1520,7 @@ def generate_today_advice(
         )
         audit.info("[Sleep] renderer_received_sleep_context=%s", safe_json(today_sleep_context))
         today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")
-        today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
+        today_bedtime = today_sleep_context.get("bedtime")
         today_sleep_score = analysis_json.get("today_sleep_context", {}).get("sleep_score")
         today_condition_flags = {
             "prev_sleep_lt_6h": bool(today_sleep_hours is not None and today_sleep_hours < 6),
@@ -1578,29 +1568,26 @@ def generate_today_advice(
         audit.dump_json("AnalysisJSON", analysis_json)
 
         try:
-            today_advice = render_today_advice_from_analysis(
+            render_result = render_today_advice_result(
                 analysis_json=analysis_json,
                 model=final_model,
                 chat_completion=_chat_completion,
             )
-            if not (today_advice or "").strip():
-                today_advice = "【fallback】Today advice の文章化に失敗しました（analysis_json は生成済み）。"
-                analysis_json["fallback_used"] = True
-                analysis_json["final_status"] = "fallback"
-                analysis_json["stage_b_error"] = "empty_generation"
-            else:
-                analysis_json["fallback_used"] = False
-                analysis_json["final_status"] = "success"
+            today_advice = render_result.text
+            analysis_json["generation"] = asdict(render_result)
+            analysis_json["fallback_used"] = render_result.fallback_used
+            analysis_json["final_status"] = render_result.status
+            analysis_json["stage_b_error"] = render_result.rejection_reason
         except Exception as stage_b_exc:
-            logging.warning("today_advice_stage_b_failed target_date=%s error=%s", target_date, stage_b_exc)
-            today_advice = "【fallback】Today advice の文章化に失敗しました（analysis_json は生成済み）。"
+            logging.warning("today_advice_stage_b_failed target_date=%s error_type=%s", target_date, type(stage_b_exc).__name__)
+            today_advice = "今日への助言を作成できませんでした。日記の記録を確認してください。"
             analysis_json["fallback_used"] = True
             analysis_json["final_status"] = "fallback"
             analysis_json["stage_b_error"] = type(stage_b_exc).__name__
         audit.put("final_text", {"text": today_advice})
         audit.info("[TodayAdvice][FinalText] %s", today_advice)
     except Exception as exc:
-        logging.warning("today_advice_pipeline_failed target_date=%s error=%s", target_date, exc)
+        logging.warning("today_advice_pipeline_failed target_date=%s error_type=%s", target_date, type(exc).__name__)
         exploratory_summary = {"matched_today_conditions": []}
         regression_summary = {"available": False, "sample_size": 0, "top_positive_risk_features": [], "top_protective_features": []}
         lightgbm_summary = {"available": False, "sample_size": 0, "feature_importances": [], "top_risk_features": [], "top_protective_features": [], "skipped_reason": "pipeline_failed"}
@@ -1614,10 +1601,10 @@ def generate_today_advice(
             "risk_level": "unknown",
             "primary_focus": "不明",
             "skipped_reason": "analysis_failed",
-            "fallback_used": False,
+            "fallback_used": True,
             "final_status": "failed",
         }
-        today_advice = ""
+        today_advice = "記録の分析を完了できなかったため、今日への助言は控えます。"
         audit.put("regression", summarize_regression(regression_summary))
         audit.put("analysis_json", analysis_json)
         audit.put("final_text", {"text": today_advice})

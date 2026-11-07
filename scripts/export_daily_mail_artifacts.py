@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -58,6 +59,12 @@ def main() -> int:
     run_url = _run_url()
     target_date = args.target_date.strip() or resolve_target_date(explicit_target_date=None, phase="publish")
     artifact_dir = Path(args.artifact_dir)
+    existing_report = artifact_dir / "quality_report.json"
+    if existing_report.exists():
+        report = json.loads(existing_report.read_text(encoding="utf-8"))
+        if report.get("run_id") == run_id and report.get("inspection_stage") == "before_send":
+            print(build_markdown_report(report))
+            return 0
 
     try:
         config = load_config(need_mail=True, need_tasks=False)

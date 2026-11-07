@@ -188,7 +188,7 @@ def test_diary_input_fields_include_study_fields() -> None:
     assert used["Study Last Used At"] == "2026-03-27T23:42:00+09:00"
 
 
-def test_today_advice_fallback_is_dense() -> None:
+def test_today_advice_failure_is_brief_and_does_not_invent_actions() -> None:
     text = render_today_advice_from_analysis(
         analysis_json={
             "today_sleep_context": {"sleep_available": True, "sleep_hours": 6.7, "sleep_should_mention": False},
@@ -200,9 +200,10 @@ def test_today_advice_fallback_is_dense() -> None:
         chat_completion=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     sentence_count = len([s for s in re.split(r"。", text) if s.strip()])
-    assert len(text) >= 240
+    assert 0 < len(text) < 120
     assert sentence_count <= 6
-    assert "直近7日" in text and "最初の一手" in text
+    assert "作成できませんでした" in text
+    assert "最初の一手" not in text
     assert "品質が低い" not in text
     assert "parse" not in text
     assert "unknown" not in text

@@ -4,13 +4,24 @@ import sys
 import logging
 import json
 import re
+import hashlib
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
-from env import ConfigError, get_env_bool, get_env_int, get_env_str
+try:
+    from .env import ConfigError, get_env_bool, get_env_int, get_env_str
+except ImportError:
+    from env import ConfigError, get_env_bool, get_env_int, get_env_str
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts.ai_models import model_for
+from scripts.openai_chat_utils import chat_completion
 
 NOTION_VERSION = "2022-06-28"
 LOGGER = logging.getLogger(__name__)
@@ -138,7 +149,7 @@ class NotionClient:
 
             resp = self.session.post(url, json=body, timeout=30)
             if resp.status_code >= 400:
-                raise RuntimeError(f"Notion query failed ({resp.status_code}): {resp.text}")
+                raise RuntimeError(f"Notion query failed status={resp.status_code} request_id={resp.headers.get('x-request-id', '-')}")
 
             data = resp.json()
             all_results.extend(data.get("results", []))
@@ -152,7 +163,7 @@ class NotionClient:
         url = f"https://api.notion.com/v1/pages/{page_id}"
         resp = self.session.patch(url, json={"properties": properties}, timeout=30)
         if resp.status_code >= 400:
-            raise RuntimeError(f"Notion update failed ({resp.status_code}): {resp.text}")
+            raise RuntimeError(f"Notion update failed status={resp.status_code} request_id={resp.headers.get('x-request-id', '-')}")
 
 
 def load_config() -> Config:
@@ -187,7 +198,7 @@ def load_config() -> Config:
             "DAILY_LOG_GPT_LOCATION_SUMMARY_PROP", default="Location summary (GPT)"
         ),
         openai_api_key=get_env_str("OPENAI_API_KEY", default=""),
-        openai_model=get_env_str("OPENAI_MODEL", default="gpt-4o-mini"),
+        openai_model=model_for("location"),
         prompt_db_id=get_env_str("PROMPT_DB_ID", default=""),
         prompt_target=get_env_str("PROMPT_TARGET", default="location_summary_writer"),
         prompt_variant=get_env_str("PROMPT_VARIANT", default="default"),
@@ -655,6 +666,8 @@ def build_gpt_payload(
             {
                 "start": _fmt_time(s.start),
                 "end": _fmt_time(s.end),
+                "start_iso": s.start.isoformat(),
+                "end_iso": s.end.isoformat(),
                 "location": s.display_name,
                 "category": s.category,
                 "duration_min": s.duration_min,
@@ -672,6 +685,8 @@ def build_gpt_payload(
         "events": [
             {
                 "time": _fmt_time(m.task.event_time),
+                "scheduled_at": m.task.event_time.isoformat(),
+                "execution_confirmed": False,
                 "title": m.task.title,
                 "status": m.task.status,
                 "nearby_location": m.session.display_name if m.session else None,
@@ -681,6 +696,8 @@ def build_gpt_payload(
         "expenses": [
             {
                 "time": e.display_time,
+                "paid_at": e.event_time.isoformat() if e.event_time else None,
+                "evidence_type": "payment_only",
                 "merchant": e.merchant,
                 "keyword_match": e.is_keyword_match,
             }
@@ -744,41 +761,10 @@ def fetch_prompt_from_notion(notion: NotionClient, cfg: Config, prompt_type: str
     return None
 
 
-def generate_diary_from_gpt(
-    payload: dict[str, Any],
-    api_key: str,
-    model: str,
-    notion: NotionClient | None,
-    cfg: Config | None,
-) -> str:
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for GPT diary generation")
-    if notion is None or cfg is None:
-        raise RuntimeError("notion and cfg are required for GPT diary generation")
-
-    system_prompt = (
-        "あなたは行動ログを自然な日本語の日記文に整えるアシスタントです。\n"
-        "以下を厳守してください：\n"
-        "1. 1行目の先頭は必ず YYYY-MM-DD で始める。\n"
-        "2. 出力は日本語の自然文のみで、箇条書きは禁止。\n"
-        "3. 行頭に '-', '•', '・' を使わない。\n"
-        "4. 滞在(main_sessions)を主軸に、場所と時間を中心に記述する。\n"
-        "5. 最大6文以内に収める。\n"
-        "6. 予定は『◯◯の予定があった』の表現のみ許可する。\n"
-        "7. expenses は場所推定の補助情報としてのみ使い、金額には触れない。\n"
-        "8. expenses を文に入れる場合は、『◯◯に立ち寄った可能性がある』『◯◯で過ごしていたことがうかがえる』『◯◯にいたとみられる』など、自然な推定表現を使う。\n"
-        "9. 『支出記録』『記録がある』『補助情報として確認できる』のような説明調の表現は使わない。\n"
-        "10. オンライン決済・サブスク等の場所と関係ない情報は無理に書かない。\n"
-        "11. 住所や場所が細かく揺れる場合は、近接エリアとして簡略化してよい。"
-    )
-    user_prompt = (
-        "以下の行動データをもとに、客観的な記録文を作成してください。\n\n"
-        "{{JSONデータ}}\n\n"
-        "記述ルール：場所と時間を中心に述べ、主観的表現は使わない。\n"
-        "expenses は場所推定に使えるものだけ自然に織り込み、説明調にはしない。\n"
-        "30分未満の滞在は原則記載しない（移動として自然にまとめる場合のみ可）。\n\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
-    )
+def build_location_prompts(payload: dict[str, Any], notion: NotionClient, cfg: Config) -> tuple[str, str]:
+    model = cfg.openai_model
+    system_prompt = (Path(__file__).parent / "location_fact_policy.txt").read_text(encoding="utf-8")
+    user_prompt = "対象日の短い行動記録を作成してください。\n{payload_json}".replace("{payload_json}", json.dumps(payload, ensure_ascii=False))
 
     LOGGER.info(
         "prompt_db: enabled=%s target=%s variant=%s time_style=%s",
@@ -800,26 +786,27 @@ def generate_diary_from_gpt(
     LOGGER.info("prompt_source: type=system source=%s", "notion" if notion_system_prompt else "fallback")
     LOGGER.info("prompt_source: type=user source=%s", "notion" if notion_user_prompt else "fallback")
 
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        },
-        timeout=60,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"OpenAI request failed ({resp.status_code}): {resp.text}")
+    # A style prompt in Notion cannot relax the source/uncertainty contract.
+    system_prompt += "\n\n" + (Path(__file__).parent / "location_fact_policy.txt").read_text(encoding="utf-8")
+    LOGGER.info("location_generation_policy model=%s prompt_hash=%s input_hash=%s", model,
+                hashlib.sha256(system_prompt.encode()).hexdigest(), hashlib.sha256(user_prompt.encode()).hexdigest())
+    return system_prompt, user_prompt
 
-    content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+def generate_diary_from_gpt(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    notion: NotionClient | None,
+    cfg: Config | None,
+) -> str:
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for GPT diary generation")
+    if notion is None or cfg is None:
+        raise RuntimeError("notion and cfg are required for GPT diary generation")
+
+    system_prompt, user_prompt = build_location_prompts(payload, notion, cfg)
+    content = chat_completion(model=model, system_prompt=system_prompt, user_prompt=user_prompt, api_key=api_key)
     content = normalize_diary_output(content)
     if not content:
         raise RuntimeError("OpenAI response did not include diary text")
@@ -912,23 +899,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run(target_date: str | None = None) -> None:
-    cfg = load_config()
-    os.environ["TZ"] = cfg.tz
-    log_effective_config(cfg)
-    if target_date:
-        window_start, window_end, diary_date = compute_window_for_diary_date(
-            target_date, cfg.tz, cfg.window_start_hour
-        )
-    else:
-        now = datetime.now(timezone.utc)
-        window_start, window_end, diary_date = compute_window(now, cfg.tz, cfg.window_start_hour)
-
-    LOGGER.info("window=[%s, %s)", window_start.isoformat(), window_end.isoformat())
-    LOGGER.info("target diary_date=%s", diary_date)
-
-    notion = NotionClient(cfg.notion_token)
-
+def collect_location_payload(notion: NotionClient, cfg: Config, window_start: datetime, window_end: datetime) -> dict[str, Any]:
     sessions_query = {
         "filter": {
             "and": [
@@ -994,19 +965,30 @@ def run(target_date: str | None = None) -> None:
     expenses = parse_expenses(expense_pages, cfg, window_start, window_end) if cfg.expenses_db_id else []
     main_sessions, _ = partition_sessions(sessions, min_duration_min=30)
     LOGGER.info("payload_counts: main_sessions=%s events=%s expenses=%s", len(main_sessions), len(tasks), len(expenses))
-    summary_text = generate_location_summary(
-        window_start,
-        window_end,
-        cfg.tz,
-        sessions,
-        tasks,
-        expenses,
-        cfg.openai_api_key,
-        cfg.openai_model,
-        notion,
-        cfg,
-    )
-    LOGGER.info("fetched sessions=%s tasks=%s expenses=%s", len(sessions), len(tasks), len(expenses))
+    return build_gpt_payload(window_start=window_start, window_end=window_end, tz_name=cfg.tz,
+        main_sessions=main_sessions, movement_segments=classify_movement_segments(partition_sessions(sessions, min_duration_min=30)[1], main_sessions),
+        matched_tasks=match_tasks(tasks, main_sessions), expenses=expenses)
+
+
+def run(target_date: str | None = None) -> None:
+    cfg = load_config()
+    os.environ["TZ"] = cfg.tz
+    log_effective_config(cfg)
+    if target_date:
+        window_start, window_end, diary_date = compute_window_for_diary_date(
+            target_date, cfg.tz, cfg.window_start_hour
+        )
+    else:
+        now = datetime.now(timezone.utc)
+        window_start, window_end, diary_date = compute_window(now, cfg.tz, cfg.window_start_hour)
+
+    LOGGER.info("window=[%s, %s)", window_start.isoformat(), window_end.isoformat())
+    LOGGER.info("target diary_date=%s", diary_date)
+
+    notion = NotionClient(cfg.notion_token)
+
+    payload = collect_location_payload(notion, cfg, window_start, window_end)
+    summary_text = generate_diary_from_gpt(payload, cfg.openai_api_key, cfg.openai_model, notion, cfg)
 
     page = find_daily_log_page(notion, cfg, diary_date)
     if not page:
@@ -1022,6 +1004,14 @@ def run(target_date: str | None = None) -> None:
         else cfg.daily_log_location_summary_prop
     )
     patch = build_summary_property(page, target_prop, summary_text)
+    evidence = dict(payload)
+    evidence.update({"version": "location-facts-v2", "summary_certainty": "inferred",
+                     "window": {"start": window_start.isoformat(), "end": window_end.isoformat(), "time_zone": cfg.tz},
+                     "model": cfg.openai_model})
+    if "Location Evidence JSON" in page.get("properties", {}):
+        encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+        patch["Location Evidence JSON"] = {"rich_text": [{"type": "text", "text": {"content": encoded[i:i+1900]}}
+                                                        for i in range(0, len(encoded), 1900)]}
     notion.update_page_properties(page["id"], patch)
     LOGGER.info(
         "daily_log_updated: diary_date=%s page_id=%s property=%s chars=%s",

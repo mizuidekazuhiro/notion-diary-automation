@@ -67,5 +67,6 @@ def test_diary_prompt_mentions_voice_notes_policy() -> None:
     from scripts.diary_generator import _build_prompts
 
     system_prompt, _ = _build_prompts({"Voice Diary Notes": "[09:10] test"}, "2026-05-01")
-    assert "Voice Diary Notes は本人がその時点で残した一次メモ" in system_prompt
-    assert "単純に全列挙しない" in system_prompt
+    assert "本人メモを尊重" in system_prompt
+    assert "構造化記録との不一致は情報源と日時" in system_prompt
+    assert "無条件の優先付けをしません" in system_prompt

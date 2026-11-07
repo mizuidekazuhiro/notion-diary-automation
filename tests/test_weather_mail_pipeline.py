@@ -136,10 +136,10 @@ def test_email_templates_render_weather_section_last_for_html_and_text() -> None
     html = render_daily_log_html(payload)
     text = render_daily_log_text(payload)
 
-    assert html.rfind("Weather</div>") > html.rfind("Mood / Notes")
-    assert text.rfind("\nWeather\n") > text.rfind("\nMood / Notes\n")
-    weather_block = text[text.rfind("\nWeather\n") :].strip()
-    assert weather_block.startswith("Weather\n- 地点:")
+    assert html.rfind("天気 / Weather（対象日未確認）</div>") > html.rfind("Mood / Notes")
+    assert text.rfind("\n天気 / Weather") > text.rfind("\nMood / Notes\n")
+    weather_block = text[text.rfind("\n天気 / Weather") :].strip()
+    assert weather_block.startswith("天気 / Weather（対象日未確認）\n- 地点:")
 
 
 def test_weather_compare_ignores_timestamp_second_precision_only() -> None:

@@ -1,0 +1,26 @@
+name: Diary Production - Read-only Verification
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          DAILY_LOG_UPSERT_URL: ${{ secrets.DAILY_LOG_UPSERT_URL }}
+          WORKERS_BEARER_TOKEN: ${{ secrets.WORKERS_BEARER_TOKEN }}
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+          MAIL_LINK_SECRET: ${{ secrets.MAIL_LINK_SECRET }}
+        run: python scripts/verify_deployed_diary.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diary-production-check-${{ github.run_id }}
+          path: artifacts/production_check
+          retention-days: 14

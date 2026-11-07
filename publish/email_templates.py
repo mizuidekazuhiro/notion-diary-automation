@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import html
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Tuple
@@ -317,6 +317,13 @@ def _resolve_count(payload: Mapping[str, object], key: str, fallback_count: int)
 
 def render_daily_log_html(payload: Mapping[str, object]) -> str:
     target_date = str(payload.get("target_date") or "")
+    try:
+        next_date = (datetime.fromisoformat(target_date) + timedelta(days=1)).date().isoformat()
+    except ValueError:
+        next_date = "日付未確認"
+    advice_date = str(payload.get("advice_target_date") or next_date)
+    weather_date = str(payload.get("weather_target_date") or "対象日未確認")
+    risk_date = str(payload.get("risk_target_date") or next_date)
     run_id = str(payload.get("run_id") or payload.get("mail_id") or "")
     summary_text = str(payload.get("summary_text") or "")
 
@@ -413,7 +420,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     if today_advice:
         today_advice_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;\">"
-            "<div style=\"font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;\">Today advice</div>"
+            f"<div style=\"font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;\">今日への助言 / Today advice（{html.escape(advice_date)}）</div>"
             f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(today_advice)}</div>"
             "</div>"
         )
@@ -464,35 +471,23 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
     if weather_summary:
         weather_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
-            "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
+            f"<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">天気 / Weather（{html.escape(weather_date)}）</div>"
             f"<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">地点: {html.escape(weather_location or '—')} / 概要: {html.escape(weather_summary)} / 天気: {html.escape(weather_label)} / 最高: {html.escape(weather_temp_max)}℃ / 最低: {html.escape(weather_temp_min)}℃ / 取得時刻: {html.escape(weather_retrieved_at or '—')}</div>"
             "</div>"
         )
     elif weather_summary_source == "empty":
         weather_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#eefdf3;border:1px solid #bbf7d0;\">"
-            "<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">Weather</div>"
+            f"<div style=\"font-size:13px;font-weight:700;color:#166534;margin-bottom:8px;\">天気 / Weather（{html.escape(weather_date)}）</div>"
             "<div style=\"font-size:14px;line-height:1.7;color:#1f2937;\">未取得</div>"
             "</div>"
         )
     f_risk_html = ""
     if f_risk_matched and f_risk_alert:
-        detail_parts = []
-        if f_risk_score != "—":
-            detail_parts.append(f"score={f_risk_score}")
-        if f_risk_patterns:
-            detail_parts.append(f"patterns={f_risk_patterns}")
-        if f_risk_reason:
-            detail_parts.append(f"reason={f_risk_reason}")
-        detail_line = " | ".join(detail_parts)
-        detail_html = (
-            f"<div style=\"font-size:12px;color:#7c2d12;margin-top:8px;\">{html.escape(detail_line)}</div>"
-            if detail_line
-            else ""
-        )
+        detail_html = ""
         f_risk_html = (
             "<div style=\"margin-bottom:20px;padding:16px;border-radius:12px;background:#fff7ed;border:1px solid #fed7aa;\">"
-            "<div style=\"font-size:13px;font-weight:700;color:#9a3412;margin-bottom:8px;\">F Risk Alert</div>"
+            f"<div style=\"font-size:13px;font-weight:700;color:#9a3412;margin-bottom:8px;\">支出の注意 / F Risk Alert（{html.escape(risk_date)}）</div>"
             f"<div style=\"font-size:14px;line-height:1.8;color:#1f2937;white-space:pre-wrap;\">{html.escape(f_risk_alert)}</div>"
             f"{detail_html}"
             "</div>"
@@ -667,7 +662,7 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
                 <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;\">
                   <tr>
                     <td>
-                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">Diary</h2>
+                      <h2 style=\"margin: 0 0 8px 0; font-size: 16px;\">日記 / Diary（{html.escape(target_date)}）</h2>
                       <p style=\"margin: 0; font-size: 14px; color: #111827;\">{diary_html}</p>
                     </td>
                   </tr>
@@ -774,6 +769,13 @@ def render_daily_log_html(payload: Mapping[str, object]) -> str:
 
 def render_daily_log_text(payload: Mapping[str, object]) -> str:
     target_date = str(payload.get("target_date") or "")
+    try:
+        next_date = (datetime.fromisoformat(target_date) + timedelta(days=1)).date().isoformat()
+    except ValueError:
+        next_date = "日付未確認"
+    advice_date = str(payload.get("advice_target_date") or next_date)
+    weather_date = str(payload.get("weather_target_date") or "対象日未確認")
+    risk_date = str(payload.get("risk_target_date") or next_date)
     run_id = str(payload.get("run_id") or payload.get("mail_id") or "")
     summary_text = str(payload.get("summary_text") or "")
 
@@ -896,7 +898,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         f"Run ID: {run_id}",
     ]
     if today_advice:
-        lines += ["", "Today advice", today_advice]
+        lines += ["", f"今日への助言 / Today advice（{advice_date}）", today_advice]
     if study_duration or study_sessions is not None or study_last_used_at:
         lines += [
             "",
@@ -919,17 +921,11 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
         if workout_summary:
             lines.append(f"- Summary: {workout_summary}")
     if f_risk_matched and f_risk_alert:
-        lines += ["", "F Risk Alert", f_risk_alert]
-        if f_risk_score != "—":
-            lines.append(f"- score: {f_risk_score}")
-        if f_risk_patterns:
-            lines.append(f"- matched patterns: {f_risk_patterns}")
-        if f_risk_reason:
-            lines.append(f"- reason: {f_risk_reason}")
+        lines += ["", f"支出の注意 / F Risk Alert（{risk_date}）", f_risk_alert]
 
     lines += [
         "",
-        "Diary",
+        f"日記 / Diary（{target_date}）",
         diary or "—",
         "",
         "Summary",
@@ -979,7 +975,7 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
     if weather_summary:
         lines += [
             "",
-            "Weather",
+            f"天気 / Weather（{weather_date}）",
             f"- 地点: {weather_location or '—'}",
             f"- 概要: {weather_summary}",
             f"- 天気: {weather_label}",
@@ -987,5 +983,5 @@ def render_daily_log_text(payload: Mapping[str, object]) -> str:
             f"- 取得時刻: {weather_retrieved_at or '—'}",
         ]
     elif weather_summary_source == "empty":
-        lines += ["", "Weather", "- 未取得"]
+        lines += ["", f"天気 / Weather（{weather_date}）", "- 未取得"]
     return "\n".join(lines).strip() + "\n"

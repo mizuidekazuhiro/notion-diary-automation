@@ -121,7 +121,8 @@ def test_today_advice_targets_are_same_day() -> None:
     df = build_daily_feature_table(histories, labels)
     explore = analyze_exploratory_patterns(df)
     reg = run_low_mood_regression(df)
-    assert explore["exploratory_target_name"] == "today_low_mood_flag"
+    assert explore["exploratory_target_name"] == "observed_same_day_low_mood"
+    assert explore["scope"] == "exploratory_association"
     assert reg["regression_target_name"] == "today_low_mood_flag"
 
 

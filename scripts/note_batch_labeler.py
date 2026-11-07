@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from publish.read_daily_log import DailyLogSummary
 from scripts.notes_prompt_assets import load_notes_prompt_assets
+from scripts.ai_models import model_for
 
 ALLOWED_TAGS = {
     "exercise", "gym", "social", "drinking", "work_focus", "work_progress", "late_work", "early_home", "commute_train", "taxi_use", "shopping_small", "overeating", "diet_control", "meal_disruption", "sleep_late", "early_wake", "recovery_action", "presentation_work", "dc_work", "business_trip",
@@ -92,8 +93,8 @@ def _normalize_result(date: str, payload: Mapping[str, Any]) -> NoteLabel:
             mapped_tags.append("recovery_action")
         if flags_payload.get("sleep_issue"):
             mapped_tags.append("sleep_issue")
-        tags_raw = mapped_tags
-    allowed_tags = [str(tag).strip() for tag in tags_raw if str(tag).strip() in ALLOWED_TAGS]
+        tags_raw = list(tags_raw) + mapped_tags
+    allowed_tags = list(dict.fromkeys(str(tag).strip() for tag in tags_raw if str(tag).strip() in ALLOWED_TAGS))
     if not signals_raw and allowed_tags:
         signals_raw = [_signal_from_tag(tag) for tag in allowed_tags]
     if not signals_raw and any(k in payload for k in ["fatigue_flag", "stress_flag", "sleep_issue_flag", "achievement_flag", "social_load_flag"]):
@@ -456,12 +457,15 @@ def _cache_dir() -> Path:
 
 
 def _cache_key(*, date: str, note_text: str, model: str) -> str:
-    digest = sha256(f"{model}\n{date}\n{note_text}".encode("utf-8")).hexdigest()
+    digest = sha256(f"{date}\n{build_notes_label_input_hash(note_text, model=model)}".encode("utf-8")).hexdigest()
     return f"{date}_{digest}.json"
 
 
-def build_notes_label_input_hash(note_text: str) -> str:
-    return sha256((note_text or "").strip().encode("utf-8")).hexdigest()
+def build_notes_label_input_hash(note_text: str, *, model: str | None = None) -> str:
+    payload = {"notes": (note_text or "").strip(), "model": model or model_for("notes"),
+               "contract_version": "structured-notes-v3",
+               "prompt": load_notes_prompt_assets()}
+    return sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _parse_json_dict(raw_text: object) -> dict[str, Any]:
@@ -507,7 +511,7 @@ def has_persisted_note_label(summary: DailyLogSummary) -> bool:
     return _persisted_label_required_fields_present(summary)
 
 
-def load_persisted_note_label(summary: DailyLogSummary) -> Optional[NoteLabel]:
+def load_persisted_note_label(summary: DailyLogSummary, *, model: str | None = None) -> Optional[NoteLabel]:
     if not _persisted_label_required_fields_present(summary):
         return None
     notes_text = str(getattr(summary, "notes", "") or "").strip()
@@ -516,11 +520,14 @@ def load_persisted_note_label(summary: DailyLogSummary) -> Optional[NoteLabel]:
         return None
     if not notes_text:
         return neutral_label(target_date)
-    expected_hash = build_notes_label_input_hash(notes_text)
+    expected_model = model or model_for("notes")
+    expected_hash = build_notes_label_input_hash(notes_text, model=expected_model)
     actual_hash = str(getattr(summary, "notes_label_input_hash", "") or "").strip()
-    if expected_hash != actual_hash:
+    if expected_hash != actual_hash or summary.notes_label_model != expected_model:
         return None
     flags = _parse_json_dict(getattr(summary, "notes_flags_json", None))
+    if isinstance(flags.get("structured_label"), dict):
+        return _normalize_result(target_date, flags["structured_label"])
     tags = _parse_json_list(getattr(summary, "notes_tags_json", None))
     sentiment_score = int(getattr(summary, "notes_sentiment_score", 0) or 0)
     notes_fatigue_flag = getattr(summary, "notes_fatigue_flag", None)
@@ -545,6 +552,8 @@ def load_persisted_note_label(summary: DailyLogSummary) -> Optional[NoteLabel]:
 def build_notes_label_persistence_payload(*, summary: DailyLogSummary, label: NoteLabel, model: str) -> dict[str, Any]:
     tags = sorted({str(signal.get("tag") or "").strip() for signal in label.signals if str(signal.get("tag") or "").strip()})
     flags = {
+        "structured_label": {"signals": label.signals, "derived_flags": label.derived_flags,
+                             "meta": {"parse_quality": label.parse_quality}},
         "fatigue": bool(label.fatigue_flag),
         "stress": bool(label.stress_flag),
         "social_load": bool(label.social_load_flag),
@@ -553,7 +562,7 @@ def build_notes_label_persistence_payload(*, summary: DailyLogSummary, label: No
         "sleep_issue": bool(label.sleep_issue_flag),
     }
     return {
-        "notes_label_input_hash": build_notes_label_input_hash(summary.notes or ""),
+        "notes_label_input_hash": build_notes_label_input_hash(summary.notes or "", model=model),
         "notes_label_generated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
         "notes_label_model": model,
         "notes_sentiment_label": label.sentiment_label,
@@ -582,11 +591,11 @@ def _load_cached_label(*, date: str, note_text: str, model: str) -> Optional[Not
         return None
 
 
-def _save_cached_label(*, date: str, note_text: str, model: str, label: NoteLabel) -> None:
+def _save_cached_label(*, date: str, note_text: str, model: str, label: NoteLabel) -> bool | None:
     if os.getenv("NOTES_LABEL_CACHE_DISABLE", "").strip() == "1":
-        return
+        return None
     if not note_text.strip():
-        return
+        return None
     try:
         cache_dir = _cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -595,12 +604,17 @@ def _save_cached_label(*, date: str, note_text: str, model: str, label: NoteLabe
             "meta": {"parse_quality": label.parse_quality},
             "derived_flags": label.derived_flags,
         }
-        (cache_dir / _cache_key(date=date, note_text=note_text, model=model)).write_text(
+        destination = cache_dir / _cache_key(date=date, note_text=note_text, model=model)
+        temporary = destination.with_suffix(".tmp")
+        temporary.write_text(
             json.dumps(payload, ensure_ascii=False),
             encoding="utf-8",
         )
-    except Exception:
-        return
+        temporary.replace(destination)
+        return True
+    except Exception as exc:
+        logging.warning("notes_label_cache_write_failed date=%s error_type=%s", date, type(exc).__name__)
+        return False
 
 
 def _truncate_note(text: str) -> str:
@@ -648,6 +662,8 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     cache_hit_count = 0
     fallback_covered_count = 0
     persisted_hit_count = 0
+    cache_write_failed_count = 0
+    cache_write_success_count = 0
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
         for row in [r for r in chunk if not r["notes"]]:
@@ -656,7 +672,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
         for row in [r for r in chunk if r["notes"]]:
             summary = next((s for s in summaries if s.target_date == row["date"]), None)
             if summary is not None:
-                persisted = load_persisted_note_label(summary)
+                persisted = load_persisted_note_label(summary, model=model)
                 if persisted is not None:
                     results[row["date"]] = persisted
                     persisted_hit_count += 1
@@ -671,6 +687,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             continue
         api_calls += 1
         user_payload = {
+            "allowed_tags": assets.get("allowed_tags", []),
             "target_date": targets[-1]["date"],
             "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in targets],
             "constraints": [
@@ -811,7 +828,9 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             results[item.date] = item
             source_row = next((r for r in targets if r["date"] == item.date), None)
             if source_row is not None:
-                _save_cached_label(date=item.date, note_text=source_row["notes"], model=model, label=item)
+                saved = _save_cached_label(date=item.date, note_text=source_row["notes"], model=model, label=item)
+                cache_write_success_count += int(saved is True)
+                cache_write_failed_count += int(saved is False)
         for row in targets:
             key = str(row["id"])
             unmatched_keys = set(final_meta.get("unmatched_input_keys") or set())
@@ -942,6 +961,8 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "normalized_flag_counts": dict(normalized_flag_counts),
             "fallback_reason_counts": fallback_reason_counts,
             "cache_hit_count": cache_hit_count,
+            "cache_write_success_count": cache_write_success_count,
+            "cache_write_failed_count": cache_write_failed_count,
             "persisted_hit_count": persisted_hit_count,
             "cache_miss_count": max(0, len([r for r in rows if r.get("notes")]) - cache_hit_count),
             "fallback_covered_count": fallback_covered_count,
