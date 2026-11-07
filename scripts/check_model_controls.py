@@ -30,6 +30,9 @@ def main():
                       'state_change_is_not_achievement': not labels['2000-01-02'].achievement_flag,
                       'exercise': any(s.get('tag') in {'exercise','gym'} for s in labels['2000-01-03'].signals)}
         report.append({'role': 'notes', 'model': model, 'assertions': assertions, 'usage': usage,
+                       'source_grounding_rejections': audit.get('source_grounding_rejections', {}),
+                       'before_source_grounding_flags': audit.get('raw_flag_counts', {}),
+                       'normalized_flags': audit.get('normalized_flag_counts', {}),
                        'attempted_calls': audit.get('api_calls'), 'passed': all(assertions.values())})
     for model in ('gpt-4.1-mini','gpt-6.1-sol'):
         for expected, claim in [(True,'本人のメモには「コーヒーを飲んだ」とある。'), (False,'コーヒーを飲んでリラックスした。')]:

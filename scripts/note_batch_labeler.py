@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
@@ -179,7 +180,7 @@ def _normalize_result(date: str, payload: Mapping[str, Any]) -> NoteLabel:
         derived_flags={k: bool(v) for k, v in derived.items()},
         parse_quality=parse_quality,
         no_signal_note=len(tags) == 0,
-        tag_extract_failed=len(tags) == 0,
+        tag_extract_failed=len(tags) == 0 and not derived.get("unsupported_achievement_removed", False),
         parse_low_confidence=(parse_quality == "low" or confidence == "low"),
     )
 
@@ -452,6 +453,45 @@ def _rule_based_note_label(row: Mapping[str, str]) -> NoteLabel:
     return _normalize_result(date, payload)
 
 
+POSITIVE_OUTCOME_TAGS = frozenset({"achievement", "productive"})
+STATUS_CHANGE_MENTION = re.compile(
+    r"(?:完了|done|drop|中止|取りやめ)(?:に|へ)(?:変更|設定)(?:できました|できた|しました|した)?"
+    r"|(?:drop|ドロップ)(?:できました|できた|しました|した)", re.IGNORECASE,
+)
+ACHIEVEMENT_EVIDENCE = re.compile(
+    r"進んだ|進みました|はかどった|はかどりました|できた|できました|頑張れた|頑張れました"
+    r"|(?:やり遂げ|成し遂げ|書き上げ|仕上げ|終え)(?:ました|た)"
+    r"|(?:完成|合格|提出|達成)(?:できました|できた|しました|した)"
+    r"|達成感(?:が(?:ありました|あった)|を(?:感じました|感じた|得ました|得た))"
+    r"|生産的(?:だった|でした)|順調(?:だった|でした)|うまくいった|うまくいきました"
+)
+
+
+def _has_reported_outcome(note_text: str) -> bool:
+    # Administrative state changes do not establish an outcome. Preserve a
+    # separately stated outcome or feeling, including one in the same note.
+    observed = STATUS_CHANGE_MENTION.sub("", note_text)
+    for clause in re.split(r"[。！？!?、\n]", observed):
+        for match in ACHIEVEMENT_EVIDENCE.finditer(clause):
+            tail = clause[match.end():]
+            if re.match(r"い|ら|はず|(?:こと)?(?:は|が)?(?:ない|なかった|ありません)|とは(?:言えない|いえない|思えない)|か.*(?:不明|未確認|わから|分から)", tail):
+                continue
+            return True
+    return False
+
+
+def _ground_outcome_label(label: NoteLabel, note_text: str) -> NoteLabel:
+    has_outcome = label.achievement_flag or any(signal.get("tag") in POSITIVE_OUTCOME_TAGS for signal in label.signals)
+    if not has_outcome or _has_reported_outcome(note_text):
+        return label
+    signals = [signal for signal in label.signals if signal.get("tag") not in POSITIVE_OUTCOME_TAGS]
+    grounded = _normalize_result(label.date, {
+        "signals": signals, "meta": {"parse_quality": label.parse_quality},
+        "derived_flags": {**label.derived_flags, "unsupported_achievement_removed": True},
+    })
+    return replace(grounded, tag_extract_failed=label.tag_extract_failed)
+
+
 def _cache_dir() -> Path:
     return Path(os.getenv("NOTES_LABEL_CACHE_DIR", ".cache/notes_labels"))
 
@@ -463,7 +503,7 @@ def _cache_key(*, date: str, note_text: str, model: str) -> str:
 
 def build_notes_label_input_hash(note_text: str, *, model: str | None = None) -> str:
     payload = {"notes": (note_text or "").strip(), "model": model or model_for("notes"),
-               "contract_version": "structured-notes-v4",
+               "contract_version": "structured-notes-v5",
                "prompt": load_notes_prompt_assets()}
     return sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -825,8 +865,10 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             except Exception as exc:  # noqa: BLE001
                 logging.warning("notes_label_raw_save_failed batch=%s error=%s", i // batch_size, exc)
         for item in parsed:
-            results[item.date] = item
             source_row = next((r for r in targets if r["date"] == item.date), None)
+            if source_row is not None:
+                item = _ground_outcome_label(item, source_row["notes"])
+            results[item.date] = item
             if source_row is not None:
                 saved = _save_cached_label(date=item.date, note_text=source_row["notes"], model=model, label=item)
                 cache_write_success_count += int(saved is True)
@@ -838,8 +880,11 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                 results[row["date"]] = _rule_based_note_label(row)
                 fallback_covered_count += 1
 
-    ordered = {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}
+    ordered = {row["date"]: _ground_outcome_label(results.get(row["date"], neutral_label(row["date"])), row["notes"]) for row in rows}
     if audit is not None:
+        audit["source_grounding_rejections"] = {
+            "unsupported_achievement": sum(bool(label.derived_flags.get("unsupported_achievement_removed")) for label in ordered.values()),
+        }
         all_input_dates = [str(r["date"]) for r in rows]
         unmatched_input_dates = sorted(set(all_input_dates) - matched_dates)
         labels = list(ordered.values())
