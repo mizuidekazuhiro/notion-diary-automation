@@ -6,11 +6,11 @@ import os
 from pathlib import Path
 
 ROLE_DEFAULTS = {
-    "notes": ("NOTES_LABEL_MODEL", "gpt-4.1-mini"),
-    "location": ("LOCATION_SUMMARY_MODEL", "gpt-4o-mini"),
-    "diary": ("DIARY_MODEL", "gpt-4.1-mini"),
-    "advice": ("TODAY_ADVICE_FINAL_MODEL", "gpt-4.1"),
-    "consistency": ("DIARY_CONSISTENCY_MODEL", "gpt-4.1"),
+    "notes": ("NOTES_LABEL_MODEL", "gpt-6-luna"),
+    "location": ("LOCATION_SUMMARY_MODEL", "gpt-6.1-terra"),
+    "diary": ("DIARY_MODEL", "gpt-6.1-terra"),
+    "advice": ("TODAY_ADVICE_FINAL_MODEL", "gpt-6.1-sol"),
+    "consistency": ("DIARY_CONSISTENCY_MODEL", "gpt-6.1-sol"),
 }
 
 

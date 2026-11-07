@@ -57,7 +57,7 @@ def property_value(prop: dict):
     return value if kind in {"number", "checkbox"} else None
 
 
-def case_fields(page: dict, task_cache: dict) -> tuple[str, dict]:
+def case_fields(page: dict, task_cache: dict, *, include_summary: bool = False):
     props = {key: property_value(value) for key, value in page.get("properties", {}).items()}
     payload = {re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_"): value for key, value in props.items()}
     target = str(props.get("Target Date") or props.get("Date") or "")[:10]
@@ -76,7 +76,8 @@ def case_fields(page: dict, task_cache: dict) -> tuple[str, dict]:
     summary = parse_daily_log_payload(payload, target_date=target)
     if summary is None:
         raise ValueError("missing_evaluation_case")
-    return target, build_diary_input_fields(summary)[0]
+    fields = build_diary_input_fields(summary)[0]
+    return (target, fields, summary) if include_summary else (target, fields)
 
 
 def select_cases(pages: list[dict]) -> list[tuple[str, dict]]:
@@ -128,7 +129,8 @@ def main() -> int:
         source = diary_sources(fields)
         system, user = _build_prompts(fields, target)
         location_system, location_user = location_writer.build_location_prompts(location_payload, location_client, location_config)
-        private_case = {"index": case_index, "label": label, "target_date": target, "source_page": page, "fields": fields, "outputs": []}
+        private_case = {"index": case_index, "label": label, "target_date": target, "source_page": page, "fields": fields,
+                        "location_payload": location_payload, "location_prompts": [location_system, location_user], "outputs": []}
         workloads = [
             ("diary", system, user, SENTENCE_FORMAT, ("gpt-4.1-mini", "gpt-6.1-terra")),
             ("location", location_system, location_user, None, ("gpt-4o-mini", "gpt-6.1-terra")),

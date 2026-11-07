@@ -38,9 +38,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/notes_labels
-          key: ${{ runner.os }}-notes-labels-v1-${{ github.run_id }}
+          key: ${{ runner.os }}-notes-labels-v2-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-notes-labels-v1-
+            ${{ runner.os }}-notes-labels-v2-
 
       - name: Run publish
         env:

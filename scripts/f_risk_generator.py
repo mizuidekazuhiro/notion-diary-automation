@@ -1,4 +1,5 @@
 from __future__ import annotations
+from scripts.ai_models import model_for
 
 import json
 import logging
@@ -209,7 +210,7 @@ def generate_f_risk(
     labels = label_notes_in_batches(
         summaries=histories,
         chat_completion=chat_completion,
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        model=model_for("notes"),
         audit=note_audit,
     )
     labels_usable = bool(note_audit.get("labels_usable", not note_audit.get("labeling_failed", False)))
@@ -533,7 +534,7 @@ def generate_f_risk(
     if not text:
         text, stage_b_fallback_used, fallback_reason = _render_f_risk_alert(
         risk_json=risk_json,
-        model=os.getenv("F_RISK_FINAL_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
+        model=os.getenv("F_RISK_FINAL_MODEL", "").strip() or model_for("advice"),
         )
     if text is None:
         return FRiskResult(

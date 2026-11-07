@@ -463,6 +463,7 @@ def _cache_key(*, date: str, note_text: str, model: str) -> str:
 
 def build_notes_label_input_hash(note_text: str, *, model: str | None = None) -> str:
     payload = {"notes": (note_text or "").strip(), "model": model or model_for("notes"),
+               "contract_version": "structured-notes-v3",
                "prompt": load_notes_prompt_assets()}
     return sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -686,6 +687,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             continue
         api_calls += 1
         user_payload = {
+            "allowed_tags": assets.get("allowed_tags", []),
             "target_date": targets[-1]["date"],
             "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in targets],
             "constraints": [

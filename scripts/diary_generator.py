@@ -127,6 +127,8 @@ def validate_sentences(sentences: Any, sources: Mapping[str, Mapping[str, str]])
         if "status_change" in certainties and not re.search(r"タスク|完了|取りやめ|中止", text):
             reasons.append("status_change_not_disclosed")
         normalized_text = text.replace(",", "")
+        if set(refs).issubset({"Location Stays", "Location Window", "Place", "Location summary"}) and re.search(r"働いた|仕事(?:を)?し|勤務した|業務を行", text):
+            reasons.append("unsupported_activity_from_location")
         for key, unit in (("Study Minutes", "分"), ("Workout Duration Min", "分"), ("Expenses Total", "円"),
                           ("Done Count", "件"), ("Drop Count", "件")):
             if key in refs:

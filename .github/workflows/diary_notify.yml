@@ -35,9 +35,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/notes_labels
-          key: ${{ runner.os }}-notes-labels-v1-${{ github.run_id }}
+          key: ${{ runner.os }}-notes-labels-v2-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-notes-labels-v1-
+            ${{ runner.os }}-notes-labels-v2-
 
       - name: Run notify_diary phase
         env:
@@ -61,7 +61,10 @@ jobs:
           EXPENSE_MERCHANT_PROP: ${{ secrets.EXPENSE_MERCHANT_PROP }}
           EXPENSE_AMOUNT_PROP: ${{ secrets.EXPENSE_AMOUNT_PROP }}
           EXPENSE_CATEGORY_PROP: ${{ secrets.EXPENSE_CATEGORY_PROP }}
-          OPENAI_MODEL: gpt-4.1-mini
+          NOTES_LABEL_MODEL: gpt-6-luna
+          DIARY_MODEL: gpt-6.1-terra
+          TODAY_ADVICE_FINAL_MODEL: gpt-6.1-sol
+          DIARY_CONSISTENCY_MODEL: gpt-6.1-sol
           DAILY_MAIL_TODAY_ADVICE_MIN_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MIN_CHARS }}
           DAILY_MAIL_TODAY_ADVICE_MAX_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MAX_CHARS }}
           GITHUB_TOKEN: ${{ github.token }}

@@ -46,6 +46,7 @@ import {
 } from "./application/study_session";
 
 interface Env {
+  APP_VERSION?: string;
   NOTION_TOKEN: string;
   INBOX_DB_ID: string;
   TASK_DB_ID: string;
@@ -408,8 +409,8 @@ function methodNotAllowed(message = "method not allowed"): Response {
   });
 }
 
-function healthCheck(): Response {
-  return new Response(JSON.stringify({ status: "ok" }), {
+function healthCheck(env: Env): Response {
+  return new Response(JSON.stringify({ status: "ok", version: env.APP_VERSION || "unknown" }), {
     headers: jsonHeaders,
   });
 }
@@ -5922,7 +5923,7 @@ export default {
             ? handleTaskPromoteConfirm(request)
             : Promise.resolve(methodNotAllowed("use GET /confirm/tasks/promote")),
         [ROUTES.TASKS_PROMOTE_EXECUTE]: () => handleTaskPromoteExecute(request, env),
-        [ROUTES.HEALTH]: () => Promise.resolve(healthCheck()),
+        [ROUTES.HEALTH]: () => Promise.resolve(healthCheck(env)),
       });
 
       if (routed) {
