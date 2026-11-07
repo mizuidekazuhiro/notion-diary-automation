@@ -17,7 +17,8 @@ def main():
     rows = [parse_daily_log_payload({'found': True, 'page_id': 'synthetic', 'target_date': day, 'notes': text}, target_date=day)
         for day, text in [('2000-01-01','疲れていてストレスを感じた。昨夜は眠れなかった。'),
                           ('2000-01-02','コーヒーを飲んだ。協議タスクを完了に変更したが、実施日は未確認。'),
-                          ('2000-01-03','ジムで筋トレをした。')]]
+                          ('2000-01-03','ジムで筋トレをした。'),
+                          ('2000-01-04','資料を完成させて、達成感を覚えた。')]]
     report = []
     for model in dict.fromkeys(('gpt-4.1-mini', model_for('notes'))):
         os.environ['NOTES_LABEL_CACHE_DIR'] = f'.runtime/control-cache/{model}'
@@ -33,6 +34,7 @@ def main():
                       'stress': labels['2000-01-01'].stress_flag,
                       'sleep_issue': labels['2000-01-01'].sleep_issue_flag,
                       'state_change_is_not_achievement': not labels['2000-01-02'].achievement_flag,
+                      'explicit_outcome_is_verified': labels['2000-01-04'].achievement_flag and labels['2000-01-04'].derived_flags.get('outcome_verification_complete') is True,
                       'exercise': any(s.get('tag') in {'exercise','gym'} for s in labels['2000-01-03'].signals)}
         report.append({'role': 'notes', 'model': model, 'selected':model==model_for('notes'), 'assertions': assertions, 'usage': usage,
                        'source_grounding_rejections': audit.get('source_grounding_rejections', {}),
