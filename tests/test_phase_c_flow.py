@@ -609,20 +609,7 @@ def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
     assert status["mismatch_fields"] == []
 
 
-def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fallback() -> None:
-    source = Path("workers/src/index.ts").read_text(encoding="utf-8")
-
-    assert "resolveExactPropertyName(\n    properties,\n    getWeatherPropertyName(env),\n    \"daily_log_read:weather\"," in source
-    assert "resolveExactPropertyName(\n    properties,\n    getWeatherSummaryPropertyName(env),\n    \"daily_log_read:weather_summary\"," in source
-    assert "[\"Weather Summary\", \"weather\", \"weather_summary\"]" not in source
-    assert "[\"Weather\", \"weather\", \"weather_summary\"]" not in source
-    assert "? getStringFromProperty(properties[weatherPropertyName])" in source
-    assert "? getStringFromProperty(properties[weatherSummaryPropertyName])" in source
-    assert "const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);" in source
-    assert "const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);" in source
-    assert "function getIsoStringFromProperty(property: Record<string, any> | undefined): string {" in source
-    assert "? getIsoStringFromProperty(properties[weatherRetrievedAtPropertyName])" in source
-    assert "? getIsoStringFromProperty(properties[weatherGeneratedAtPropertyName])" in source
+# Weather resolution is exercised through Worker.fetch in index.weather_read_contract.test.ts.
 
 
 
