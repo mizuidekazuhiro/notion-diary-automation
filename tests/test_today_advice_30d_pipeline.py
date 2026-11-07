@@ -389,7 +389,7 @@ def test_invalid_sleep_not_treated_as_short_sleep() -> None:
         pytest.skip("pandas not installed")
     h = _summary(1, sleep_start=None, sleep_end=None, sleep_duration_min=0, sleep_score=0)
     df = build_daily_feature_table([h], {})
-    assert bool(df.iloc[0]["sleep_lt_6h_flag"]) is False
+    assert __import__("pandas").isna(df.iloc[0]["sleep_lt_6h_flag"])
 
 
 def test_invalid_sleep_excluded_from_sleep_lag_features() -> None:

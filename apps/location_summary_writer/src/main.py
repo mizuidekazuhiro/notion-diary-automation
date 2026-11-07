@@ -149,7 +149,7 @@ class NotionClient:
 
             resp = self.session.post(url, json=body, timeout=30)
             if resp.status_code >= 400:
-                raise RuntimeError(f"Notion query failed ({resp.status_code}): {resp.text}")
+                raise RuntimeError(f"Notion query failed status={resp.status_code} request_id={resp.headers.get('x-request-id', '-')}")
 
             data = resp.json()
             all_results.extend(data.get("results", []))
@@ -163,7 +163,7 @@ class NotionClient:
         url = f"https://api.notion.com/v1/pages/{page_id}"
         resp = self.session.patch(url, json={"properties": properties}, timeout=30)
         if resp.status_code >= 400:
-            raise RuntimeError(f"Notion update failed ({resp.status_code}): {resp.text}")
+            raise RuntimeError(f"Notion update failed status={resp.status_code} request_id={resp.headers.get('x-request-id', '-')}")
 
 
 def load_config() -> Config:

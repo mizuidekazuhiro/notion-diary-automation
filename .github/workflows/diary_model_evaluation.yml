@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: write
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
@@ -16,6 +17,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt cryptography
+      - name: Verify Notes cache persistence with synthetic content
+        uses: actions/cache@v4
+        with:
+          path: .cache/notes_labels
+          key: ${{ runner.os }}-notes-labels-v2-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-notes-labels-v2-
+      - run: python -c "from pathlib import Path; p=Path('.cache/notes_labels'); p.mkdir(parents=True,exist_ok=True); (p/'cache_canary.json').write_text('{\"synthetic_canary\":true}')"
       - name: Compare without Notion writes or mail
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

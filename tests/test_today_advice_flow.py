@@ -575,7 +575,8 @@ def test_structured_comparison_includes_meal_notes_location_signals() -> None:
     location = structured["comparisons"]["location_pattern_comparison"]
     assert location["high_mood"]["office_heavy_day_rate"] == 1.0
     assert location["low_mood"]["home_heavy_day_rate"] == 1.0
-    assert location["low_mood"]["late_outing_day_rate"] == 0.5
+    # Neither "夜まで" nor a daytime route establishes late-night activity.
+    assert location["low_mood"]["late_outing_day_rate"] is None
 
 
 def test_generation_context_adds_structured_non_sleep_comparisons(monkeypatch) -> None:

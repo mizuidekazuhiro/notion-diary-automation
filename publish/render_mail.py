@@ -7,6 +7,7 @@ import hmac
 import os
 import time
 import html
+import json
 from typing import Any, Optional
 
 from publish.email_templates import render_daily_log_html, render_daily_log_text
@@ -136,6 +137,13 @@ def render_mail(
         "expense_f_alert": expense_f_alert or {},
         "mood_notes_url": "",
     }
+    try:
+        generation = json.loads(summary.generation_metadata or "{}")
+        payload["advice_target_date"] = generation.get("advice", {}).get("target_date")
+        payload["weather_target_date"] = generation.get("weather", {}).get("target_date")
+    except (ValueError, TypeError, AttributeError):
+        pass
+    payload["risk_target_date"] = (f_risk_alert or {}).get("prediction_date") or (f_risk_alert or {}).get("target_date")
     plain_text = render_daily_log_text(payload)
     if mood_notes_url:
         mood_notes_text = f"""

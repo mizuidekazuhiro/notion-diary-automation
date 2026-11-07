@@ -1539,6 +1539,9 @@ def _generate_and_save_weather(
         "weather_retrieved_at": weather.retrieved_at,
         "weather_input_hash": current_input_hash,
         "weather_generated_at": _utc_timestamp(),
+        "generation_metadata": _generation_metadata(summary, "weather", {
+            "target_date": weather_forecast_date_jst, "status": "success", "provider": WEATHER_PROVIDER,
+        }),
     }
     logging.info(
         "weather_summary_generated=%s daily_log_target_date=%s weather_forecast_date_jst=%s weather_retrieved_at=%s location_source=%s resolution_method=%s precipitation_sum=%s weather_summary_chars=%s",

@@ -1475,7 +1475,7 @@ def generate_today_advice(
         lightgbm_summary = run_lightgbm_low_mood(
             feature_df,
             today_feature_overrides=lightgbm_today_overrides or None,
-            today_feature_date=target_date,
+            today_feature_date=context["advice_target_date"],
         )
         audit.put("lightgbm", lightgbm_summary)
         audit.info(
@@ -1518,7 +1518,7 @@ def generate_today_advice(
         )
         audit.info("[Sleep] renderer_received_sleep_context=%s", safe_json(today_sleep_context))
         today_sleep_hours = analysis_json.get("today_sleep_context", {}).get("sleep_hours")
-        today_bedtime = (today_summary.sleep_start or "")[11:16] if today_summary.sleep_start else None
+        today_bedtime = today_sleep_context.get("bedtime")
         today_sleep_score = analysis_json.get("today_sleep_context", {}).get("sleep_score")
         today_condition_flags = {
             "prev_sleep_lt_6h": bool(today_sleep_hours is not None and today_sleep_hours < 6),

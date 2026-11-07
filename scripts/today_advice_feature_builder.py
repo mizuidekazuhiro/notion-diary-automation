@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import os
+import json
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
@@ -261,6 +262,13 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
             for col in df.columns:
                 if col.startswith("notes_") and col not in {"notes_present_flag", "notes_parse_quality_score"}:
                     df.at[index, col] = np.nan
+        try:
+            weather_date = json.loads(item.generation_metadata or "{}").get("weather", {}).get("target_date")
+        except (ValueError, TypeError, AttributeError):
+            weather_date = None
+        if weather_date != item.target_date:
+            for col in ("weather_bad_flag", "weather_code", "weather_temp_max_c", "weather_temp_min_c", "weather_precip_probability_max", "weather_temp_range_c"):
+                df.at[index, col] = np.nan
         if not ((item.notes or "").strip() or (item.activity_summary or "").strip()):
             for col in ("transport_spend_like_flag", "social_spend_like_flag", "social_event_like_flag", "movement_intensity_like_flag"):
                 df.at[index, col] = np.nan

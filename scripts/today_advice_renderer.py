@@ -34,6 +34,11 @@ def build_analysis_json(
     location_days = int(recent7["late_outing_flag"].notna().sum()) if "late_outing_flag" in recent7 else 0
     fatigue_days = int(recent7["notes_fatigue_flag"].notna().sum()) if "notes_fatigue_flag" in recent7 else 0
     behavior = []
+    for column, label in (("task_done_count", "完了への変更"), ("task_drop_count", "取りやめへの変更")):
+        if column in recent7:
+            values = recent7[column].dropna()
+            if len(values):
+                behavior.append(f"直近7日の記録：{label}は{len(values)}日分で合計{int(values.sum())}件")
     if location_days:
         behavior.append(f"直近7日の位置記録がある{location_days}日中、夜遅い外出の記載が{late_count}日")
     if fatigue_days:
