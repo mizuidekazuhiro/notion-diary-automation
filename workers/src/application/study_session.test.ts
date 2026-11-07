@@ -142,13 +142,18 @@ assert.deepEqual(aggregateStudyPages([legacyAnki, pcAnki, itojuku]), {
   sessions: 9,
   lastUsedAt: "2026-08-10T13:00:00.000Z",
   ankiRevlogAuthoritative: true,
+  dataStatus: "observed",
 });
 assert.deepEqual(aggregateStudyPages([legacyAnki, itojuku]), {
   minutes: 50,
   sessions: 2,
   lastUsedAt: "2026-08-10T13:00:00.000Z",
   ankiRevlogAuthoritative: false,
+  dataStatus: "observed",
 });
+assert.equal(aggregateStudyPages([]).dataStatus, "missing");
+assert.equal(aggregateStudyPages([{ ...pcAnki, properties: { ...pcAnki.properties, "Duration Min": { number: 0 }, "Session Count": { number: 0 } } }]).dataStatus, "confirmed_zero");
+assert.equal(aggregateStudyPages([itojuku, itojuku]).minutes, 30);
 
 const originalFetch = globalThis.fetch;
 const unauthorizedResponse = await handleStudyAnkiDaily(new Request("https://worker.test/execute/api/study/anki-daily", {

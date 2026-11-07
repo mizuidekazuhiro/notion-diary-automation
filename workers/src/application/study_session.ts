@@ -73,6 +73,7 @@ export type StudyTotals = {
   sessions: number;
   lastUsedAt: string | null;
   ankiRevlogAuthoritative: boolean;
+  dataStatus: "observed" | "confirmed_zero" | "missing" | "parse_failed" | "partial";
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
@@ -305,6 +306,12 @@ function pageRecency(page: Record<string, any>): string {
 }
 
 export function aggregateStudyPages(pages: Record<string, any>[]): StudyTotals {
+  const unique = new Map<string, Record<string, any>>();
+  for (const page of [...pages].sort((a, b) => pageRecency(b).localeCompare(pageRecency(a)))) {
+    const key = getRichText(page, "Session ID") || String(page.id);
+    if (!unique.has(key)) unique.set(key, page);
+  }
+  pages = [...unique.values()];
   const revlogPages = pages.filter(isAnkiRevlogPage).sort((a, b) => pageRecency(b).localeCompare(pageRecency(a)));
   const authoritativeAnki = revlogPages[0] ?? null;
   const effectivePages = authoritativeAnki
@@ -327,6 +334,9 @@ export function aggregateStudyPages(pages: Record<string, any>[]): StudyTotals {
     sessions,
     lastUsedAt,
     ankiRevlogAuthoritative: Boolean(authoritativeAnki),
+    dataStatus: pages.length === 0 ? "missing"
+      : effectivePages.some((page) => typeof page.properties?.["Duration Min"]?.number !== "number") ? "parse_failed"
+      : minutes === 0 ? (authoritativeAnki ? "confirmed_zero" : "partial") : "observed",
   };
 }
 
@@ -368,11 +378,20 @@ async function syncDailyLogTotals(
   const page = chooseCanonicalDailyLogPage(pages as any[], targetDate);
   if (!page?.id) return { updated: false, pageId: null };
 
-  const properties: Record<string, any> = {
+  const properties: Record<string, any> = totals.dataStatus === "missing" || totals.dataStatus === "parse_failed" ? {} : {
     "Study Minutes": numberProperty(totals.minutes),
     "Study Sessions": numberProperty(totals.sessions),
     "Study Last Used At": totals.lastUsedAt ? dateProperty(totals.lastUsedAt) : { date: null },
   };
+  if (page.properties?.["Data Status JSON"]) {
+    let status: Record<string, unknown> = {};
+    try { status = JSON.parse(getRichText(page, "Data Status JSON") || "{}"); } catch { /* replaced with explicit current source status */ }
+    properties["Data Status JSON"] = richTextProperty(JSON.stringify({ ...status, study: {
+      status: totals.dataStatus, scope: "recorded_sessions_only", anki_authoritative: totals.ankiRevlogAuthoritative,
+      checked_at: new Date().toISOString(),
+    } }));
+  }
+  if (Object.keys(properties).length === 0) return { updated: false, pageId: page.id };
   await update_page_property(env, page.id, properties);
   return { updated: true, pageId: page.id };
 }
