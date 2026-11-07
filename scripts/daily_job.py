@@ -79,7 +79,10 @@ from scripts.voice_diary_notes import (
 from scripts.note_batch_labeler import (
     build_notes_label_persistence_payload,
     build_notes_label_input_hash,
-    has_persisted_note_label,
+    has_persisted_note_label,  # Legacy import facade.
+    label_has_failure,
+    load_persisted_note_label,
+    notes_policy_signature,
     label_notes_in_batches,
 )
 
@@ -934,8 +937,8 @@ def _advice_generation_policy() -> dict[str, Any]:
     return {**generation_signature("advice", (
         "scripts/today_advice_renderer.py", "scripts/advice_evidence.py", "scripts/today_advice_feature_builder.py",
         "scripts/today_advice_pattern_analyzer.py", "scripts/today_advice_regression.py", "scripts/today_advice_lightgbm.py",
-        "scripts/mood_advice_generator.py", "scripts/today_advice_context.py", "scripts/notes_quality.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py", "scripts/note_batch_labeler.py",
-    )), "notes_model": model_for("notes"), "max_chars": today_advice_char_limits()[1]}
+        "scripts/mood_advice_generator.py", "scripts/today_advice_context.py", "scripts/notes_quality.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py", "scripts/note_batch_labeler.py", "scripts/note_outcome_validator.py",
+    )), "notes_model": model_for("notes"), "notes_policy": notes_policy_signature(), "max_chars": today_advice_char_limits()[1]}
 
 
 def _verify_generation_readback(config: Any, target_date: str, expected: dict[str, Any]) -> Any:
@@ -1072,6 +1075,7 @@ def _generate_and_save_today_advice(
         advice_result.judgment_json.get("evidence_used", []),
     )
     analysis = advice_result.judgment_json.get("analysis_json", {})
+    notes_metrics = advice_result.judgment_json.get("analysis_audit", {}).get("notes_labeling", {})
     advice_payload = {
         "today_advice": advice_result.today_advice,
         "today_advice_input_hash": current_input_hash,
@@ -1083,6 +1087,15 @@ def _generate_and_save_today_advice(
             "reflection_date": summary.target_date, "target_date": context.get("advice_target_date"),
             "target_counts": analysis.get("target_counts", {}),
             "risk_level": analysis.get("risk_level", "unknown"),
+            "failure_stage": analysis.get("failure_stage"),
+            "source_validation": {
+                "classification_status": notes_metrics.get("classification_status", "skipped"),
+                "classification_failed_count": notes_metrics.get("classification_failed_count", 0),
+                "status": notes_metrics.get("outcome_validation_status", "skipped"),
+                "model": notes_metrics.get("outcome_validation_model"),
+                "calls": notes_metrics.get("outcome_validation_calls", 0),
+                "errors": notes_metrics.get("outcome_validation_errors", []),
+            },
             "input_hash": current_input_hash,
             "repetition_diagnosis": {"same_text_as_previous": summary.today_advice == advice_result.today_advice,
                                      "input_changed": input_changed,
@@ -1118,9 +1131,7 @@ def _ensure_notes_label_persisted(
     run_id: str,
 ) -> "DailyLogSummary":
     notes_text = (summary.notes or "").strip()
-    expected_hash = build_notes_label_input_hash(notes_text)
-    persisted_hash = str(summary.notes_label_input_hash or "").strip()
-    if notes_text and has_persisted_note_label(summary) and expected_hash == persisted_hash:
+    if notes_text and load_persisted_note_label(summary) is not None:
         logging.info(
             "phase_c_notes_label_saved target_date(JST)=%s run_id=%s updated=%s skip_reason=matched_hash",
             summary.target_date,
@@ -1132,6 +1143,7 @@ def _ensure_notes_label_persisted(
     labels = label_notes_in_batches(
         summaries=[summary],
         chat_completion=chat_completion,
+        outcome_chat_completion=chat_completion,
         model=model_for("notes"),
         audit=note_audit,
     )
@@ -1154,7 +1166,12 @@ def _ensure_notes_label_persisted(
         save_result.get("reason"),
         note_audit.get("persisted_hit_count", 0),
     )
-    refreshed_summary = _refresh_daily_log_summary(config, summary.target_date)
+    if not save_result.get("updated"):
+        raise RuntimeError("notes_label_save_unconfirmed")
+    refreshed_summary = _verify_generation_readback(config, summary.target_date, payload)
+    if label_has_failure(label):
+        reason = "notes_outcome_validation_unavailable" if label.derived_flags.get("outcome_validation_failed") else "notes_classification_unavailable"
+        raise PhaseSemanticDegradation(reason)
     return refreshed_summary or summary
 
 
@@ -1576,6 +1593,10 @@ def _compute_f_risk_alert_runtime(
 
     hash_payload = {
         "target_date": f_risk_target_date,
+        "generation_policy": {
+            **generation_signature("notes", ("scripts/f_risk_generator.py", "scripts/note_batch_labeler.py", "scripts/note_outcome_validator.py")),
+            "notes_policy": notes_policy_signature(),
+        },
         "daily_log_context_date": getattr(summary, "target_date", None),
         "sleep": {
             "sleep_hours": getattr(summary, "resolved_sleep_duration_hours", None),

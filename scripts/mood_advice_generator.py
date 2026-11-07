@@ -15,8 +15,9 @@ from typing import Any, Mapping, Optional, Sequence
 from publish.read_daily_log import DailyLogSummary, parse_daily_log_payload, read_daily_log
 from ingest.http_client import fetch_json
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from scripts.note_batch_labeler import label_notes_in_batches
+from scripts.note_batch_labeler import NoteClassificationUnavailable, label_notes_in_batches
 from scripts.notes_quality import assess_notes_quality
+from scripts.note_outcome_validator import OutcomeValidationUnavailable
 from scripts.openai_chat_utils import (
     _build_chat_messages,
     chat_completion as shared_chat_completion,
@@ -747,6 +748,7 @@ def generate_today_advice(
         note_labels = label_notes_in_batches(
             summaries=historical_summaries,
             chat_completion=_chat_completion,
+            outcome_chat_completion=shared_chat_completion,
             model=mini_model,
             raw_response_dir=notes_debug_dir,
             audit=note_label_audit,
@@ -757,6 +759,11 @@ def generate_today_advice(
         )
         note_labels = notes_quality.labels
         notes_payload = notes_quality.audit_metrics
+
+        if note_label_audit.get("outcome_validation_status") == "failed":
+            raise OutcomeValidationUnavailable("notes_outcome_validation_unavailable")
+        if note_label_audit.get("classification_status") == "failed":
+            raise NoteClassificationUnavailable("notes_classification_unavailable")
 
         feature_df = build_daily_feature_table(historical_summaries, note_labels)
         history_by_date = {item.target_date: item for item in historical_summaries}
@@ -990,6 +997,7 @@ def generate_today_advice(
             "risk_level": "unknown",
             "primary_focus": "不明",
             "skipped_reason": "analysis_failed",
+            "failure_stage": "notes_outcome_validation" if isinstance(exc, OutcomeValidationUnavailable) else "notes_classification" if isinstance(exc, NoteClassificationUnavailable) else "analysis",
             "fallback_used": True,
             "final_status": "failed",
         }

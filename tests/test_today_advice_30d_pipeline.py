@@ -17,6 +17,21 @@ HAS_PANDAS = importlib.util.find_spec("pandas") is not None
 HAS_SKLEARN = importlib.util.find_spec("sklearn") is not None
 
 
+def _successful_notes_and_text(text="本文"):
+    """Keep successful pipeline fixtures valid for the classifier JSON interface."""
+    def chat(**kwargs):
+        try:
+            payload = json.loads(kwargs["user_prompt"])
+        except (ValueError, TypeError):
+            return text
+        if not isinstance(payload, dict) or not isinstance(payload.get("rows"), list):
+            return text
+        return json.dumps({"rows": [{"id": row["id"], "date": row["date"],
+            "tags": ["fatigue"] if "疲" in row["text"] else ["stable"],
+            "meta": {"parse_quality": "high"}} for row in payload["rows"]]})
+    return chat
+
+
 def _patch_history_result(
     monkeypatch: pytest.MonkeyPatch,
     generator_module,
@@ -234,7 +249,7 @@ def test_analysis_audit_json_has_required_keys(monkeypatch) -> None:
     monkeypatch.setattr(
         generator,
         "_chat_completion",
-        lambda **kwargs: "監査ログ確認用の本文です。",
+        _successful_notes_and_text("監査ログ確認用の本文です。"),
     )
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
@@ -268,7 +283,7 @@ def test_exploratory_analysis_is_included_in_audit_log(monkeypatch) -> None:
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
     _patch_history_result(monkeypatch, generator, [target, *histories])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+    monkeypatch.setattr(generator, "_chat_completion", _successful_notes_and_text())
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
@@ -286,7 +301,7 @@ def test_notes_label_count_reflected_in_audit_log(monkeypatch) -> None:
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
     _patch_history_result(monkeypatch, generator, [target, *histories])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+    monkeypatch.setattr(generator, "_chat_completion", _successful_notes_and_text())
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
@@ -305,7 +320,7 @@ def test_notes_quality_warning_when_non_empty_but_no_signals(monkeypatch) -> Non
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
     _patch_history_result(monkeypatch, generator, [target, *histories])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+    monkeypatch.setattr(generator, "_chat_completion", _successful_notes_and_text())
 
     def _fake_labeler(**kwargs: object) -> dict[str, object]:
         audit = kwargs.get("audit")
@@ -347,7 +362,7 @@ def test_regression_availability_reflected_in_audit_log(monkeypatch) -> None:
     target = _summary(20, target_date="2026-03-20")
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
     _patch_history_result(monkeypatch, generator, [target, *histories])
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: "本文")
+    monkeypatch.setattr(generator, "_chat_completion", _successful_notes_and_text())
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None
@@ -366,7 +381,7 @@ def test_final_text_is_saved_in_audit_log(monkeypatch) -> None:
     monkeypatch.setenv("TODAY_ADVICE_DEBUG", "true")
     _patch_history_result(monkeypatch, generator, [target, *histories])
     generated = "これは直近7日の行動記録を踏まえて最初のタスクの進め方を具体的に確認するための最終本文です。" * 5
-    monkeypatch.setattr(generator, "_chat_completion", lambda **kwargs: generated)
+    monkeypatch.setattr(generator, "_chat_completion", _successful_notes_and_text(generated))
 
     result = generator.generate_today_advice(daily_log_read_url="read", bearer_token=None, target_date="2026-03-20")
     assert result is not None

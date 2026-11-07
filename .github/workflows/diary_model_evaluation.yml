@@ -26,6 +26,9 @@ jobs:
       - env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MAX_RETRIES: "0"
+          NOTES_LABEL_MODEL: ${{ vars.NOTES_LABEL_MODEL }}
+          DIARY_CONSISTENCY_MODEL: ${{ vars.DIARY_CONSISTENCY_MODEL }}
+          SLEEP_INSIGHT_MODEL: ${{ vars.SLEEP_INSIGHT_MODEL }}
         run: python scripts/check_model_controls.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -50,9 +53,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/notes_labels
-          key: ${{ runner.os }}-notes-labels-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-notes-labels-v3-encrypted-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-notes-labels-v2-
+            ${{ runner.os }}-notes-labels-v3-encrypted-
       - run: python -c "from pathlib import Path; p=Path('.cache/notes_labels'); p.mkdir(parents=True,exist_ok=True); (p/'cache_canary.json').write_text('{\"synthetic_canary\":true}')"
       - name: Compare without Notion writes or mail
         env:

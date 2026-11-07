@@ -36,6 +36,12 @@ class NotesQualityMetrics(TypedDict, total=False):
     dataframe_flag_counts: dict[str, int]
     top_tags: list[tuple[str, int]]
     source_grounding_rejections: dict[str, int]
+    outcome_validation_status: str
+    outcome_validation_calls: int
+    outcome_validation_errors: list[str]
+    outcome_validation_model: str
+    classification_status: str
+    classification_failed_count: int
 
 
 @dataclass(frozen=True)
@@ -100,6 +106,12 @@ def assess_notes_quality(
         "notes_unmatched_response_dates_count": int(note_label_audit.get("notes_unmatched_response_dates_count", 0) or 0),
         "merge_failed_reason": note_label_audit.get("merge_failed_reason"),
         "source_grounding_rejections": note_label_audit.get("source_grounding_rejections", {}),
+        "outcome_validation_status": note_label_audit.get("outcome_validation_status", "skipped"),
+        "outcome_validation_calls": note_label_audit.get("outcome_validation_calls", 0),
+        "outcome_validation_errors": note_label_audit.get("outcome_validation_errors", []),
+        "outcome_validation_model": note_label_audit.get("outcome_validation_model", ""),
+        "classification_status": note_label_audit.get("classification_status", "skipped"),
+        "classification_failed_count": note_label_audit.get("classification_failed_count", 0),
     }
     missing_ids = list(note_label_audit.get("missing_ids") or [])
     missing_ids_detail = [

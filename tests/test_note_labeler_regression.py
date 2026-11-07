@@ -78,6 +78,7 @@ def _summary(target_date: str, notes: str) -> DailyLogSummary:
 
 
 def test_note_label_cache_reuses_result_without_openai(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-cache-key-not-for-network")
     monkeypatch.delenv("NOTES_LABEL_CACHE_DISABLE", raising=False)
     monkeypatch.setenv("NOTES_LABEL_CACHE_DIR", str(tmp_path / "notes_labels"))
     summary = _summary("2026-03-20", "疲れた")

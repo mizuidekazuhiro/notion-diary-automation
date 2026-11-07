@@ -308,7 +308,8 @@ def test_weather_roundtrip_compare_ignores_unfetched_fields() -> None:
 
 
 @pytest.mark.parametrize("valid_length", [True, False])
-def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeypatch, valid_length) -> None:
+@pytest.mark.parametrize("validation_model_changed", [False, True])
+def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeypatch, valid_length, validation_model_changed) -> None:
     summary = _summary(today_advice="existing advice")
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     save_calls: list[dict[str, object]] = []
@@ -338,6 +339,8 @@ def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeyp
     advice = "記録から新たな提案はありません。"
     summary = _summary(today_advice=advice, today_advice_input_hash=current_hash,
                       generation_metadata=json.dumps({"advice": {"status": "success" if valid_length else "degraded"}}))
+    if validation_model_changed:
+        monkeypatch.setenv("DIARY_CONSISTENCY_MODEL", "synthetic-changed-consistency-model")
 
     monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
@@ -352,8 +355,8 @@ def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeyp
     result = daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
     assert result == state["summary"]
-    assert len(generation_calls) == (0 if valid_length else 1)
-    assert len(save_calls) == (0 if valid_length else 1)
+    assert len(generation_calls) == (0 if valid_length and not validation_model_changed else 1)
+    assert len(save_calls) == (0 if valid_length and not validation_model_changed else 1)
 
 
 def test_resolve_target_date_defaults_to_yesterday_and_supports_today_mode(monkeypatch) -> None:

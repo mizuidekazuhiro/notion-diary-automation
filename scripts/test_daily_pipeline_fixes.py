@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from scripts.daily_job import _compute_expense_f_alert
@@ -65,7 +66,13 @@ def test_notes_partial_retry_keeps_successful_results():
         return '{"rows":[{"id":"note_0001_2026-03-28","date":"2026-03-28","signals":[{"tag":"achievement","confidence":0.9}]}]}'
 
     audit = {}
-    labels = label_notes_in_batches(rows, chat_completion=fake_chat_completion, model="x", batch_size=8, audit=audit)
+    def verify_outcome(**kwargs):
+        candidates = json.loads(kwargs["user_prompt"])["rows"]
+        assert len(candidates) == 1 and candidates[0]["text"] == "進んだ"
+        return json.dumps({"rows": [{"id": candidates[0]["id"], "decisions": [
+            {"tag": "achievement", "grounded": True, "quote": "進んだ"}]}]})
+    labels = label_notes_in_batches(rows, chat_completion=fake_chat_completion,
+        outcome_chat_completion=verify_outcome, model="x", batch_size=8, audit=audit)
     assert labels["2026-03-27"].fatigue_flag is True
     assert labels["2026-03-28"].achievement_flag is True
     assert "notes_date_merge_success_rate" in audit
