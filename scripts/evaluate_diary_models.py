@@ -170,9 +170,19 @@ def main() -> int:
                 usage = []
                 started = time.perf_counter()
                 text = ""
+                saved_text = None
                 try:
                     text = chat_completion(model=model, system_prompt=system_prompt, user_prompt=user_prompt, response_format=response_format, usage_sink=usage)
                     reasons = validate_sentences(json.loads(text).get("sentences"), source) if role == "diary" else []
+                    if role == "location":
+                        normalized = location_writer.normalize_diary_output(text)
+                        projected = location_writer.build_summary_property(
+                            {"properties": {"summary": {"type": "rich_text"}}}, "summary", normalized,
+                        )
+                        saved_text = "".join(item["text"]["content"] for item in projected["summary"]["rich_text"])
+                        if not saved_text or saved_text != normalized:
+                            reasons.append("location_storage_projection_mismatch")
+                        record["postprocess_applied"] = True
                     if role == "consistency" and json.loads(text).get("grounded") is not False:
                         reasons.append("failed_to_reject_unsupported_payment_claim")
                     status = "rejected" if reasons else "generated_for_review"
@@ -185,7 +195,7 @@ def main() -> int:
                 budget_used += bound if unknown else known_cost
                 report["results"].append({**record, "status": status, "reasons": reasons, "latency_ms": int((time.perf_counter()-started)*1000),
                     "usage": usage, "standard_price_estimate_usd": known_cost, "unknown_usage_attempts": unknown})
-                private_case["outputs"].append({**record, "text": text, "reasons": reasons})
+                private_case["outputs"].append({**record, "text": text, "saved_text": saved_text, "reasons": reasons})
         private["cases"].append(private_case)
     report.update(budget_accounted_usd=budget_used, cost_basis="公式Standard単価と実応答のusage。請求明細の実費ではない。使用量不明の試行は保守的上限で予算計上。",
                   input_scope="過去の保存記録と同日の位置原本。分類の空欄/状態変更は明示した合成対照、整合性は故意に誤りを入れた支払由来の主張。")

@@ -210,9 +210,22 @@ def generate_f_risk(
     labels = label_notes_in_batches(
         summaries=histories,
         chat_completion=chat_completion,
+        outcome_chat_completion=chat_completion,
         model=model_for("notes"),
         audit=note_audit,
     )
+    risk_json["notes_source_validation"] = {
+        "classification_status": note_audit.get("classification_status", "skipped"),
+        "outcome_status": note_audit.get("outcome_validation_status", "skipped"),
+        "model": note_audit.get("outcome_validation_model"),
+        "calls": note_audit.get("outcome_validation_calls", 0),
+        "errors": note_audit.get("outcome_validation_errors", []),
+    }
+    if note_audit.get("outcome_validation_status") == "failed" or note_audit.get("classification_status") == "failed":
+        reason = "notes_source_validation_unavailable"
+        risk_json.update({"skipped_reason": reason, "no_alert_reason": reason,
+                          "notes_labeling_ok": False, "notes_labeling_quality": "failed", "data_status": "failed"})
+        return FRiskResult(None, None, None, [], reason, {"risk_json": risk_json})
     labels_usable = bool(note_audit.get("labels_usable", not note_audit.get("labeling_failed", False)))
     merge_quality_low = bool(note_audit.get("merge_quality_low", False))
     logging.info(

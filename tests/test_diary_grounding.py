@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from scripts import diary_generator as diary
 
 
@@ -76,3 +78,103 @@ def test_event_assertion_is_rejected_independently_of_certainty_or_emotion():
     reasons = diary.validate_sentences([{"text": "完了タスクの取引先との協議を行った。",
                                         "sources": ["Done Tasks Detail"], "certainty": "status_change"}], sources)
     assert reasons == ["unsupported_event"]
+
+
+@pytest.mark.parametrize("claim", [
+    "滞在先で働きました。", "滞在先で働いていました。",
+    "滞在先で仕事をしました。", "滞在先で勤務しました。",
+    "滞在先で働きましたが、詳細は不明です。",
+])
+def test_location_alone_does_not_establish_work_in_polite_or_continuous_form(claim):
+    from scripts.diary_generator import diary_sources, validate_sentences
+
+    sources = diary_sources({"Location Stays": "職場として記録された場所に滞在"})
+    reasons = validate_sentences([
+        {"text": claim, "sources": ["Location Stays"], "certainty": "recorded"},
+    ], sources)
+    assert "unsupported_activity_from_location" in reasons
+
+
+def test_location_stay_and_personally_reported_work_remain_supported():
+    from scripts.diary_generator import diary_sources, validate_sentences
+
+    fields = {"Location Stays": "職場として記録された場所に滞在", "Notes": "滞在先で働きました。"}
+    sources = diary_sources(fields)
+    assert validate_sentences([
+        {"text": "職場として記録された場所に滞在しました。", "sources": ["Location Stays"], "certainty": "recorded"},
+    ], sources) == []
+    assert validate_sentences([
+        {"text": "滞在先で働きました。", "sources": ["Notes"], "certainty": "reported"},
+    ], sources) == []
+
+
+def test_unsupported_polite_work_claim_is_rejected_before_consistency_api(monkeypatch):
+    import json
+    from scripts import diary_generator
+
+    calls = []
+    def respond(**kwargs):
+        calls.append(kwargs["model"])
+        if len(calls) == 1:
+            return json.dumps({"sentences": [{"text": "滞在先で働きました。", "sources": ["Location Stays"], "certainty": "recorded"}]})
+        return json.dumps({"grounded": True, "violations": []})
+    monkeypatch.setattr(diary_generator, "chat_completion", respond)
+    result = diary_generator.generate_diary_result({"Location Stays": "職場として記録された場所に滞在"}, "2026-11-06")
+    assert result.status == "degraded"
+    assert result.fallback_used is True
+    assert "unsupported_activity_from_location" in result.rejection_reasons
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("extra,value", [
+    ("Data Status", '{"study":{"status":"missing"}}'),
+    ("Sleep Duration Source", "missing"),
+    ("Notes", "コーヒーを飲んだ。"),
+])
+def test_auxiliary_references_do_not_turn_location_into_work_evidence(extra, value):
+    fields = {"Location Stays": "職場として記録された場所に滞在", extra: value}
+    assert "unsupported_activity_from_location" in diary.validate_sentences([
+        {"text": "滞在先で働きました。", "sources": ["Location Stays", extra], "certainty": "recorded"},
+    ], diary.diary_sources(fields))
+
+
+@pytest.mark.parametrize("text", [
+    "「働くカフェ」に滞在しました。", "働くカフェで過ごしました。", "働いていたかは記録から不明です。",
+    "勤務先に滞在したが、働いていたかどうかは記録から分からない。",
+])
+def test_location_names_and_explicitly_unknown_work_are_not_work_assertions(text):
+    fields = {"Location Stays": json.dumps([{"location": "働くカフェ", "start_iso": "2026-11-06T10:00:00+09:00", "end_iso": "2026-11-06T11:00:00+09:00"}])}
+    assert diary.validate_sentences([
+        {"text": text, "sources": ["Location Stays"], "certainty": "recorded"},
+    ], diary.diary_sources(fields)) == []
+
+
+def test_explicit_work_record_and_plan_remain_distinct_from_unrelated_notes():
+    fields = {"Location Stays": "職場に滞在", "Notes": "勤務を終えた。", "Schedule": "明日は働く予定"}
+    assert diary.validate_sentences([
+        {"text": "働きました。", "sources": ["Location Stays", "Notes"], "certainty": "reported"},
+    ], diary.diary_sources(fields)) == []
+    assert diary.validate_sentences([
+        {"text": "明日は働く予定です。", "sources": ["Location Stays", "Schedule"], "certainty": "planned"},
+    ], diary.diary_sources(fields)) == []
+
+
+def test_location_name_does_not_hide_a_separate_work_assertion():
+    fields = {"Location Stays": json.dumps([{"location": "働くカフェ"}])}
+    assert "unsupported_activity_from_location" in diary.validate_sentences([
+        {"text": "「働くカフェ」で働きました。", "sources": ["Location Stays"], "certainty": "recorded"},
+    ], diary.diary_sources(fields))
+
+
+def test_work_related_personal_record_still_requires_semantic_consistency(monkeypatch):
+    calls = []
+    def respond(**kwargs):
+        calls.append(kwargs["model"])
+        if len(calls) == 1:
+            return json.dumps({"sentences": [{"text": "働きました。", "sources": ["Location Stays", "Notes"], "certainty": "reported"}]})
+        return json.dumps({"grounded": False, "violations": ["予定から実施を断定している"]})
+    monkeypatch.setattr(diary, "chat_completion", respond)
+    result = diary.generate_diary_result({"Location Stays": "職場に滞在", "Notes": "明日は働く予定。"}, "2026-11-06")
+    assert result.status == "degraded"
+    assert result.rejection_reasons == ["consistency_rejected"]
+    assert len(calls) == 2

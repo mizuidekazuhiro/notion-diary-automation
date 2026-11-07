@@ -308,7 +308,8 @@ def test_weather_roundtrip_compare_ignores_unfetched_fields() -> None:
 
 
 @pytest.mark.parametrize("valid_length", [True, False])
-def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeypatch, valid_length) -> None:
+@pytest.mark.parametrize("validation_model_changed", [False, True])
+def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeypatch, valid_length, validation_model_changed) -> None:
     summary = _summary(today_advice="existing advice")
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     save_calls: list[dict[str, object]] = []
@@ -338,6 +339,8 @@ def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeyp
     advice = "記録から新たな提案はありません。"
     summary = _summary(today_advice=advice, today_advice_input_hash=current_hash,
                       generation_metadata=json.dumps({"advice": {"status": "success" if valid_length else "degraded"}}))
+    if validation_model_changed:
+        monkeypatch.setenv("DIARY_CONSISTENCY_MODEL", "synthetic-changed-consistency-model")
 
     monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
@@ -352,8 +355,8 @@ def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeyp
     result = daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
     assert result == state["summary"]
-    assert len(generation_calls) == (0 if valid_length else 1)
-    assert len(save_calls) == (0 if valid_length else 1)
+    assert len(generation_calls) == (0 if valid_length and not validation_model_changed else 1)
+    assert len(save_calls) == (0 if valid_length and not validation_model_changed else 1)
 
 
 def test_resolve_target_date_defaults_to_yesterday_and_supports_today_mode(monkeypatch) -> None:
@@ -609,20 +612,7 @@ def test_weather_roundtrip_text_and_number_fields_match_end_to_end() -> None:
     assert status["mismatch_fields"] == []
 
 
-def test_workers_daily_log_read_weather_resolution_uses_exact_names_and_value_fallback() -> None:
-    source = Path("workers/src/index.ts").read_text(encoding="utf-8")
-
-    assert "resolveExactPropertyName(\n    properties,\n    getWeatherPropertyName(env),\n    \"daily_log_read:weather\"," in source
-    assert "resolveExactPropertyName(\n    properties,\n    getWeatherSummaryPropertyName(env),\n    \"daily_log_read:weather_summary\"," in source
-    assert "[\"Weather Summary\", \"weather\", \"weather_summary\"]" not in source
-    assert "[\"Weather\", \"weather\", \"weather_summary\"]" not in source
-    assert "? getStringFromProperty(properties[weatherPropertyName])" in source
-    assert "? getStringFromProperty(properties[weatherSummaryPropertyName])" in source
-    assert "const weatherSummary = (weatherSummaryResolvedText || weatherResolvedText || null);" in source
-    assert "const weatherLegacyText = (weatherResolvedText || weatherSummaryResolvedText || null);" in source
-    assert "function getIsoStringFromProperty(property: Record<string, any> | undefined): string {" in source
-    assert "? getIsoStringFromProperty(properties[weatherRetrievedAtPropertyName])" in source
-    assert "? getIsoStringFromProperty(properties[weatherGeneratedAtPropertyName])" in source
+# Weather resolution is exercised through Worker.fetch in index.weather_read_contract.test.ts.
 
 
 

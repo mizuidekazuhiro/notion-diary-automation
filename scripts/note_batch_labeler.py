@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
@@ -12,7 +13,16 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from publish.read_daily_log import DailyLogSummary
 from scripts.notes_prompt_assets import load_notes_prompt_assets
-from scripts.ai_models import model_for
+from scripts.ai_models import model_for, request_settings
+from scripts.note_outcome_validator import OUTCOME_TAGS, OutcomeValidation, policy_signature, validate_outcome_candidates
+from scripts.note_label_cache import cache_identifier, decode_cache, encode_cache
+
+_LOCAL_EXECUTION_ID = uuid.uuid4().hex
+
+
+def _execution_scope() -> str:
+    workflow = os.getenv("GITHUB_RUN_ID", "").strip()
+    return f"{workflow}:{os.getenv('GITHUB_RUN_ATTEMPT', '1')}" if workflow else _LOCAL_EXECUTION_ID
 
 ALLOWED_TAGS = {
     "exercise", "gym", "social", "drinking", "work_focus", "work_progress", "late_work", "early_home", "commute_train", "taxi_use", "shopping_small", "overeating", "diet_control", "meal_disruption", "sleep_late", "early_wake", "recovery_action", "presentation_work", "dc_work", "business_trip",
@@ -179,7 +189,7 @@ def _normalize_result(date: str, payload: Mapping[str, Any]) -> NoteLabel:
         derived_flags={k: bool(v) for k, v in derived.items()},
         parse_quality=parse_quality,
         no_signal_note=len(tags) == 0,
-        tag_extract_failed=len(tags) == 0,
+        tag_extract_failed=len(tags) == 0 and not (derived.get("unsupported_achievement_removed", False) or derived.get("outcome_validation_failed", False)),
         parse_low_confidence=(parse_quality == "low" or confidence == "low"),
     )
 
@@ -452,19 +462,82 @@ def _rule_based_note_label(row: Mapping[str, str]) -> NoteLabel:
     return _normalize_result(date, payload)
 
 
+def _has_outcome(label: NoteLabel) -> bool:
+    return label.achievement_flag or any(signal.get("tag") in OUTCOME_TAGS for signal in label.signals)
+
+
+def label_has_failure(label: NoteLabel) -> bool:
+    return bool(label.derived_flags.get("classification_failed") or label.derived_flags.get("outcome_validation_failed"))
+
+
+class NoteClassificationUnavailable(RuntimeError):
+    """The input could not be classified reliably; absence is not confirmed."""
+
+
+def _verified_cache_label(label: NoteLabel) -> NoteLabel | None:
+    if label_has_failure(label):
+        return None
+    if _has_outcome(label) and not label.derived_flags.get("outcome_verification_complete"):
+        return None
+    return label
+
+
+def _ground_outcome_batch(
+    labels: Mapping[str, NoteLabel], rows: Sequence[Mapping[str, str]],
+    chat_completion: Callable[..., str], outcome_chat_completion: Callable[..., str] | None,
+) -> tuple[dict[str, NoteLabel], OutcomeValidation]:
+    candidates = []
+    for row in rows:
+        label = labels[row["date"]]
+        if _has_outcome(label):
+            tags = sorted({s["tag"] for s in label.signals if s.get("tag") in OUTCOME_TAGS})
+            if label.achievement_flag and "achievement" not in tags:
+                tags.append("achievement")
+            candidates.append({"id": row["id"], "text": row["notes"], "candidate_tags": tags})
+    validation = validate_outcome_candidates(
+        candidates, chat_completion=outcome_chat_completion or chat_completion,
+        structured_output=outcome_chat_completion is not None,
+    )
+    result = dict(labels)
+    for row in candidates:
+        source_row = next(r for r in rows if r["id"] == row["id"])
+        label = labels[source_row["date"]]
+        accepted = validation.accepted_quotes.get(row["id"], {})
+        signals = []
+        for signal in label.signals:
+            tag = signal.get("tag")
+            if tag in OUTCOME_TAGS:
+                if tag in accepted:
+                    signals.append({**signal, "evidence_text": accepted[tag]})
+            else:
+                signals.append(signal)
+        rejected = set(row["candidate_tags"]) - set(accepted)
+        derived = {**label.derived_flags,
+                   "outcome_verification_complete": validation.status == "success",
+                   "outcome_validation_failed": validation.status == "failed",
+                   "unsupported_achievement_removed": bool(rejected) and validation.status == "success"}
+        grounded = _normalize_result(label.date, {"signals": signals, "meta": {"parse_quality": label.parse_quality}, "derived_flags": derived})
+        result[source_row["date"]] = replace(grounded, tag_extract_failed=label.tag_extract_failed)
+    return result, validation
+
+
 def _cache_dir() -> Path:
     return Path(os.getenv("NOTES_LABEL_CACHE_DIR", ".cache/notes_labels"))
 
 
 def _cache_key(*, date: str, note_text: str, model: str) -> str:
-    digest = sha256(f"{date}\n{build_notes_label_input_hash(note_text, model=model)}".encode("utf-8")).hexdigest()
-    return f"{date}_{digest}.json"
+    return cache_identifier(f"{date}\n{build_notes_label_input_hash(note_text, model=model)}")
+
+
+def notes_policy_signature(*, model: str | None = None) -> dict[str, Any]:
+    resolved_model = model or model_for("notes")
+    return {"model": resolved_model, "settings": request_settings(resolved_model),
+            "contract_version": "structured-notes-v6", "outcome_policy": policy_signature(),
+            "prompt": load_notes_prompt_assets()}
 
 
 def build_notes_label_input_hash(note_text: str, *, model: str | None = None) -> str:
-    payload = {"notes": (note_text or "").strip(), "model": model or model_for("notes"),
-               "contract_version": "structured-notes-v4",
-               "prompt": load_notes_prompt_assets()}
+    payload = {"notes": (note_text or "").strip(), **notes_policy_signature(model=model)}
     return sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -527,7 +600,7 @@ def load_persisted_note_label(summary: DailyLogSummary, *, model: str | None = N
         return None
     flags = _parse_json_dict(getattr(summary, "notes_flags_json", None))
     if isinstance(flags.get("structured_label"), dict):
-        return _normalize_result(target_date, flags["structured_label"])
+        return _verified_cache_label(_normalize_result(target_date, flags["structured_label"]))
     tags = _parse_json_list(getattr(summary, "notes_tags_json", None))
     sentiment_score = int(getattr(summary, "notes_sentiment_score", 0) or 0)
     notes_fatigue_flag = getattr(summary, "notes_fatigue_flag", None)
@@ -546,7 +619,7 @@ def load_persisted_note_label(summary: DailyLogSummary, *, model: str | None = N
         "sentiment": str(getattr(summary, "notes_sentiment_label", "unknown") or "unknown"),
         "sentiment_score": sentiment_score,
     }
-    return _normalize_result(target_date, payload)
+    return _verified_cache_label(_normalize_result(target_date, payload))
 
 
 def build_notes_label_persistence_payload(*, summary: DailyLogSummary, label: NoteLabel, model: str) -> dict[str, Any]:
@@ -581,13 +654,17 @@ def _load_cached_label(*, date: str, note_text: str, model: str) -> Optional[Not
         return None
     if not note_text.strip():
         return neutral_label(date)
-    path = _cache_dir() / _cache_key(date=date, note_text=note_text, model=model)
-    if not path.exists():
-        return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return _normalize_result(date, payload)
-    except Exception:
+        path = _cache_dir() / _cache_key(date=date, note_text=note_text, model=model)
+        if not path.exists():
+            return None
+        payload = decode_cache(path.read_bytes(), context=path.name)
+        label = _normalize_result(date, payload)
+        if payload.get("failed_execution_scope") is not None:
+            return label if payload["failed_execution_scope"] == _execution_scope() and label_has_failure(label) else None
+        return _verified_cache_label(label)
+    except Exception as exc:
+        logging.warning("notes_label_cache_read_failed error_type=%s", type(exc).__name__)
         return None
 
 
@@ -604,16 +681,15 @@ def _save_cached_label(*, date: str, note_text: str, model: str, label: NoteLabe
             "meta": {"parse_quality": label.parse_quality},
             "derived_flags": label.derived_flags,
         }
+        if label_has_failure(label):
+            payload["failed_execution_scope"] = _execution_scope()
         destination = cache_dir / _cache_key(date=date, note_text=note_text, model=model)
         temporary = destination.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        temporary.write_bytes(encode_cache(payload, context=destination.name))
         temporary.replace(destination)
         return True
     except Exception as exc:
-        logging.warning("notes_label_cache_write_failed date=%s error_type=%s", date, type(exc).__name__)
+        logging.warning("notes_label_cache_write_failed error_type=%s", type(exc).__name__)
         return False
 
 
@@ -623,7 +699,7 @@ def _truncate_note(text: str) -> str:
     return trimmed[:max_chars]
 
 
-def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_completion: Callable[..., str], model: str, batch_size: int = 8, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None) -> dict[str, NoteLabel]:
+def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_completion: Callable[..., str], model: str, batch_size: int = 8, raw_response_dir: str | None = None, audit: Optional[dict[str, Any]] = None, outcome_chat_completion: Callable[..., str] | None = None) -> dict[str, NoteLabel]:
     rows = [{"id": f"note_{idx:04d}_{s.target_date}", "date": s.target_date, "notes": _truncate_note((s.notes or ""))} for idx, s in enumerate(summaries)]
     if not rows:
         return {}
@@ -634,6 +710,8 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     api_calls = 0
+    outcome_validation_calls = 0
+    outcome_validation_errors: list[str] = []
     parse_error_count = 0
     schema_mismatch_count = 0
     date_match_failure_count = 0
@@ -660,10 +738,12 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
     raw_flag_counts: Counter[str] = Counter()
     results: dict[str, NoteLabel] = {}
     cache_hit_count = 0
+    cache_failed_hit_count = 0
     fallback_covered_count = 0
     persisted_hit_count = 0
     cache_write_failed_count = 0
     cache_write_success_count = 0
+    cached_classification_failures: Counter[str] = Counter()
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
         for row in [r for r in chunk if not r["notes"]]:
@@ -676,16 +756,22 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                 if persisted is not None:
                     results[row["date"]] = persisted
                     persisted_hit_count += 1
+                    matched_dates.add(row["date"])
                     continue
             cached = _load_cached_label(date=row["date"], note_text=row["notes"], model=model)
             if cached is not None:
                 results[row["date"]] = cached
                 cache_hit_count += 1
+                cache_failed_hit_count += int(label_has_failure(cached))
+                if cached.derived_flags.get("classification_failed"):
+                    for reason in ("parse_error", "schema_mismatch", "empty_response", "unmatched"):
+                        cached_classification_failures[reason] += int(bool(cached.derived_flags.get(f"classification_{reason}")))
+                else:
+                    matched_dates.add(row["date"])
             else:
                 targets.append(row)
         if not targets:
             continue
-        api_calls += 1
         user_payload = {
             "allowed_tags": assets.get("allowed_tags", []),
             "target_date": targets[-1]["date"],
@@ -718,6 +804,7 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
         raw = ""
         final_parsed: list[NoteLabel] = []
         final_meta: dict[str, Any] = {}
+        final_matched_dates: set[str] = set()
         attempt_batch_sizes = [len(targets), max(1, len(targets) // 2)]
 
         def _record_metrics(meta: Mapping[str, Any], parsed_rows: Sequence[NoteLabel], expected_size: int) -> None:
@@ -765,11 +852,13 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                     raw_flag_counts["sleep_issue"] += 1
 
         for attempt_index, _size in enumerate(attempt_batch_sizes):
+            api_calls += 1
             raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(user_payload, ensure_ascii=False))
             parsed, meta = parse_note_label_json_with_meta(raw, targets)
             _record_metrics(meta, parsed, len(targets))
             final_parsed = parsed
             final_meta = dict(meta)
+            final_matched_dates = set(meta.get("matched_dates") or set())
             quality_ok = (
                 not meta["parse_error"]
                 and not meta["schema_mismatch"]
@@ -786,20 +875,25 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                 first, second = targets[:half], targets[half:]
                 merged_partial: list[NoteLabel] = []
                 partial_metas: list[dict[str, Any]] = []
+                partial_matched_dates: set[str] = set()
                 for sub in (first, second):
                     if not sub:
                         continue
                     partial_payload = {**user_payload, "rows": [{"id": r["id"], "date": r["date"], "text": r["notes"]} for r in sub]}
+                    api_calls += 1
                     partial_raw = chat_completion(model=model, system_prompt=assets["system_prompt"], user_prompt=json.dumps(partial_payload, ensure_ascii=False))
                     partial_parsed, partial_meta = parse_note_label_json_with_meta(partial_raw, sub)
                     _record_metrics(partial_meta, partial_parsed, len(sub))
                     merged_partial.extend(partial_parsed)
                     partial_metas.append(partial_meta)
+                    partial_matched_dates.update(partial_meta.get("matched_dates") or set())
                 if merged_partial:
                     final_parsed = merged_partial
+                    final_matched_dates = partial_matched_dates
                     final_meta = {
                         "parse_error": any(m.get("parse_error") for m in partial_metas),
                         "schema_mismatch": any(m.get("schema_mismatch") for m in partial_metas),
+                        "empty_response": any(m.get("empty_response") for m in partial_metas),
                         "merge_failed": any(m.get("merge_failed") for m in partial_metas),
                     }
                 break
@@ -820,26 +914,57 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
                 write_debug_dir.mkdir(parents=True, exist_ok=True)
                 ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
                 path = write_debug_dir / f"notes_batch_{i // batch_size:02d}_{ts}.json"
-                path.write_text(str(raw), encoding="utf-8")
+                path.write_bytes(encode_cache({"raw_response": str(raw)}, context=path.name))
                 raw_response_paths.append(str(path))
             except Exception as exc:  # noqa: BLE001
-                logging.warning("notes_label_raw_save_failed batch=%s error=%s", i // batch_size, exc)
+                logging.warning("notes_label_raw_save_failed batch=%s error_type=%s", i // batch_size, type(exc).__name__)
         for item in parsed:
             results[item.date] = item
-            source_row = next((r for r in targets if r["date"] == item.date), None)
-            if source_row is not None:
-                saved = _save_cached_label(date=item.date, note_text=source_row["notes"], model=model, label=item)
-                cache_write_success_count += int(saved is True)
-                cache_write_failed_count += int(saved is False)
         for row in targets:
             key = str(row["id"])
             unmatched_keys = set(final_meta.get("unmatched_input_keys") or set())
             if row["date"] not in results or key in unmatched_keys:
                 results[row["date"]] = _rule_based_note_label(row)
                 fallback_covered_count += 1
+            if row["date"] not in final_matched_dates:
+                label = results[row["date"]]
+                flags = {**label.derived_flags, "classification_failed": True,
+                         "classification_unmatched": True,
+                         **{f"classification_{reason}": bool(final_meta.get(reason))
+                            for reason in ("parse_error", "schema_mismatch", "empty_response")}}
+                results[row["date"]] = replace(label, derived_flags=flags)
+
+        batch_labels, validation = _ground_outcome_batch(
+            {row["date"]: results[row["date"]] for row in targets}, targets,
+            chat_completion, outcome_chat_completion,
+        )
+        results.update(batch_labels)
+        outcome_validation_calls += int(validation.status != "skipped")
+        if validation.status == "failed":
+            outcome_validation_errors.append(validation.error_code or "validator_failed")
+        for source_row in targets:
+            saved = _save_cached_label(date=source_row["date"], note_text=source_row["notes"], model=model, label=results[source_row["date"]])
+            cache_write_success_count += int(saved is True)
+            cache_write_failed_count += int(saved is False)
 
     ordered = {row["date"]: results.get(row["date"], neutral_label(row["date"])) for row in rows}
+
     if audit is not None:
+        classification_failed_count = sum(bool(label.derived_flags.get("classification_failed")) for label in ordered.values())
+        audit["classification_status"] = "failed" if classification_failed_count else "success" if any(row["notes"] for row in rows) else "skipped"
+        audit["classification_failed_count"] = classification_failed_count
+        audit["cached_classification_failures"] = dict(cached_classification_failures)
+        audit["source_grounding_rejections"] = {
+            "unsupported_achievement": sum(bool(label.derived_flags.get("unsupported_achievement_removed")) for label in ordered.values()),
+            "verification_failed": sum(bool(label.derived_flags.get("outcome_validation_failed")) for label in ordered.values()),
+        }
+        if audit["source_grounding_rejections"]["verification_failed"] and not outcome_validation_errors:
+            outcome_validation_errors.append("cached_verification_failure")
+        audit["outcome_validation_status"] = "failed" if outcome_validation_errors else "success" if outcome_validation_calls else "skipped"
+        audit["cache_failed_hit_count"] = cache_failed_hit_count
+        audit["outcome_validation_calls"] = outcome_validation_calls
+        audit["outcome_validation_errors"] = outcome_validation_errors
+        audit["outcome_validation_model"] = model_for("consistency")
         all_input_dates = [str(r["date"]) for r in rows]
         unmatched_input_dates = sorted(set(all_input_dates) - matched_dates)
         labels = list(ordered.values())
@@ -886,19 +1011,21 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             or id_date_conflict_count
         )
         fatal_reason: str | None = None
-        if parse_error_count > 0:
+        if parse_error_count > 0 or cached_classification_failures["parse_error"]:
             fatal_reason = "parse_error"
-        elif schema_mismatch_count > 0:
+        elif schema_mismatch_count > 0 or cached_classification_failures["schema_mismatch"]:
             fatal_reason = "schema_mismatch"
-        elif empty_response_count > 0:
+        elif empty_response_count > 0 or cached_classification_failures["empty_response"]:
             fatal_reason = "empty_response"
+        elif classification_failed_count:
+            fatal_reason = "unmatched_classification"
         elif not labels_usable:
             fatal_reason = "insufficient_coverage"
         labeling_failed = bool(fatal_reason)
         audit.update({
             "api_calls": api_calls,
             "notes_classifier_success_rate": round(parse_success / len(labels), 3) if labels else 0.0,
-            "notes_parse_success_rate": round(1.0 - ((parse_error_count + schema_mismatch_count + empty_response_count) / max(api_calls, 1)), 3) if labels else 0.0,
+            "notes_parse_success_rate": round(1.0 - ((parse_error_count + schema_mismatch_count + empty_response_count + sum(cached_classification_failures[k] for k in ("parse_error", "schema_mismatch", "empty_response"))) / max(api_calls + cache_hit_count + persisted_hit_count, 1)), 3) if labels else 0.0,
             "notes_unknown_rate": round(sum(1 for x in labels if x.sentiment_label == "unknown") / len(labels), 3) if labels else 0.0,
             "notes_low_confidence_rate": round(sum(1 for x in labels if x.parse_low_confidence) / len(labels), 3) if labels else 0.0,
             "notes_extracted_tags_count": len(all_tags),
@@ -926,8 +1053,8 @@ def label_notes_in_batches(summaries: Sequence[DailyLogSummary], *, chat_complet
             "duplicate_dates": sorted(duplicate_date_rows),
             "merge_failed_reason": ",".join(sorted(merge_failed_reasons.keys())) if merge_failed_reasons else ("merge_failed" if (date_match_failure_count or missing_ids or unknown_ids or duplicate_ids or unmatched_input_dates or unmatched_response_dates) else None),
             "merge_failed_reason_counts": dict(merge_failed_reasons),
-            "parse_error": bool(parse_error_count),
-            "schema_mismatch": bool(schema_mismatch_count),
+            "parse_error": bool(parse_error_count or cached_classification_failures["parse_error"]),
+            "schema_mismatch": bool(schema_mismatch_count or cached_classification_failures["schema_mismatch"]),
             "missing_date": sorted(missing_date_rows),
             "duplicate_date": sorted(duplicate_date_rows),
             "duplicate_ids": sorted(duplicate_ids),

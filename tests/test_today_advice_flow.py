@@ -466,9 +466,10 @@ def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) 
 
     def fake_chat_completion(*, model: str, system_prompt: str, user_prompt: str) -> str:
         prompts.append(user_prompt)
-        if len(prompts) == 1:
-            return '{"day_type":"sleep","main_bottleneck":"sleep debt","priority_theme":"pace","primary_risk":"afternoon dip","good_pattern_similarity":"done avg high","bad_pattern_similarity":"notes low","notes_signal":"historical only","recording_signal":"historical only","evidence_used":["sleep score low","7日done平均"],"recommended_actions":["朝に最重要1件","午後は負荷を絞る"]}'
-        return "睡眠スコアの低下を踏まえ、過去7日で着手が進んだ朝の集中帯に最重要1件を置くのが良さそうです。過去の記録ではメモや行動量の波が午後に崩れやすいため、今日は判断を増やしすぎず、午前に骨格を固めて午後は負荷を絞ってください。"
+        rows = json.loads(user_prompt)["rows"]
+        return json.dumps({"rows": [{"id": row["id"], "date": row["date"],
+            "tags": [], "sentiment": "unknown", "meta": {"parse_quality": "high"}}
+            for row in rows]})
 
     monkeypatch.setattr(generator, "_chat_completion", fake_chat_completion)
 

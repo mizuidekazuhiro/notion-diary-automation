@@ -1,4 +1,39 @@
 import {
+  type NotionPropertyType,
+  type ExpectedProperty,
+  resolvePropertyName,
+  resolveExactPropertyName,
+  hasPropertyType,
+  getResolvedProperty,
+  canUseProperty,
+} from "./infrastructure/notion/property_resolver";
+import {
+  NOTES_RICH_TEXT_LIMIT,
+  getPageTitleFromProperty,
+  createTitleProperty,
+  createRichTextProperty,
+  createRichTextPropertyWithLimit,
+  createDateProperty,
+  createSelectProperty,
+  createNumberProperty,
+  createFilesProperty,
+  createRelationProperty,
+  createCheckboxProperty,
+  getPlainTextFromRichText,
+  getStringFromProperty,
+  getDateTimeFromProperty,
+  getIsoStringFromProperty,
+  getPlainTextFromTitle,
+  getNumberFromProperty,
+  normalizeFilesFromProperty,
+  getFileUrlsFromProperty,
+  getRelationIdsFromProperty,
+  buildNotionPageUrl,
+  getDateStartFromProperty,
+  getCheckboxFromProperty,
+  getNumberLikeFromProperty,
+} from "./infrastructure/notion/property_values";
+import {
   addDaysToJstDate,
   getJstDateString,
   getJstYesterdayString,
@@ -129,102 +164,10 @@ interface Env {
   DAILY_LOG_WEATHER_GENERATED_AT_PROPERTY_NAME?: string;
 }
 
-type NotionPropertyType =
-  | "title"
-  | "rich_text"
-  | "number"
-  | "select"
-  | "date"
-  | "checkbox"
-  | "relation"
-  | "rollup"
-  | "files";
-
-type ExpectedProperty = {
-  name: string;
-  type: NotionPropertyType;
-};
-
 type SchemaCache = Record<string, boolean>;
 
 const schemaCache: SchemaCache = {};
 const databasePropertiesCache: Record<string, Record<string, any>> = {};
-
-function normalizeNotionPropertyName(name: string): string {
-  return name.trim().toLowerCase().replace(/[\s_-]+/g, "");
-}
-
-function findExactOrNormalizedPropertyMatches(
-  properties: Record<string, any>,
-  desiredName: string,
-): string[] {
-  if (!desiredName) {
-    return [];
-  }
-  if (properties[desiredName]) {
-    return [desiredName];
-  }
-  const normalizedDesired = normalizeNotionPropertyName(desiredName);
-  return Object.keys(properties).filter((propertyName) => {
-    return normalizeNotionPropertyName(propertyName) === normalizedDesired;
-  });
-}
-
-function findPropertyMatchesWithAliases(
-  properties: Record<string, any>,
-  desiredName: string,
-  aliases: string[] = [],
-): string[] {
-  const seen = new Set<string>();
-  const matches: string[] = [];
-  [desiredName, ...aliases].forEach((name) => {
-    for (const match of findExactOrNormalizedPropertyMatches(properties, name)) {
-      if (seen.has(match)) {
-        continue;
-      }
-      seen.add(match);
-      matches.push(match);
-    }
-  });
-  return matches;
-}
-
-function resolvePropertyName(
-  properties: Record<string, any>,
-  desiredName: string,
-  context: string,
-  aliases: string[] = [],
-): string | null {
-  const matches = findPropertyMatchesWithAliases(properties, desiredName, aliases);
-  if (!matches.length) {
-    return null;
-  }
-  if (matches.length > 1) {
-    console.warn(
-      `[property_resolver] ambiguous match context=${context} desired=${desiredName} matches=${matches.join(", ")}`,
-    );
-    return null;
-  }
-  return matches[0];
-}
-
-function resolveExactPropertyName(
-  properties: Record<string, any>,
-  desiredName: string,
-  context: string,
-): string | null {
-  const matches = findExactOrNormalizedPropertyMatches(properties, desiredName);
-  if (!matches.length) {
-    return null;
-  }
-  if (matches.length > 1) {
-    console.warn(
-      `[property_resolver] ambiguous match context=${context} desired=${desiredName} matches=${matches.join(", ")}`,
-    );
-    return null;
-  }
-  return matches[0];
-}
 
 function buildDailyLogProperties(env: Env): ExpectedProperty[] {
   const dailyLogExpenses = getDailyLogExpensesPropertyNames(env);
@@ -299,9 +242,6 @@ const DAILY_LOG_RELATION_PROPERTIES: ExpectedProperty[] = [
 ];
 
 const MOOD_OPTIONS = ["★", "★★", "★★★", "★★★★", "★★★★★"] as const;
-
-const BODY_CHUNK_LENGTH = 1800;
-const NOTES_RICH_TEXT_LIMIT = 2000;
 const DIARY_RICH_TEXT_LIMIT = 4000;
 const DIARY_NOTIFICATION_SENT_PROPERTY_NAME = "Diary Notification Sent";
 const DIARY_NOTIFICATION_HASH_PROPERTY_NAME = "Diary Notification Hash";
@@ -1383,64 +1323,6 @@ async function getDatabaseProperties(
   databasePropertiesCache[dbId] = properties;
   return properties;
 }
-
-function hasPropertyType(
-  properties: Record<string, any>,
-  name: string,
-  type: NotionPropertyType,
-): boolean {
-  const resolvedName = resolvePropertyName(properties, name, `hasPropertyType:${type}`);
-  if (!resolvedName) {
-    return false;
-  }
-  const schema = properties[resolvedName];
-  return Boolean(schema && schema.type === type);
-}
-
-function getResolvedProperty<T>(
-  properties: Record<string, T>,
-  name: string,
-  context: string,
-  aliases: string[] = [],
-): T | undefined {
-  const resolvedName = resolvePropertyName(properties as Record<string, any>, name, context, aliases);
-  return resolvedName ? properties[resolvedName] : undefined;
-}
-
-function resolvePropertyNameOrWarn(
-  properties: Record<string, any>,
-  desiredName: string,
-  context: string,
-  aliases: string[] = [],
-): string | null {
-  const resolvedName = resolvePropertyName(properties, desiredName, context, aliases);
-  if (!resolvedName) {
-    console.warn(`[property_resolver] missing match context=${context} desired=${desiredName}`);
-    return null;
-  }
-  return resolvedName;
-}
-
-function canUseProperty(
-  properties: Record<string, any>,
-  desiredName: string,
-  type: NotionPropertyType,
-  context: string,
-  aliases: string[] = [],
-): string | null {
-  const resolvedName = resolvePropertyNameOrWarn(properties, desiredName, context, aliases);
-  if (!resolvedName) {
-    return null;
-  }
-  const schema = properties[resolvedName];
-  if (!schema || schema.type !== type) {
-    console.warn(
-      `[property_resolver] type mismatch context=${context} desired=${desiredName} resolved=${resolvedName} expected=${type} actual=${schema?.type ?? "missing"}`,
-    );
-    return null;
-  }
-  return resolvedName;
-}
 function getSleepPropertyAliases(mapping: SleepPropertyMapping): string[] {
   return mapping.aliases ?? [];
 }
@@ -1863,79 +1745,6 @@ async function validateTasksDatabaseSchema(env: Env): Promise<void> {
   );
 }
 
-function getPageTitleFromProperty(
-  page: Record<string, any>,
-  propertyName: string,
-): string {
-  const titleProp = page.properties?.[propertyName]?.title;
-  if (!Array.isArray(titleProp)) {
-    return "";
-  }
-  return titleProp.map((item: { plain_text: string }) => item.plain_text).join("");
-}
-
-function createTitleProperty(title: string) {
-  return {
-    title: [
-      {
-        text: { content: title },
-      },
-    ],
-  };
-}
-
-function createRichTextProperty(content: string) {
-  const chunks = splitIntoChunks(content, BODY_CHUNK_LENGTH);
-  return {
-    rich_text: chunks.map((chunk) => ({
-      text: { content: chunk },
-    })),
-  };
-}
-
-function createRichTextPropertyWithLimit(content: string, limit = NOTES_RICH_TEXT_LIMIT) {
-  const items = splitRichText(content, limit);
-  return {
-    rich_text: items,
-  };
-}
-
-function createDateProperty(date: string) {
-  return {
-    date: date ? { start: date } : null,
-  };
-}
-
-function createSelectProperty(name: string) {
-  return {
-    select: name ? { name } : null,
-  };
-}
-
-function createNumberProperty(value?: number | null) {
-  return {
-    number: typeof value === "number" ? value : null,
-  };
-}
-
-function createFilesProperty(files: Array<Record<string, any>>) {
-  return {
-    files,
-  };
-}
-
-function createRelationProperty(ids: string[]) {
-  return {
-    relation: ids.map((id) => ({ id })),
-  };
-}
-
-function createCheckboxProperty(value: boolean) {
-  return {
-    checkbox: value,
-  };
-}
-
 function hasNonEmptyValue(value: unknown): boolean {
   if (value === null || value === undefined) {
     return false;
@@ -2077,111 +1886,12 @@ function inferWeatherSelectLabel(weatherCode: number | null, summaryText: string
   return matched ?? null;
 }
 
-function splitIntoChunks(content: string, maxLength: number): string[] {
-  if (!content) {
-    return [];
-  }
-  const chunks: string[] = [];
-  for (let start = 0; start < content.length; start += maxLength) {
-    chunks.push(content.slice(start, start + maxLength));
-  }
-  return chunks;
-}
-
-function splitRichText(text: string, limit = NOTES_RICH_TEXT_LIMIT) {
-  return splitIntoChunks(text, limit).map((chunk) => ({
-    type: "text",
-    text: { content: chunk },
-  }));
-}
-
-function getPlainTextFromRichText(richTextOrProperty: any): string {
-  if (!richTextOrProperty) {
-    return "";
-  }
-  const richText = Array.isArray(richTextOrProperty)
-    ? richTextOrProperty
-    : richTextOrProperty.rich_text;
-  if (!Array.isArray(richText)) {
-    return "";
-  }
-  return richText
-    .map((item: { plain_text?: string }) => item.plain_text ?? "")
-    .join("");
-}
-
-function getStringFromProperty(property: Record<string, any> | undefined): string {
-  if (!property) {
-    return "";
-  }
-  const richText = getPlainTextFromRichText(property).trim();
-  if (richText) {
-    return richText;
-  }
-  const titleText = getPlainTextFromTitle(property).trim();
-  if (titleText) {
-    return titleText;
-  }
-  const selectName =
-    typeof property.select?.name === "string" ? property.select.name.trim() : "";
-  return selectName;
-}
-
-function getDateTimeFromProperty(property: Record<string, any> | undefined): string {
-  const start =
-    typeof property?.date?.start === "string" ? property.date.start.trim() : "";
-  return start;
-}
-
-function getIsoStringFromProperty(property: Record<string, any> | undefined): string {
-  if (!property) {
-    return "";
-  }
-  const dateValue = getDateTimeFromProperty(property);
-  if (dateValue) {
-    return dateValue;
-  }
-  const directText = getStringFromProperty(property).trim();
-  if (directText) {
-    return directText;
-  }
-  const formula = property.formula;
-  if (formula) {
-    if (typeof formula.string === "string" && formula.string.trim()) {
-      return formula.string.trim();
-    }
-    if (typeof formula.number === "number") {
-      return String(formula.number);
-    }
-    if (typeof formula.boolean === "boolean") {
-      return formula.boolean ? "true" : "false";
-    }
-    if (typeof formula.date?.start === "string" && formula.date.start.trim()) {
-      return formula.date.start.trim();
-    }
-  }
-  return "";
-}
-
 function normalizeNote(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
     .replace(/[\t\f\v ]+/g, " ")
     .replace(/\n+/g, "\n")
     .trim();
-}
-
-function getPlainTextFromTitle(property: Record<string, any> | undefined): string {
-  if (!property) {
-    return "";
-  }
-  const title = property.title;
-  if (!Array.isArray(title)) {
-    return "";
-  }
-  return title
-    .map((item: { plain_text?: string }) => item.plain_text ?? "")
-    .join("");
 }
 
 function extractMailMetadataFromProperties(properties: Record<string, any>) {
@@ -2221,55 +1931,6 @@ function shouldSkipAppend(existingNotes: string, incoming: string): boolean {
     normalizedExisting === normalizedIncoming ||
     normalizedExisting.endsWith(normalizedIncoming)
   );
-}
-
-function getNumberFromProperty(
-  property: Record<string, any> | undefined,
-): number | null {
-  if (!property || typeof property.number !== "number") {
-    return null;
-  }
-  return property.number;
-}
-
-type NotionFilePropertyValue =
-  | { name: string; type: "external"; external: { url: string } }
-  | { name: string; type: "file"; file: { url: string } };
-
-function normalizeFilesFromProperty(
-  property: Record<string, any> | undefined,
-): NotionFilePropertyValue[] {
-  if (!property || !Array.isArray(property.files)) {
-    return [];
-  }
-  return property.files
-    .map((file: Record<string, any>) => {
-      const name = typeof file.name === "string" ? file.name : "file";
-      if (file.type === "external" && file.external?.url) {
-        return { name, type: "external", external: { url: file.external.url } };
-      }
-      if (file.type === "file" && file.file?.url) {
-        return { name, type: "file", file: { url: file.file.url } };
-      }
-      return null;
-    })
-    .filter((item): item is NotionFilePropertyValue => Boolean(item));
-}
-
-function getFileUrlsFromProperty(
-  property: Record<string, any> | undefined,
-): string[] {
-  return normalizeFilesFromProperty(property)
-    .map((file: Record<string, any>) => {
-      if (file.type === "external" && file.external?.url) {
-        return String(file.external.url);
-      }
-      if (file.type === "file" && file.file?.url) {
-        return String(file.file.url);
-      }
-      return null;
-    })
-    .filter((item): item is string => Boolean(item));
 }
 
 function resolveLocationSummaryFields(
@@ -2317,21 +1978,6 @@ function resolveLocationSummaryFields(
     return { locationSummaryGpt, locationSummaryLegacy, locationSummaryPayload, locationSummary: locationSummaryPayload, locationSummarySource: "location_summary_payload" };
   }
   return { locationSummaryGpt, locationSummaryLegacy, locationSummaryPayload, locationSummary: null, locationSummarySource: "empty" };
-}
-
-function getRelationIdsFromProperty(
-  property: Record<string, any> | undefined,
-): string[] {
-  if (!property || !Array.isArray(property.relation)) {
-    return [];
-  }
-  return property.relation
-    .map((item: { id?: string }) => item.id)
-    .filter((id): id is string => Boolean(id));
-}
-
-function buildNotionPageUrl(pageId: string): string {
-  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
 }
 
 async function requireBearerToken(request: Request, env: Env): Promise<Response | null> {
@@ -3365,21 +3011,6 @@ async function handleDailyLogPhotosIngest(
   );
 }
 
-
-
-function getNumberLikeFromProperty(property: Record<string, any> | undefined): number | null {
-  const num = getNumberFromProperty(property);
-  if (typeof num === "number") {
-    return num;
-  }
-  const text = getStringFromProperty(property).trim();
-  if (!text) {
-    return null;
-  }
-  const parsed = Number.parseFloat(text);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 async function queryDatabaseAllWithBody(
   env: Env,
   dbId: string,
@@ -4166,18 +3797,6 @@ async function handleDailyLogExpensesIngest(
     }),
     { headers: jsonHeaders },
   );
-}
-
-function getDateStartFromProperty(property: Record<string, any> | undefined): string {
-  const start = property?.date?.start;
-  return typeof start === "string" ? start : "";
-}
-
-function getCheckboxFromProperty(property: Record<string, any> | undefined): boolean | null {
-  if (!property || typeof property.checkbox !== "boolean") {
-    return null;
-  }
-  return property.checkbox;
 }
 
 type DailyLogTaskDetail = {

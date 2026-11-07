@@ -4,7 +4,7 @@
 
 > Reliability update: Health page existence is no longer treated as usable data, Expense F no longer uses the unsupported checkbox `is_empty` filter, and Today advice never substitutes an unrelated historical sleep as today's sleep. See [docs/daily-automation-reliability.md](docs/daily-automation-reliability.md) for statuses, repair semantics, the Daily Signals proposal, migration plan, and rollback.
 
-> Final quality gate: Daily Diary 04 sends any renderable mail first, then evaluates a redacted source/analysis quality report. Missing Health/Sleep is a non-blocking warning; unavailable Expense F, missing F Risk state, degraded F Risk, or fallback scoring still makes the workflow fail after delivery.
+> 現行の品質検査：実際に送信する件名・本文・HTMLを送信前に検査します。重大な不整合は送信を止め、取得不足を明示できる場合は警告として配信します。配信結果と、その後の状態保存・確認を分けて記録します。[根拠・欠損・配信の運用](docs/diary-evidence-operation.md)と[責務・互換性](docs/refactor-responsibilities-20261107.md)を参照してください。
 
 ## Anki PC Automatic Study Tracking
 
@@ -125,43 +125,20 @@ Notion の Daily Log を中心に、前日のデータを **Phase A: ingest → 
 - Diary は引き続き Daily Log 全体の振り返りを文章化しますが、Today advice は「当日の睡眠コンディション」と「過去実績の行動傾向」を短く接続する専用レイヤです。
 
 #### Today advice の入力ルール
-- 当日参照してよいのは **sleep 系のみ** です。
-- 当日参照に含めるのは `sleep_analysis_jp` / `today_condition_forecast_jp` / `Sleep Start` / `Sleep End` / `Sleep Duration` / `Sleep Score` / `Sleep Heart Rate` / `Deep Duration` / `REM Duration` / `Readiness Stars` / `Readiness HRV` / `Readiness BPM` / `Baseline HRV` / `Baseline Waking BPM` など、sleep insights 系の構造化データだけです。
-- `meal / done / drop / spend / notes / 記録有無 / location summary` は **当日値を使わず**、過去7日・14日・30日や mood 高低日の差分比較などの **過去実績のみ**で扱います。
-- good mood / low mood 比較では `done / drop / spend` に加えて、`kcal / protein / fat / carb` の meal 数値、過去 `notes` から抽出した signal、`location summary` 由来の location pattern も見ます。
-- diary 本文は Today advice の現在値・過去値ともに使いません。notes は過去履歴のみ使い、当日 notes は使いません。
-- 当日の未入力・未完了・ゼロ件は評価対象にしません。
-- Today advice は **「今日の睡眠コンディション × 過去の行動実績パターン」** だけで作ります。
-- 本文には **必ず直近7日間の行動・記録傾向** を 1 つ以上含めます。sleep の話だけで終わらせません。
-- 過去30日を使います。
-- 高評価日は mood 4/5、低評価日は 1/2、中間日は 3 です。
-- 高評価5件・低評価5件は、可能な限り偏らないように抽出します。不足時はその件数でフォールバックします。
-- diary 本文 / 過去 diary 本文は使いません。
-- diary 本文 / 過去 diary 本文 / diary 由来要約は使いません。
-- `notes` は **過去履歴のみ** で使います。当日 notes は使いません。
-- `location summary` は **過去履歴のみ** の構造化コンテキストとして使います。当日 location summary は使いません。
-- 当日 `meal / done / drop / spend / notes / location summary` は LLM 入力に含めません。
-- 当日 `meal_logged=false` / `spend_total=0` / `done_count=0` / `drop_count=0` / notes 空 / location summary 空 などは、途中経過として扱い、Today advice ではネガティブ評価しません。
-- `Diary` / 過去 `Diary` は引き続き入力に含めません。
-- mini モデル → 上位モデルの Pattern B を維持しています。
-- 「最近の傾向」は当日値ではなく、過去7日・14日・30日の集計と比較から判断します。主軸は 7 日傾向で、14日・30日比較は補助です。
-- debug summary には、today_sleep の主要キー、recent_7d / recent_14d / recent_30d の主要集計、good/bad 差分、meal 比較、notes signal 比較、location pattern 比較、evidence_used を要約で出します。full dump は debug ファイルへ保存します。
+
+- 日記の対象日を「昨日の振り返り」、その翌日を「今日への助言」として区別します。助言対象日に一致する睡眠候補と、振り返り日までの過去30日を使います。
+- 行動・支出・食事・メモ・位置は過去実績のみ。日記本文やAIが生成した睡眠解説を、新たな観測事実として扱いません。
+- 未入力、取得/解析失敗、確認済み0を区別し、欠損Moodを問題なしとして集計しません。分類品質の低さを生活リスクにしません。
+- 有効な目的変数12日、陽性/陰性各3日、露出/比較各3日の資格条件を満たさない場合は判定を控えます。上昇幅0や重複根拠から高リスクにしません。
+- 過去の関連は探索的なものとして扱い、因果や個人の予測精度を断定しません。
 
 #### Today advice の出力ルール
-- 本文は次の 3 要素を必ずこの順に含めます。
-  1. 今日の睡眠状態から見たコンディション
-  2. 直近7日間の行動・記録傾向と good/bad day 比較から見える再現パターン
-  3. 今日まず取るべき具体行動
-- 行動提案は 1〜2 個に絞ります。
-- 本文は 220〜380 字程度、3 文構成を基本とし、sleep の話だけで終わらせません。
-- recent 7-day trend を最低1つ、good/bad day comparison 由来の示唆を可能なら最低1つ含めます。
-- 因果は断定せず、「傾向」「重なり」「示唆」に留めます。
-- 一般論は避け、事実 → 解釈 → 今日の行動の順でつなぎます。
-- 支出から感情を断定しません。
-- 食事未記録から健康状態を断定しません。
-- `diary` 本文 / 過去 `diary` 本文は使いません。
-- 日本語自由記述として使うのは過去 `notes` のみです。
-- `location summary` は過去履歴の構造化コンテキストに限定します。
+
+- 根拠不足なら短く明示し、文字数や定型の3要素を埋めるために一般論を加えません。
+- 根拠のある提案だけを出し、毎日の言い換えを目的に新しい助言を創作しません。
+- メモ分類はLuna、根拠付き助言の文章化はSol。旧mini→上位モデルの二段生成promptは互換入口としてのみ保持します。
+- 生成方式、採用/棄却理由、代替文、失敗、モデル、入力/prompt版を記録します。本文の非空だけでは成功にしません。
+- 個人の入力・生応答を公開ログや平文debugファイルへ出さず、ログは件数・状態・使用量を中心にします。
 
 #### target_date の扱い
 - `scripts/daily_job.py` の既定 target date は JST 前日です。
@@ -418,7 +395,7 @@ Today advice の精度改善より先に、分析過程を追跡できるよう�
 - Notes 抽出は unknown/low-confidence を保持し、unknown を neutral に丸めません。
 - `sleep_duration_min <= 0`（または duration=0 かつ score=0）は睡眠欠損として扱い、睡眠分析文・見通し文は欠損用テンプレートを返します。
 - ただし `sleep_start/sleep_end` がある場合は差分再計算結果を優先し、`sleep_duration_min` は fallback です。
-- Today advice は固定ルールではなく 30〜60 日の探索型分析結果（exploratory/regression/LightGBM）を根拠に構成します。
+- Today advice は過去30日の探索・回帰・LightGBMを、データと比較群が足りる場合に限り参考にします。不足や単一クラスでは判定不能として扱います。
 - LightGBM を正式依存として導入しています（`requirements.txt` / CI install / verify 対応）。
 - メール本文セクション順は `Today advice -> F Risk Alert(ある日だけ) -> Expense F Alert(ある日だけ) -> 司法試験 Study(値がある場合のみ) -> Diary -> Sleep & Condition -> Summary -> Expenses / Done / Drop / Meal / Weather` です。
 - Drop 0 件時は `- None` / `- —` のダミー明細を表示しません（件数と本文を一致）。

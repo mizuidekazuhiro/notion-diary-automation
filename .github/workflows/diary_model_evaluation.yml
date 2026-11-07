@@ -1,6 +1,13 @@
 name: Diary Models - Read-only Evaluation
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "比較範囲（controlsは合成対照のみ・Notion取得なし）"
+        type: choice
+        required: false
+        default: all
+        options: [all, controls]
   push:
     branches: ["fix/diary-evidence-integrity", "fix/verify-written-study-snapshot"]
 jobs:
@@ -19,6 +26,9 @@ jobs:
       - env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MAX_RETRIES: "0"
+          NOTES_LABEL_MODEL: ${{ vars.NOTES_LABEL_MODEL }}
+          DIARY_CONSISTENCY_MODEL: ${{ vars.DIARY_CONSISTENCY_MODEL }}
+          SLEEP_INSIGHT_MODEL: ${{ vars.SLEEP_INSIGHT_MODEL }}
         run: python scripts/check_model_controls.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -27,7 +37,7 @@ jobs:
           path: artifacts/model_controls
           retention-days: 7
   evaluate:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[diary-eval]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.scope != 'controls') || contains(github.event.head_commit.message, '[diary-eval]')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,14 +48,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt cryptography
+      - run: pip install -r requirements.txt
       - name: Verify Notes cache persistence with synthetic content
         uses: actions/cache@v4
         with:
           path: .cache/notes_labels
-          key: ${{ runner.os }}-notes-labels-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-notes-labels-v3-encrypted-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-notes-labels-v2-
+            ${{ runner.os }}-notes-labels-v3-encrypted-
       - run: python -c "from pathlib import Path; p=Path('.cache/notes_labels'); p.mkdir(parents=True,exist_ok=True); (p/'cache_canary.json').write_text('{\"synthetic_canary\":true}')"
       - name: Compare without Notion writes or mail
         env:
