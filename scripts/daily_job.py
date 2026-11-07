@@ -1075,6 +1075,11 @@ def _generate_and_save_sleep_insights(
     if sleep_generation.get("reused"):
         return summary
     if not sleep_payload:
+        if sleep_generation.get("status") == "failed":
+            failure = {"generation_metadata": _generation_metadata(summary, "sleep", sleep_generation)}
+            _save_daily_log_fields(config, target_date=summary.target_date, payload=failure)
+            _verify_generation_readback(config, summary.target_date, failure)
+            raise PhaseSemanticDegradation("sleep_generation_failed")
         logging.info(
             "phase_c_sleep_skipped target_date(JST)=%s run_id=%s skip_reason=no_sleep_signal generated_properties=[]",
             summary.target_date,
@@ -1098,6 +1103,12 @@ def _generate_and_save_sleep_insights(
     if sleep_generation:
         sleep_payload["generation_metadata"] = _generation_metadata(summary, "sleep", sleep_generation)
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=sleep_payload)
+    if sleep_generation:
+        if save_result.get("updated") is not True:
+            raise RuntimeError("sleep_generation_save_unconfirmed")
+        _verify_generation_readback(config, summary.target_date, sleep_payload)
+        if sleep_generation.get("status") == "degraded":
+            raise PhaseSemanticDegradation("sleep_generation_degraded")
     logging.info(
         "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
         summary.target_date,

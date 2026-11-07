@@ -39,3 +39,53 @@ def test_input_dependent_upstream_errors_are_not_public_diagnostics(monkeypatch,
         result=mood._safe_read_daily_log_for_advice(daily_log_read_url='read',bearer_token=None,day='2000-01-01')
     assert result.failed is True
     assert 'PRIVATE_UPSTREAM_SENTINEL' not in caplog.text
+
+
+def test_valid_sleep_generation_failure_is_persisted_and_not_success(monkeypatch):
+    from dataclasses import replace
+    import pytest
+    from scripts import daily_job
+    from tests.test_today_advice_30d_pipeline import _summary
+    state={'row':_summary(20,sleep_start=None,sleep_end=None,sleep_duration_min=420,
+                          sleep_analysis_jp='旧い解説',today_condition_forecast_jp='旧い見通し')}
+    saved=[]
+    monkeypatch.setenv('OPENAI_API_KEY','synthetic-key')
+    monkeypatch.setattr(sleep,'chat_completion',lambda **kw:'invalid JSON')
+    monkeypatch.setattr(daily_job,'load_recent_daily_logs',lambda **kw:[])
+    monkeypatch.setattr(daily_job,'_refresh_daily_log_summary',lambda *a,**kw:state['row'])
+    def save(config,*,target_date,payload):
+        saved.append(payload)
+        state['row']=replace(state['row'],**payload)
+        return {'updated':True}
+    monkeypatch.setattr(daily_job,'_save_daily_log_fields',save)
+    with pytest.raises(daily_job.PhaseSemanticDegradation,match='sleep_generation_failed'):
+        daily_job._generate_and_save_sleep_insights(SimpleNamespace(daily_log_read_url='read',bearer_token=None),summary=state['row'],run_id='test')
+    assert len(saved)==1 and set(saved[0])=={'generation_metadata'}
+    assert json.loads(state['row'].generation_metadata)['sleep']['status']=='failed'
+    from scripts.data_status import mask_unavailable_summary
+    masked=mask_unavailable_summary(state['row'])
+    assert masked.sleep_analysis_jp is None and masked.sleep_duration_min==420
+
+
+def test_sleep_degraded_and_save_failure_do_not_return_success(monkeypatch):
+    import pytest
+    from dataclasses import replace
+    from scripts import daily_job
+    from tests.test_today_advice_30d_pipeline import _summary
+    row=_summary(20,sleep_start=None,sleep_end=None,sleep_duration_min=420)
+    config=SimpleNamespace(daily_log_read_url='read',bearer_token=None)
+    monkeypatch.setattr(daily_job,'load_recent_daily_logs',lambda **kw:[])
+    for mode in ('degraded','save_failed'):
+        state={'row':row}
+        def generate(**kw):
+            kw['diagnostics'].update(status='degraded' if mode=='degraded' else 'success',fallback_used=mode=='degraded')
+            return {'sleep_analysis_jp':'7時間0分の記録。','today_condition_forecast_jp':'見通しは判定できません。'}
+        def save(config,*,target_date,payload):
+            if mode=='degraded': state['row']=replace(state['row'],**payload)
+            return {'updated':mode=='degraded'}
+        monkeypatch.setattr(daily_job,'maybe_generate_sleep_insights',generate)
+        monkeypatch.setattr(daily_job,'_save_daily_log_fields',save)
+        monkeypatch.setattr(daily_job,'_refresh_daily_log_summary',lambda *a,**kw:state['row'])
+        expected=daily_job.PhaseSemanticDegradation if mode=='degraded' else RuntimeError
+        with pytest.raises(expected,match='sleep_generation_degraded|sleep_generation_save_unconfirmed'):
+            daily_job._generate_and_save_sleep_insights(config,summary=row,run_id='test')

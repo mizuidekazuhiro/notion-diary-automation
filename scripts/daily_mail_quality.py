@@ -160,6 +160,8 @@ def build_quality_report(
     diary_generation = generation.get("diary", {})
     if generation.get("sleep", {}).get("fallback_used"):
         _add_issue(issues, "sleep_fallback_used", "warning", "睡眠の解説は記録に限定した代替文です。")
+    if generation.get("sleep", {}).get("status") == "failed":
+        _add_issue(issues, "sleep_generation_failed", "warning", "睡眠の解説を生成できていません。保存された数値記録とは分けて確認してください。")
     if diary_generation.get("fallback_used") or diary_generation.get("status") in {"failed", "degraded"}:
         _add_issue(issues, "diary_fallback_used", "warning", "日記は検証で棄却されたため、確認できる記録だけの短い代替文を使っています。")
     if advice_generation.get("target_date"):

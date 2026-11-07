@@ -458,6 +458,9 @@ def maybe_generate_sleep_insights(
                 target_date,
             )
         return result
-    except Exception:
-        logging.exception("phase_c_sleep_failed target_date=%s", target_date)
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics.update(status="failed", method="ai", fallback_used=False, model=model_for("sleep"),
+                target_date=target_date, rejection_reasons=[type(exc).__name__])
+        logging.warning("phase_c_sleep_failed target_date=%s error_type=%s", target_date, type(exc).__name__)
         return {}
