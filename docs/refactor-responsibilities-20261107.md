@@ -15,6 +15,7 @@
 | 生成状態JSONの結合・参照・読戻し比較 | daily_jobとphase_cに分散 | generation_state。取得そのものは呼出側に残す |
 | WorkerのNotion名・型解決 | index.ts内 | infrastructure/notion/property_resolver。schema取得とcacheは移さない |
 | WorkerのNotion値変換 | index.ts内 | infrastructure/notion/property_values。0/欠損、分割長、formula順序を保持 |
+| 位置要約の整形・保存形式 | 位置writerのmain内 | text_output。取得やAI呼出しと、内容を失わない表示整形・項目変換を分離 |
 | メール描画、品質、送信、受付記録 | 既存のpublish / mail_preflight / delivery_journal | 既に分離されているため維持 |
 
 Healthcare側はlegacy_health_daily_pureへ正規化・検証・共有field table・Notion項目変換・測定有無判定を集約。legacy_health_daily_serviceは保存I/Oと旧exportのfacadeを担当する。app usage、voice、photoは既存の単位を維持する。
@@ -43,3 +44,10 @@ Healthcare側はlegacy_health_daily_pureへ正規化・検証・共有field tabl
 - 旧prompt構築関数・定数等はrepo内の静的参照がないものもあるが、外部CLI/import利用を否定できないため削除しない。互換専用であることを明示する。
 - legacy Worker位置生成入口は既存APIとして保持する。正式な位置要約workflowの用途別設定と混同しない。
 - 無関係な機能の整形、依存更新、新framework導入は行わない。睡眠送信元の未確定原因を、整理で解決したとは扱わない。
+
+## 比較で確認した追加不具合（整理と別コミット）
+
+- eeaac99: 滞在しか根拠がない「働きました」「勤務しました」等の活用形が品質検査を通過した。場所の滞在と実働を分ける検査を補強し、本人メモの仕事記録は引き続き受理する。失敗する回帰を先に確認してから修正した。
+- 5986363: 位置AI出力は保存直前に先頭6文、さらにNotion項目構築時に先頭1900文字へ切られていた。正規化は表示だけを整え、保存形式は全量を既存の項目サイズで分割する。後半の滞在と翌日表示、1900文字を跨ぐ内容、title/rich_text両方を検査する。
+- モデル評価もraw出力だけでなく実際の正規化・保存形式を通し、saved_textを非公開の暗号化artifactへ保持する。保存相当の結果をモデル比較へ使う。
+- bb55e3e: 上記の動作変更後に、表示整形とNotion項目変換をtext_outputへ移動する純粋な整理を独立コミットにした。

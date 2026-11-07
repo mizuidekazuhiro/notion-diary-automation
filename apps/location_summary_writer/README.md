@@ -110,3 +110,10 @@ python src/main.py
   - `DAILY_LOG_GPT_LOCATION_SUMMARY_PROP` または `DAILY_LOG_LOCATION_SUMMARY_PROP` が Notion 側と不一致
 - `Daily Log page not found`
   - 対象日（前日）の `Date` プロパティが一致するページが無い
+# 生成と保存の責務（2026-11-07）
+
+`src/main.py`は取得、prompt、共通AI呼出し、Notion保存の順序を担当します。`src/text_output.py`は表示整形とNotion文字列項目への変換だけを担当し、旧mainからの関数importも維持します。
+
+位置本文は6文や1900文字で切り捨てません。箇条書き・空白を整え、全文を1900文字以内の項目へ分割して保存します。モデル比較も、この保存相当の整形を通した結果を検査します。
+
+実効モデルは`LOCATION_SUMMARY_MODEL`の非空値、共通の`ai_models.ROLE_DEFAULTS`の順で選びます。正式workflowの既定値はTerraです。取得失敗や元記録にない活動を文章の長さで補いません。
