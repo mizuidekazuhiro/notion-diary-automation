@@ -11,7 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.evaluate_diary_models import notion_read, property_value, case_fields, encrypt_private
+from scripts.evaluate_diary_models import notion_read, property_value, case_fields, encrypt_private, require_public_key
 from apps.location_summary_writer.src import main as location_writer
 from scripts.diary_generator import generate_diary_result
 from scripts.daily_job import _build_diary_hash_payload, _build_input_hash
@@ -19,6 +19,7 @@ from scripts.ai_models import model_for
 
 
 def main():
+    require_public_key()
     end = (datetime.now(ZoneInfo('Asia/Tokyo')).date() - timedelta(days=1)).isoformat()
     start = (datetime.fromisoformat(end).date() - timedelta(days=6)).isoformat()
     pages = notion_read('/databases/' + os.environ['DAILY_LOG_DB_ID'] + '/query', {

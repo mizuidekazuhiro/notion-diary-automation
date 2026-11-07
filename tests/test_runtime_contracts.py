@@ -67,3 +67,12 @@ def test_behavior_tags_survive_complete_false_state_flags():
     tags={signal['tag'] for signal in labels[0].signals}
     assert tags=={'gym','exercise'}
     assert labels[0].fatigue_flag is False
+
+
+def test_evaluation_without_encryption_key_makes_no_source_or_model_calls(monkeypatch):
+    from scripts import evaluate_diary_models as evaluation
+    monkeypatch.delenv('DIARY_EVAL_PUBLIC_KEY',raising=False)
+    monkeypatch.setattr(evaluation,'notion_read',lambda *a,**kw:pytest.fail('must fail before reading sources'))
+    monkeypatch.setattr(evaluation,'chat_completion',lambda *a,**kw:pytest.fail('must fail before spending'))
+    with pytest.raises(RuntimeError,match='public_key_required_before_any_api_call'):
+        evaluation.main()
