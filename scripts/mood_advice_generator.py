@@ -12,20 +12,56 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 
-import requests
-
 from publish.read_daily_log import DailyLogSummary, parse_daily_log_payload, read_daily_log
 from ingest.http_client import fetch_json
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from scripts.note_batch_labeler import label_notes_in_batches
-from scripts.openai_chat_utils import chat_completion as shared_chat_completion
+from scripts.notes_quality import assess_notes_quality
+from scripts.openai_chat_utils import (
+    _build_chat_messages,
+    chat_completion as shared_chat_completion,
+)
 from scripts.today_advice_feature_builder import build_daily_feature_table
 from scripts.today_advice_pattern_analyzer import analyze_exploratory_patterns
 from scripts.today_advice_regression import run_low_mood_regression
 from scripts.today_advice_lightgbm import run_lightgbm_low_mood
 from scripts.today_advice_renderer import build_analysis_json, render_today_advice_result
-from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_for_target_date
 from scripts.ai_models import model_for
+from scripts.today_advice_context import (
+    AdviceJudgment,
+    TodayAdviceContext,
+    LOOKBACK_DAYS,
+    RECENT_WINDOW_DAYS,
+    SHORT_WINDOW_DAYS,
+    SAMPLE_DAYS_PER_BUCKET,
+    MEAL_NUMERIC_FIELDS,
+    NOTES_SIGNAL_PATTERNS,
+    LOCATION_PATTERN_KEYS,
+    _safe_text,
+    _safe_float,
+    _safe_int,
+    normalize_mood_to_score,
+    _mean,
+    _delta,
+    _recording_rate,
+    _format_number,
+    _resolve_today_sleep_candidates,
+    _build_metric_snapshot,
+    _compare_metric_windows,
+    _trend_direction,
+    _meal_metric_avg,
+    _extract_notes_signals,
+    _notes_signal_rates,
+    _extract_location_patterns,
+    _location_pattern_rates,
+    _workout_snapshot,
+    _build_behavior_snapshot,
+    _delta_map,
+    _build_today_state,
+    _build_day_record,
+    _select_top_days,
+    _build_structured_comparison,
+)
 from scripts.today_advice_audit import (
     TodayAdviceAuditLogger,
     count_missing,
@@ -34,26 +70,13 @@ from scripts.today_advice_audit import (
     summarize_regression,
 )
 
+# Retained legacy import constants/prompts. The live pipeline selects models
+# through ai_models.model_for and renders through today_advice_renderer.
 OPENAI_TIMEOUT = (5, 90)
 DEFAULT_MINI_MODEL = "gpt-4.1-mini"
 DEFAULT_FINAL_MODEL = "gpt-4.1"
-LOOKBACK_DAYS = 30
-RECENT_WINDOW_DAYS = 14
-SHORT_WINDOW_DAYS = 7
-SAMPLE_DAYS_PER_BUCKET = 5
 
 
-MEAL_NUMERIC_FIELDS = ("kcal", "protein", "fat", "carb")
-NOTES_SIGNAL_PATTERNS = {
-    "fatigue": ["疲れ", "だる", "しんど", "倦怠", "疲労"],
-    "sleep_issue": ["寝不足", "眠い", "眠気", "寝なかった", "寝れてない", "睡眠不足", "夜更かし"],
-    "overeating": ["食べすぎ", "食べ過ぎ", "夜食", "食べすぎた", "食欲暴走", "食べ過ぎた"],
-    "stress": ["喧嘩", "後悔", "ストレス", "イライラ", "不安", "焦り"],
-    "focus": ["集中できた", "集中", "はかど", "捗", "進んだ", "没頭"],
-    "exercise": ["ジム", "運動", "ランニング", "筋トレ", "散歩", "ストレッチ"],
-    "recovery": ["体調が良い", "回復", "調子が良い", "元気", "持ち直", "楽になった"],
-}
-LOCATION_PATTERN_KEYS = ("home_heavy_day", "office_heavy_day", "outing_heavy_day", "late_outing_day", "multi_stop_day")
 MINI_SYSTEM_PROMPT = """あなたは Today advice 用の判定JSONを作る前段整理アシスタントです。
 役割は、当日の sleep 系データと過去実績だけから判断材料を整理し、最終本文の元になる判定JSONだけを作ることです。
 
@@ -201,7 +224,7 @@ def _build_mood_advice_debug_summary(*, history: Sequence[DailyLogSummary], stru
 @dataclass(frozen=True)
 class MoodAdviceResult:
     today_advice: str
-    judgment_json: dict[str, Any]
+    judgment_json: AdviceJudgment
     judgment_text: str
     high_mood_sample_count: int
     low_mood_sample_count: int
@@ -222,52 +245,6 @@ class TodayAdviceHistoryLoadResult:
     failed_dates: list[str]
     missing_dates: list[str]
     include_next_day: bool
-
-
-def _safe_text(value: object) -> Optional[str]:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
-
-
-def _safe_float(value: object) -> Optional[float]:
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _safe_int(value: object) -> Optional[int]:
-    numeric = _safe_float(value)
-    if numeric is None:
-        return None
-    return int(round(numeric))
-
-
-def normalize_mood_to_score(raw_mood: object) -> Optional[int]:
-    if raw_mood is None:
-        return None
-    if isinstance(raw_mood, (int, float)) and not isinstance(raw_mood, bool):
-        score = int(round(float(raw_mood)))
-        return score if 1 <= score <= 5 else None
-    text = _safe_text(raw_mood)
-    if not text:
-        return None
-
-    normalized = text.replace("☆", "★").replace("⭐", "★").replace("🌟", "★").replace("✩", "★")
-    star_count = normalized.count("★") + normalized.count("⭐")
-    if 1 <= star_count <= 5:
-        return star_count
-
-    digit_match = re.search(r"([1-5])", normalized)
-    if digit_match:
-        return int(digit_match.group(1))
-    return None
-
-
 
 
 def _safe_read_daily_log_for_advice(*, daily_log_read_url: str, bearer_token: Optional[str], day: str) -> SafeDailyLogReadResult:
@@ -399,440 +376,12 @@ def load_daily_logs_for_period(
     return result.summaries
 
 
-def _mean(values: Sequence[Optional[float]]) -> Optional[float]:
-    nums = [float(v) for v in values if v is not None]
-    if not nums:
-        return None
-    return round(sum(nums) / len(nums), 2)
-
-
-def _delta(current: Optional[float], base: Optional[float]) -> Optional[float]:
-    if current is None or base is None:
-        return None
-    return round(current - base, 2)
-
-
-def _recording_rate(items: Sequence[DailyLogSummary], extractor: Any) -> Optional[float]:
-    if not items:
-        return None
-    count = 0
-    for item in items:
-        value = extractor(item)
-        if isinstance(value, str):
-            if value.strip():
-                count += 1
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
-            count += 1
-        elif isinstance(value, list) and value:
-            count += 1
-    return round(count / len(items), 2)
-
-
-def _format_number(value: Optional[float]) -> str:
-    if value is None:
-        return "未記録"
-    if float(value).is_integer():
-        return str(int(value))
-    return f"{value:.2f}".rstrip("0").rstrip(".")
-
-
-def _resolve_today_sleep_candidates(*, target_date: str, today_summary: DailyLogSummary, history: Sequence[DailyLogSummary]) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]], str]:
-    return resolve_sleep_for_target_date(
-        target_date=target_date,
-        today_summary=today_summary,
-        history_summaries=history,
-    )
-
-
-def _build_metric_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
-    return {
-        "sleep_duration_min_avg": _mean([item.sleep_duration_min for item in items]),
-        "sleep_score_avg": _mean([item.sleep_score for item in items]),
-        "done_count_avg": _mean([_safe_float(item.done_count) for item in items]),
-        "drop_count_avg": _mean([_safe_float(item.drop_count) for item in items]),
-        "expenses_total_avg": _mean([item.expenses_total for item in items]),
-    }
-
-
-def _compare_metric_windows(current: Optional[float], base: Optional[float]) -> Optional[str]:
-    if current is None or base is None:
-        return None
-    if current > base:
-        return "up"
-    if current < base:
-        return "down"
-    return "flat"
-
-
-def _trend_direction(values: Sequence[Optional[float]]) -> Optional[str]:
-    nums = [float(v) for v in values if v is not None]
-    if len(nums) < 3:
-        return None
-    if nums[0] < nums[1] < nums[2]:
-        return "up"
-    if nums[0] > nums[1] > nums[2]:
-        return "down"
-    return None
-def _meal_metric_avg(items: Sequence[DailyLogSummary], field_name: str) -> Optional[float]:
-    return _mean([_safe_float(getattr(item, field_name, None)) for item in items])
-
-
-def _extract_notes_signals(note: Optional[str]) -> dict[str, bool]:
-    text = _safe_text(note)
-    if not text:
-        return {key: False for key in NOTES_SIGNAL_PATTERNS}
-    lowered = text.lower()
-    return {key: any(keyword in text or keyword in lowered for keyword in keywords) for key, keywords in NOTES_SIGNAL_PATTERNS.items()}
-
-
-def _notes_signal_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
-    if not items:
-        return {f"{key}_rate": None for key in NOTES_SIGNAL_PATTERNS}
-    counts = {key: 0 for key in NOTES_SIGNAL_PATTERNS}
-    for item in items:
-        signals = _extract_notes_signals(item.notes)
-        for key, matched in signals.items():
-            if matched:
-                counts[key] += 1
-    return {f"{key}_rate": round(counts[key] / len(items), 2) for key in NOTES_SIGNAL_PATTERNS}
-
-
-def _extract_location_patterns(summary: Optional[str]) -> dict[str, bool]:
-    from scripts.location_features import extract_location_flags
-    return {key.replace("_flag", "_day"): value for key, value in extract_location_flags(summary or "").items()}
-
-
-def _location_pattern_rates(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
-    observations = [_extract_location_patterns(item.location_summary) for item in items]
-    return {f"{key}_rate": (round(sum(row[key] is True for row in observations) / sum(row[key] is not None for row in observations), 2)
-            if any(row[key] is not None for row in observations) else None) for key in LOCATION_PATTERN_KEYS}
-
-
-def _workout_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Optional[float]]:
-    if not items:
-        return {
-            "workout_day_rate": None,
-            "workout_sessions_avg": None,
-            "workout_duration_min_avg": None,
-            "workout_sets_avg": None,
-            "workout_volume_kg_avg": None,
-            "workout_calories_avg": None,
-        }
-    return {
-        "workout_day_rate": round(sum(1 for item in items if item.workout_done) / len(items), 2),
-        "workout_sessions_avg": _mean([_safe_float(item.workout_sessions) for item in items]),
-        "workout_duration_min_avg": _mean([_safe_float(item.workout_duration_min) for item in items]),
-        "workout_sets_avg": _mean([_safe_float(item.workout_sets) for item in items]),
-        "workout_volume_kg_avg": _mean([_safe_float(item.workout_volume_kg) for item in items]),
-        "workout_calories_avg": _mean([_safe_float(item.workout_calories) for item in items]),
-    }
-
-
-def _build_behavior_snapshot(items: Sequence[DailyLogSummary]) -> dict[str, Any]:
-    snapshot = {
-        **_build_metric_snapshot(items),
-        "notes_recording_rate": _recording_rate(items, lambda item: item.notes),
-        "meal_logged_rate": _recording_rate(items, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
-        "workout": _workout_snapshot(items),
-    }
-    for field in MEAL_NUMERIC_FIELDS:
-        snapshot[f"{field}_avg"] = _meal_metric_avg(items, field)
-    snapshot["notes_signals"] = _notes_signal_rates(items)
-    snapshot["location_patterns"] = _location_pattern_rates(items)
-    return snapshot
-
-
-def _delta_map(current: Mapping[str, Optional[float]], base: Mapping[str, Optional[float]]) -> dict[str, Optional[float]]:
-    keys = set(current.keys()) | set(base.keys())
-    return {key: _delta(current.get(key), base.get(key)) for key in sorted(keys)}
-
-
-
-
-def _build_today_state(today_summary: DailyLogSummary, recent_summaries: Sequence[DailyLogSummary]) -> dict[str, Any]:
-    yesterday = recent_summaries[0] if recent_summaries else None
-    recent_7 = list(recent_summaries[:SHORT_WINDOW_DAYS])
-    recent_14 = list(recent_summaries[:RECENT_WINDOW_DAYS])
-    recent_30 = list(recent_summaries[:LOOKBACK_DAYS])
-    recent_3_chronological = list(reversed(recent_summaries[:3]))
-
-    recent_7_metrics = _build_metric_snapshot(recent_7)
-    recent_14_metrics = _build_metric_snapshot(recent_14)
-    recent_30_metrics = _build_metric_snapshot(recent_30)
-
-    today_sleep_duration = resolve_sleep_duration_minutes(
-        today_summary.sleep_start,
-        today_summary.sleep_end,
-        today_summary.sleep_duration_min,
-    ).resolved_sleep_duration_min
-    today_sleep_score = _safe_float(today_summary.sleep_score)
-
-    return {
-        "today_is_morning_incomplete": True,
-        "today_sleep": {
-            "sleep_analysis_jp": today_summary.sleep_analysis_jp,
-            "today_condition_forecast_jp": today_summary.today_condition_forecast_jp,
-            "sleep_start": today_summary.sleep_start or "未記録",
-            "sleep_end": today_summary.sleep_end or "未記録",
-            "sleep_duration_min": today_summary.sleep_duration_min,
-            "resolved_sleep_duration_min": today_sleep_duration,
-            "sleep_score": today_summary.sleep_score,
-            "sleep_heart_rate": today_summary.sleep_heart_rate,
-            "deep_duration_min": today_summary.deep_duration_min,
-            "rem_duration_min": today_summary.rem_duration_min,
-            "readiness_stars": today_summary.readiness_stars,
-            "readiness_hrv": today_summary.readiness_hrv,
-            "readiness_bpm": today_summary.readiness_bpm,
-            "baseline_hrv": today_summary.baseline_hrv,
-            "baseline_waking_bpm": today_summary.baseline_waking_bpm,
-            "comparisons": {
-                "vs_yesterday": {
-                    "sleep_duration_min_delta": _delta(today_sleep_duration, _safe_float(yesterday.sleep_duration_min) if yesterday else None),
-                    "sleep_score_delta": _delta(today_sleep_score, _safe_float(yesterday.sleep_score) if yesterday else None),
-                },
-                "vs_recent_7d_avg": {
-                    "sleep_duration_min_delta": _delta(today_sleep_duration, recent_7_metrics["sleep_duration_min_avg"]),
-                    "sleep_score_delta": _delta(today_sleep_score, recent_7_metrics["sleep_score_avg"]),
-                },
-                "recent_7d_avg": {
-                    "sleep_duration_min_avg": recent_7_metrics["sleep_duration_min_avg"],
-                    "sleep_score_avg": recent_7_metrics["sleep_score_avg"],
-                },
-                "recent_14d_avg": {
-                    "sleep_duration_min_avg": recent_14_metrics["sleep_duration_min_avg"],
-                    "sleep_score_avg": recent_14_metrics["sleep_score_avg"],
-                },
-            },
-            "recent_3day_trend": {
-                "sleep_duration_min": _trend_direction([item.sleep_duration_min for item in recent_3_chronological]),
-                "sleep_score": _trend_direction([item.sleep_score for item in recent_3_chronological]),
-            },
-        },
-        "historical_behavior_patterns": {
-            "recent_7d_avg": recent_7_metrics,
-            "recent_14d_avg": recent_14_metrics,
-            "recent_30d_avg": recent_30_metrics,
-            "recent_7d_vs_30d": {
-                "done_count": _compare_metric_windows(recent_7_metrics["done_count_avg"], recent_30_metrics["done_count_avg"]),
-                "drop_count": _compare_metric_windows(recent_7_metrics["drop_count_avg"], recent_30_metrics["drop_count_avg"]),
-                "spend_total": _compare_metric_windows(recent_7_metrics["expenses_total_avg"], recent_30_metrics["expenses_total_avg"]),
-            },
-            "recent_14d_trend": {
-                "done_count": _trend_direction([_safe_float(item.done_count) for item in reversed(recent_summaries[:14])]),
-                "drop_count": _trend_direction([_safe_float(item.drop_count) for item in reversed(recent_summaries[:14])]),
-                "spend_total": _trend_direction([_safe_float(item.expenses_total) for item in reversed(recent_summaries[:14])]),
-            },
-            "workout_pattern": {
-                "recent_7d": _workout_snapshot(recent_7),
-                "recent_14d": _workout_snapshot(recent_14),
-                "recent_30d": _workout_snapshot(recent_30),
-                "recent_14d_duration_trend": _trend_direction([_safe_float(item.workout_duration_min) for item in reversed(recent_summaries[:14])]),
-                "recent_14d_volume_trend": _trend_direction([_safe_float(item.workout_volume_kg) for item in reversed(recent_summaries[:14])]),
-            },
-            "meal_mood_comparison": {
-                "recent_7d": {f"{field}_avg": _meal_metric_avg(recent_7, field) for field in MEAL_NUMERIC_FIELDS},
-                "recent_14d": {f"{field}_avg": _meal_metric_avg(recent_14, field) for field in MEAL_NUMERIC_FIELDS},
-                "recent_30d": {f"{field}_avg": _meal_metric_avg(recent_30, field) for field in MEAL_NUMERIC_FIELDS},
-            },
-        },
-        "historical_recording_patterns": {
-            "notes_recording_rate_7d": _recording_rate(recent_7, lambda item: item.notes),
-            "notes_recording_rate_14d": _recording_rate(recent_14, lambda item: item.notes),
-            "meal_logged_rate_7d": _recording_rate(recent_7, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
-            "meal_logged_rate_14d": _recording_rate(recent_14, lambda item: [item.meal_summary] if _safe_text(item.meal_summary) else item.meal_photos),
-            "location_recording_rate_7d": _recording_rate(recent_7, lambda item: item.location_summary),
-            "location_recording_rate_14d": _recording_rate(recent_14, lambda item: item.location_summary),
-        },
-        "historical_context": {
-            "recent_7d_location_samples": [item.location_summary for item in recent_7 if _safe_text(item.location_summary)],
-            "recent_notes_samples": [item.notes for item in recent_14 if _safe_text(item.notes)][:5],
-            "historical_daily_score_avg": _mean([normalize_mood_to_score(item.mood) for item in recent_30]),
-            "notes_signal_comparison": {
-                "recent_7d": _notes_signal_rates(recent_7),
-            },
-            "location_pattern_comparison": {
-                "recent_7d": _location_pattern_rates(recent_7),
-            },
-            "workout_pattern": {
-                "recent_7d": _workout_snapshot(recent_7),
-                "recent_14d": _workout_snapshot(recent_14),
-                "recent_30d": _workout_snapshot(recent_30),
-            },
-        },
-    }
-
-
-def _build_day_record(summary: DailyLogSummary) -> dict[str, Any]:
-    return {
-        "date": summary.target_date,
-        "sleep_start": summary.sleep_start,
-        "sleep_end": summary.sleep_end,
-        "sleep_duration_min": summary.sleep_duration_min,
-        "sleep_score": summary.sleep_score,
-        "location_summary": summary.location_summary,
-        "meal_summary": summary.meal_summary,
-        "meal_logged": bool(_safe_text(summary.meal_summary) or summary.meal_photos),
-        "done_count": summary.done_count,
-        "drop_count": summary.drop_count,
-        "spend_total": summary.expenses_total,
-        "notes": summary.notes,
-        "kcal": summary.kcal,
-        "protein": summary.protein,
-        "fat": summary.fat,
-        "carb": summary.carb,
-        "workout_done": summary.workout_done,
-        "workout_sessions": summary.workout_sessions,
-        "workout_gym": summary.workout_gym,
-        "workout_duration_min": summary.workout_duration_min,
-        "workout_sets": summary.workout_sets,
-        "workout_volume_kg": summary.workout_volume_kg,
-        "workout_calories": summary.workout_calories,
-        "workout_exercises": summary.workout_exercises,
-        "workout_summary": summary.workout_summary,
-        "daily_score": normalize_mood_to_score(summary.mood),
-    }
-
-
-def _select_top_days(items: Sequence[DailyLogSummary], *, descending: bool, limit: int = SAMPLE_DAYS_PER_BUCKET) -> list[DailyLogSummary]:
-    scored_items = []
-    for item in items:
-        score = normalize_mood_to_score(item.mood)
-        if score is None:
-            continue
-        scored_items.append((item, score, _safe_float(item.sleep_score) or -1.0, _safe_float(item.done_count) or -1.0, item.target_date))
-    if descending:
-        filtered = [entry for entry in scored_items if entry[1] >= 4]
-        filtered.sort(key=lambda entry: (-entry[1], -(entry[2]), -(entry[3]), entry[4]))
-    else:
-        filtered = [entry for entry in scored_items if entry[1] <= 2]
-        filtered.sort(key=lambda entry: (entry[1], -(entry[2]), -(entry[3]), entry[4]))
-    if len(filtered) <= limit:
-        return [item for item, *_ in filtered]
-    step = max(1, len(filtered) // limit)
-    selected: list[DailyLogSummary] = []
-    for index in range(0, len(filtered), step):
-        selected.append(filtered[index][0])
-        if len(selected) >= limit:
-            break
-    if len(selected) < limit:
-        for item, *_ in filtered:
-            if item not in selected:
-                selected.append(item)
-            if len(selected) >= limit:
-                break
-    return selected[:limit]
-
-
-def _build_structured_comparison(history: Sequence[DailyLogSummary]) -> dict[str, Any]:
-    scored = [(item, normalize_mood_to_score(item.mood)) for item in history]
-    high = [item for item, mood in scored if mood in {4, 5}]
-    low = [item for item, mood in scored if mood in {1, 2}]
-    middle = [item for item, mood in scored if mood == 3]
-    recent_7 = list(history[:SHORT_WINDOW_DAYS])
-    recent_14 = list(history[:RECENT_WINDOW_DAYS])
-    top_good_days = _select_top_days(history, descending=True)
-    top_bad_days = _select_top_days(history, descending=False)
-    last_30_days = [_build_day_record(item) for item in history[:LOOKBACK_DAYS]]
-
-    def compare(items: Sequence[DailyLogSummary]) -> dict[str, Any]:
-        return {
-            "count": len(items),
-            **_build_behavior_snapshot(items),
-        }
-
-    notes_used_count = sum(1 for item in history if _safe_text(item.notes))
-    return {
-        "counts": {
-            "history_days": len(history),
-            "recent_7d_days": len(recent_7),
-            "recent_14d_days": len(recent_14),
-            "high_mood_days": len(high),
-            "low_mood_days": len(low),
-            "middle_mood_days": len(middle),
-            "mood_recorded_days": sum(1 for _, mood in scored if mood is not None),
-            "last_30_days_count": len(last_30_days),
-            "top_good_days_count": len(top_good_days),
-            "top_bad_days_count": len(top_bad_days),
-            "notes_used_count": notes_used_count,
-            "diary_used": False,
-        },
-        "comparisons": {
-            "recent_7d": compare(recent_7),
-            "recent_14d": compare(recent_14),
-            "recent_30d": compare(history[:LOOKBACK_DAYS]),
-            "high_mood": compare(high),
-            "low_mood": compare(low),
-            "middle_mood": compare(middle),
-            "meal_mood_comparison": {
-                "high_mood": {f"{field}_avg": _meal_metric_avg(high, field) for field in MEAL_NUMERIC_FIELDS},
-                "low_mood": {f"{field}_avg": _meal_metric_avg(low, field) for field in MEAL_NUMERIC_FIELDS},
-                "middle_mood": {f"{field}_avg": _meal_metric_avg(middle, field) for field in MEAL_NUMERIC_FIELDS},
-                "recent_7d": {f"{field}_avg": _meal_metric_avg(recent_7, field) for field in MEAL_NUMERIC_FIELDS},
-                "recent_14d": {f"{field}_avg": _meal_metric_avg(recent_14, field) for field in MEAL_NUMERIC_FIELDS},
-                "recent_30d": {f"{field}_avg": _meal_metric_avg(history[:LOOKBACK_DAYS], field) for field in MEAL_NUMERIC_FIELDS},
-                "good_vs_bad_delta": {
-                    "kcal": _delta(_meal_metric_avg(top_good_days, "kcal"), _meal_metric_avg(top_bad_days, "kcal")),
-                    "protein": _delta(_meal_metric_avg(top_good_days, "protein"), _meal_metric_avg(top_bad_days, "protein")),
-                    "fat": _delta(_meal_metric_avg(top_good_days, "fat"), _meal_metric_avg(top_bad_days, "fat")),
-                    "carb": _delta(_meal_metric_avg(top_good_days, "carb"), _meal_metric_avg(top_bad_days, "carb")),
-                },
-            },
-            "notes_signal_comparison": {
-                "high_mood": _notes_signal_rates(high),
-                "low_mood": _notes_signal_rates(low),
-                "recent_7d": _notes_signal_rates(recent_7),
-                "good_vs_bad_delta": _delta_map(_notes_signal_rates(top_good_days), _notes_signal_rates(top_bad_days)),
-            },
-            "location_pattern_comparison": {
-                "high_mood": _location_pattern_rates(high),
-                "low_mood": _location_pattern_rates(low),
-                "recent_7d": _location_pattern_rates(recent_7),
-                "good_vs_bad_delta": _delta_map(_location_pattern_rates(top_good_days), _location_pattern_rates(top_bad_days)),
-            },
-            "workout_comparison": {
-                "high_mood": _workout_snapshot(high),
-                "low_mood": _workout_snapshot(low),
-                "recent_7d": _workout_snapshot(recent_7),
-                "recent_14d": _workout_snapshot(recent_14),
-                "recent_30d": _workout_snapshot(history[:LOOKBACK_DAYS]),
-                "good_days": _workout_snapshot(top_good_days),
-                "bad_days": _workout_snapshot(top_bad_days),
-            },
-            "good_vs_bad_delta": {
-                "sleep_duration_min": _delta(_build_metric_snapshot(top_good_days)["sleep_duration_min_avg"], _build_metric_snapshot(top_bad_days)["sleep_duration_min_avg"]),
-                "sleep_score": _delta(_build_metric_snapshot(top_good_days)["sleep_score_avg"], _build_metric_snapshot(top_bad_days)["sleep_score_avg"]),
-                "done_count": _delta(_build_metric_snapshot(top_good_days)["done_count_avg"], _build_metric_snapshot(top_bad_days)["done_count_avg"]),
-                "drop_count": _delta(_build_metric_snapshot(top_good_days)["drop_count_avg"], _build_metric_snapshot(top_bad_days)["drop_count_avg"]),
-                "spend_total": _delta(_build_metric_snapshot(top_good_days)["expenses_total_avg"], _build_metric_snapshot(top_bad_days)["expenses_total_avg"]),
-                "kcal": _delta(_meal_metric_avg(top_good_days, "kcal"), _meal_metric_avg(top_bad_days, "kcal")),
-                "protein": _delta(_meal_metric_avg(top_good_days, "protein"), _meal_metric_avg(top_bad_days, "protein")),
-                "fat": _delta(_meal_metric_avg(top_good_days, "fat"), _meal_metric_avg(top_bad_days, "fat")),
-                "carb": _delta(_meal_metric_avg(top_good_days, "carb"), _meal_metric_avg(top_bad_days, "carb")),
-            },
-        },
-        "last_30_days_summary": {
-            "daily_records": last_30_days,
-            "aggregates": {
-                "all_days": compare(history),
-                "recent_7d": compare(recent_7),
-                "recent_14d": compare(recent_14),
-                "top_good_days": compare(top_good_days),
-                "top_bad_days": compare(top_bad_days),
-            },
-        },
-        "top_good_days": [_build_day_record(item) for item in top_good_days],
-        "top_bad_days": [_build_day_record(item) for item in top_bad_days],
-        "high_mood_sample_count": len(top_good_days),
-        "low_mood_sample_count": len(top_bad_days),
-    }
-
-
 def build_today_advice_generation_context(
     *,
     daily_log_read_url: str,
     bearer_token: Optional[str],
     target_date: str,
-) -> Optional[dict[str, Any]]:
+) -> Optional[TodayAdviceContext]:
     history_result = _load_daily_logs_for_period_with_debug(
         daily_log_read_url=daily_log_read_url,
         bearer_token=bearer_token,
@@ -931,11 +480,6 @@ def build_today_advice_generation_context(
     }
 
 
-def _build_chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
 
 
 def _count_input_tokens(*, model: str, messages: Sequence[Mapping[str, Any]]) -> tuple[Optional[int], str]:
@@ -1207,167 +751,12 @@ def generate_today_advice(
             raw_response_dir=notes_debug_dir,
             audit=note_label_audit,
         )
-        notes_total_count = len(historical_summaries)
-        notes_non_empty_count = sum(1 for item in historical_summaries if _safe_text(item.notes))
-        notes_labeled = list(note_labels.values())
-        notes_parse_success_rate = float(note_label_audit.get("notes_parse_success_rate", 0.0) or 0.0)
-        notes_date_merge_success_rate = float(note_label_audit.get("notes_date_merge_success_rate", 0.0) or 0.0)
-        notes_unknown_rate = float(note_label_audit.get("unknown_rate", note_label_audit.get("notes_unknown_rate", 0.0)) or 0.0)
-        notes_signals_detected_count = int(note_label_audit.get("signals_detected_count", 0) or 0)
-        notes_payload = {
-            "total_count": notes_total_count,
-            "non_empty_count": notes_non_empty_count,
-            "api_calls": note_label_audit.get("api_calls", 0),
-            "labeled_count": len(notes_labeled),
-            "fallback_unknown_count": sum(1 for item in notes_labeled if item.confidence == "low" and item.sentiment_label == "unknown"),
-            "dataframe_sentiment_counts": {
-                "positive": sum(1 for item in notes_labeled if item.sentiment_label == "positive"),
-                "neutral": sum(1 for item in notes_labeled if item.sentiment_label == "neutral"),
-                "negative": sum(1 for item in notes_labeled if item.sentiment_label == "negative"),
-            },
-            "dataframe_flag_counts": {
-                "fatigue": sum(1 for item in notes_labeled if item.fatigue_flag),
-                "stress": sum(1 for item in notes_labeled if item.stress_flag),
-                "social_load": sum(1 for item in notes_labeled if item.social_load_flag),
-                "achievement": sum(1 for item in notes_labeled if item.achievement_flag),
-                "self_care": sum(1 for item in notes_labeled if item.self_care_flag),
-                "sleep_issue": sum(1 for item in notes_labeled if item.sleep_issue_flag),
-            },
-            "raw_sentiment_counts": note_label_audit.get("raw_sentiment_counts", {}),
-            "raw_flag_counts": note_label_audit.get("raw_flag_counts", {}),
-            "normalized_sentiment_counts": note_label_audit.get("normalized_sentiment_counts", {}),
-            "normalized_flag_counts": note_label_audit.get("normalized_flag_counts", {}),
-            "top_evidence_keywords": [k for k, _v in sorted({kw: sum(kw in item.evidence_keywords for item in notes_labeled) for item in notes_labeled for kw in item.evidence_keywords}.items(), key=lambda p: p[1], reverse=True)[:5]],
-            "fallback_reason_counts": note_label_audit.get("fallback_reason_counts", {}),
-            "raw_response_paths": note_label_audit.get("raw_response_paths", []),
-            "notes_classifier_success_rate": note_label_audit.get("notes_classifier_success_rate", 0.0),
-            "notes_parse_success_rate": notes_parse_success_rate,
-            "notes_date_merge_success_rate": notes_date_merge_success_rate,
-            "notes_merge_failed_count": int(note_label_audit.get("notes_merge_failed_count", 0) or 0),
-            "unknown_rate": notes_unknown_rate,
-            "tag_extract_failed_count": note_label_audit.get("tag_extract_failed_count", 0),
-            "parse_low_confidence_count": note_label_audit.get("parse_low_confidence_count", 0),
-            "top_tags": note_label_audit.get("top_tags", []),
-            "matched_dates_count": note_label_audit.get("matched_dates_count", 0),
-            "matched_dates": note_label_audit.get("matched_dates", []),
-            "unmatched_input_dates": note_label_audit.get("unmatched_input_dates", []),
-            "unmatched_response_dates": note_label_audit.get("unmatched_response_dates", []),
-            "signals_detected_count": notes_signals_detected_count,
-            "notes_label_quality_low": bool(notes_parse_success_rate < 0.5),
-            "notes_unmatched_input_dates_count": int(note_label_audit.get("notes_unmatched_input_dates_count", 0) or 0),
-            "notes_unmatched_response_dates_count": int(note_label_audit.get("notes_unmatched_response_dates_count", 0) or 0),
-            "merge_failed_reason": note_label_audit.get("merge_failed_reason"),
-        }
-        missing_ids = list(note_label_audit.get("missing_ids") or [])
-        missing_ids_detail = [
-            {"id": item, "affected_input_dates": [row.target_date for row in historical_summaries if str(item).endswith(row.target_date)]}
-            for item in missing_ids
-        ]
-        exclusion_reasons: list[str] = []
-        if notes_payload["notes_parse_success_rate"] < 0.8:
-            exclusion_reasons.append("parse_success_rate_low")
-        if notes_payload["unknown_rate"] > 0.4:
-            exclusion_reasons.append("unknown_rate_high")
-        if note_label_audit.get("date_match_failure_count", 0) > 0:
-            exclusion_reasons.append("date_match_failure")
-        if notes_date_merge_success_rate <= 0.0 and notes_non_empty_count > 0:
-            exclusion_reasons.append("date_merge_failed_all")
-        elif 0.0 < notes_date_merge_success_rate < 1.0:
-            exclusion_reasons.append("date_merge_partial")
-        if note_label_audit.get("duplicate_ids"):
-            exclusion_reasons.append("duplicate_ids")
-        if missing_ids:
-            exclusion_reasons.append("missing_ids")
-        if note_label_audit.get("unknown_ids"):
-            exclusion_reasons.append("unknown_ids")
-        quality_high_enough = (
-            notes_payload["notes_parse_success_rate"] >= 0.8
-            and notes_date_merge_success_rate >= 0.8
-            and notes_payload["unknown_rate"] <= 0.4
+        notes_quality = assess_notes_quality(
+            historical_summaries=historical_summaries, note_labels=note_labels,
+            note_label_audit=note_label_audit, target_date=target_date, audit=audit,
         )
-        if quality_high_enough:
-            exclusion_reasons = [reason for reason in exclusion_reasons if reason != "missing_ids"]
-        hard_exclusion_reasons = {"date_merge_failed_all", "parse_success_rate_low", "date_match_failure", "duplicate_ids", "unknown_ids"}
-        notes_quality_used = "low" if any(reason in hard_exclusion_reasons for reason in exclusion_reasons) else "high"
-        notes_payload["notes_quality_used"] = notes_quality_used
-        notes_payload["exclusion_reason"] = exclusion_reasons
-        notes_payload["missing_ids_detail"] = missing_ids_detail
-        audit.put("notes_labeling", notes_payload)
-        audit.info(
-            "[TodayAdvice][Notes] total=%s non_empty=%s api_calls=%s labeled=%s fallback_unknown=%s",
-            notes_payload["total_count"], notes_payload["non_empty_count"], notes_payload["api_calls"], notes_payload["labeled_count"], notes_payload["fallback_unknown_count"],
-        )
-        audit.info(
-            "[TodayAdvice][Notes] raw_sentiment=%s normalized_sentiment=%s dataframe_sentiment=%s",
-            safe_json(notes_payload["raw_sentiment_counts"]),
-            safe_json(notes_payload["normalized_sentiment_counts"]),
-            safe_json(notes_payload["dataframe_sentiment_counts"]),
-        )
-        audit.info(
-            "[TodayAdvice][Notes] raw_flags=%s normalized_flags=%s dataframe_flags=%s",
-            safe_json(notes_payload["raw_flag_counts"]),
-            safe_json(notes_payload["normalized_flag_counts"]),
-            safe_json(notes_payload["dataframe_flag_counts"]),
-        )
-        reason_counts = notes_payload["fallback_reason_counts"]
-        audit.info(
-            "[TodayAdvice][Notes] fallback_reasons: parse_error=%s schema_mismatch=%s date_match_failure=%s empty_response=%s",
-            reason_counts.get("parse_error_count", 0),
-            reason_counts.get("schema_mismatch_count", 0),
-            reason_counts.get("date_match_failure_count", 0),
-            reason_counts.get("empty_response_count", 0),
-        )
-        audit.info(
-            "[TodayAdvice][Notes] classifier_success_rate=%s parse_success_rate=%s date_merge_success_rate=%s merge_failed_count=%s unknown_rate=%s tag_extract_failed=%s parse_low_confidence=%s",
-            notes_payload["notes_classifier_success_rate"],
-            notes_payload["notes_parse_success_rate"],
-            notes_payload["notes_date_merge_success_rate"],
-            notes_payload["notes_merge_failed_count"],
-            notes_payload["unknown_rate"],
-            notes_payload["tag_extract_failed_count"],
-            notes_payload["parse_low_confidence_count"],
-        )
-        audit.info(
-            "[Notes] notes_quality_used=%s exclusion_reason=%s missing_ids_detail=%s matched_dates_count=%s unmatched_input_dates=%s unmatched_response_dates=%s parse_success_rate=%s date_merge_success_rate=%s merge_failed_reason=%s unknown_rate=%s notes_based_features_included_count=%s notes_based_features_excluded_count=%s",
-            notes_quality_used,
-            safe_json(exclusion_reasons),
-            safe_json(missing_ids_detail),
-            notes_payload["matched_dates_count"],
-            safe_json(notes_payload["unmatched_input_dates"]),
-            safe_json(notes_payload["unmatched_response_dates"]),
-            notes_payload["notes_parse_success_rate"],
-            notes_payload["notes_date_merge_success_rate"],
-            notes_payload["merge_failed_reason"],
-            notes_payload["unknown_rate"],
-            0 if notes_quality_used == "low" else len(note_labels),
-            len(note_labels) if notes_quality_used == "low" else 0,
-        )
-        if notes_quality_used == "low":
-            note_labels = {d: type(label)(**{**label.__dict__, "sentiment_label": "unknown", "sentiment_score": 0, "fatigue_flag": False, "stress_flag": False, "social_load_flag": False, "achievement_flag": False, "self_care_flag": False, "sleep_issue_flag": False, "signals": [], "derived_flags": {}, "confidence": "low", "parse_quality": "low", "no_signal_note": True, "tag_extract_failed": True, "parse_low_confidence": True}) for d, label in note_labels.items()}
-            audit.info("[Notes] excluded_from_today_advice=true")
-        elif "date_merge_partial" in exclusion_reasons:
-            audit.info("[Notes] partial_merge_detected=true action=use_successful_labels_and_neutral_fallback")
-        audit.info(
-            "[TodayAdvice][Notes] top_tags=%s matched_dates_count=%s",
-            safe_json(notes_payload["top_tags"]),
-            notes_payload["matched_dates_count"],
-        )
-        audit.info(
-            "[TodayAdvice][Notes] unmatched_input_dates=%s unmatched_response_dates=%s",
-            safe_json(note_label_audit.get("unmatched_input_dates", [])),
-            safe_json(note_label_audit.get("unmatched_response_dates", [])),
-        )
-        audit.info("[TodayAdvice][Notes] raw_response_paths=%s", safe_json(notes_payload["raw_response_paths"]))
-        if notes_payload["raw_response_paths"]:
-            audit.info("[TodayAdvice][Notes] raw_responses_saved=%s", safe_json(notes_payload["raw_response_paths"]))
-        if notes_non_empty_count > 0 and notes_signals_detected_count == 0:
-            logging.warning("notes_label_quality_warning target_date=%s reason=non_empty_but_no_signals", target_date)
-        if notes_non_empty_count > 0 and notes_unknown_rate >= 0.9:
-            logging.warning("notes_label_quality_warning target_date=%s reason=unknown_rate_high unknown_rate=%.3f", target_date, notes_unknown_rate)
-        if not any(notes_payload["dataframe_flag_counts"].values()):
-            logging.warning("notes_label_quality_warning target_date=%s reason=dataframe_flags_all_zero", target_date)
-        if not notes_payload["top_tags"]:
-            logging.warning("notes_label_quality_warning target_date=%s reason=top_tags_empty", target_date)
+        note_labels = notes_quality.labels
+        notes_payload = notes_quality.audit_metrics
 
         feature_df = build_daily_feature_table(historical_summaries, note_labels)
         history_by_date = {item.target_date: item for item in historical_summaries}

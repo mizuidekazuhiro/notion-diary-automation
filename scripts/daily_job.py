@@ -26,7 +26,7 @@ from publish.read_daily_log import read_daily_log
 from publish.render_diary_notification_mail import render_diary_notification_mail
 from publish.render_mail import MailContent, render_mail
 from publish.send_mail import MailConfig, send_mail
-from scripts.daily_mail_quality import today_advice_char_limits, today_advice_length_valid
+from scripts.daily_mail_quality import today_advice_char_limits
 from scripts.mail_dedupe import (
     MAIL_INPUT_HASH_FIELDS,
     build_mail_input_snapshot,
@@ -36,6 +36,11 @@ from scripts.mail_dedupe import (
     snapshot_json,
 )
 from scripts.diary_generator import generate_diary_result
+from scripts.generation_state import (
+    assert_generation_readback,
+    merge_generation_metadata as _generation_metadata,
+    stage_generation_status as _stage_generation_status,
+)
 from scripts.diary_inputs import (
     DIARY_GENERATED_FIELDS,
     _build_done_tasks_detail_text,
@@ -929,41 +934,15 @@ def _advice_generation_policy() -> dict[str, Any]:
     return {**generation_signature("advice", (
         "scripts/today_advice_renderer.py", "scripts/advice_evidence.py", "scripts/today_advice_feature_builder.py",
         "scripts/today_advice_pattern_analyzer.py", "scripts/today_advice_regression.py", "scripts/today_advice_lightgbm.py",
-        "scripts/mood_advice_generator.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py", "scripts/note_batch_labeler.py",
+        "scripts/mood_advice_generator.py", "scripts/today_advice_context.py", "scripts/notes_quality.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py", "scripts/note_batch_labeler.py",
     )), "notes_model": model_for("notes"), "max_chars": today_advice_char_limits()[1]}
-
-
-def _generation_metadata(summary: Any, stage: str, metadata: dict[str, Any]) -> str:
-    try:
-        previous = json.loads(getattr(summary, "generation_metadata", None) or "{}")
-    except (ValueError, TypeError):
-        previous = {}
-    if not isinstance(previous, dict):
-        previous = {}
-    previous[stage] = {key: value for key, value in metadata.items() if key != "text"}
-    return json.dumps(previous, ensure_ascii=False, separators=(",", ":"))
 
 
 def _verify_generation_readback(config: Any, target_date: str, expected: dict[str, Any]) -> Any:
     refreshed = _refresh_daily_log_summary(config, target_date)
     if refreshed is None:
         raise RuntimeError("generation_readback_unavailable")
-    mismatches = []
-    for key, value in expected.items():
-        if key.endswith("_generated_at"):
-            continue
-        actual = getattr(refreshed, key, None)
-        if key in {"generation_metadata", "diary_evidence_json"}:
-            try:
-                equal = json.loads(actual or "null") == json.loads(value)
-            except (ValueError, TypeError):
-                equal = False
-        else:
-            equal = str(actual or "").replace("\r\n", "\n").strip() == str(value or "").replace("\r\n", "\n").strip()
-        if not equal:
-            mismatches.append(key)
-    if mismatches:
-        raise RuntimeError("generation_readback_mismatch fields=" + ",".join(mismatches))
+    assert_generation_readback(refreshed, expected)
     return refreshed
 
 
@@ -1092,21 +1071,22 @@ def _generate_and_save_today_advice(
         advice_result.low_mood_sample_count,
         advice_result.judgment_json.get("evidence_used", []),
     )
+    analysis = advice_result.judgment_json.get("analysis_json", {})
     advice_payload = {
         "today_advice": advice_result.today_advice,
         "today_advice_input_hash": current_input_hash,
         "today_advice_generated_at": _utc_timestamp(),
         "generation_metadata": _generation_metadata(summary, "advice", {
-            **advice_result.judgment_json.get("analysis_json", {}).get("generation", {}),
-            "status": advice_result.judgment_json.get("analysis_json", {}).get("final_status", "failed"),
-            "fallback_used": advice_result.judgment_json.get("analysis_json", {}).get("fallback_used", True),
+            **analysis.get("generation", {}),
+            "status": analysis.get("final_status", "failed"),
+            "fallback_used": analysis.get("fallback_used", True),
             "reflection_date": summary.target_date, "target_date": context.get("advice_target_date"),
-            "target_counts": advice_result.judgment_json.get("analysis_json", {}).get("target_counts", {}),
-            "risk_level": advice_result.judgment_json.get("analysis_json", {}).get("risk_level", "unknown"),
+            "target_counts": analysis.get("target_counts", {}),
+            "risk_level": analysis.get("risk_level", "unknown"),
             "input_hash": current_input_hash,
             "repetition_diagnosis": {"same_text_as_previous": summary.today_advice == advice_result.today_advice,
                                      "input_changed": input_changed,
-                                     "assessment_status": advice_result.judgment_json.get("analysis_json", {}).get("assessment_status")},
+                                     "assessment_status": analysis.get("assessment_status")},
         }),
     }
     save_result = _save_daily_log_fields(
@@ -1126,16 +1106,9 @@ def _generate_and_save_today_advice(
         input_changed,
     )
     result_summary = _verify_generation_readback(config, summary.target_date, advice_payload)
-    if advice_result.judgment_json.get("analysis_json", {}).get("fallback_used"):
+    if analysis.get("fallback_used"):
         raise PhaseSemanticDegradation("today_advice_generation_degraded")
     return result_summary
-
-
-def _stage_generation_status(summary: Any, stage: str) -> str:
-    try:
-        return str(json.loads(getattr(summary, "generation_metadata", None) or "{}").get(stage, {}).get("status") or "")
-    except (ValueError, AttributeError, TypeError):
-        return ""
 
 
 def _ensure_notes_label_persisted(

@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from scripts.generation_state import stage_generation_status
+
 PHASE_STATUSES = {"success", "degraded", "skipped", "failed"}
 
 
@@ -122,11 +124,7 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
 
     try:
         summary = deps.run_today_advice(summary)
-        try:
-            import json
-            status = json.loads(getattr(summary, "generation_metadata", None) or "{}").get("advice", {}).get("status")
-        except (ValueError, TypeError, AttributeError):
-            status = None
+        status = stage_generation_status(summary, "advice")
         step_status["today_advice"] = "degraded" if status == "insufficient_data" else "success"
     except PhaseSemanticDegradation:
         step_status["today_advice"] = "degraded"
