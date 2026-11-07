@@ -97,11 +97,23 @@ def select_cases(pages: list[dict]) -> list[tuple[str, dict]]:
     return selected
 
 
+def require_public_key():
+    key = os.getenv("DIARY_EVAL_PUBLIC_KEY", "").strip()
+    if not key:
+        raise RuntimeError("evaluation_public_key_required_before_any_api_call")
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+    public = serialization.load_pem_public_key(key.encode())
+    if not isinstance(public, RSAPublicKey) or public.key_size < 2048:
+        raise ValueError("evaluation_requires_rsa_public_key_at_least_2048_bits")
+    return public
+
+
 def encrypt_private(payload: dict, path: Path) -> None:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    public = serialization.load_pem_public_key(os.environ["DIARY_EVAL_PUBLIC_KEY"].encode())
+    public = require_public_key()
     key, nonce = os.urandom(32), os.urandom(12)
     wrapped = public.encrypt(key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
     ciphertext = AESGCM(key).encrypt(nonce, json.dumps(payload, ensure_ascii=False).encode(), b"diary-evaluation-v1")
@@ -110,6 +122,7 @@ def encrypt_private(payload: dict, path: Path) -> None:
 
 
 def main() -> int:
+    require_public_key()
     output = Path("artifacts/model_evaluation")
     output.mkdir(parents=True, exist_ok=True)
     maximum = min(1.50, float(os.getenv("DIARY_EVAL_MAX_USD", "1.50")))

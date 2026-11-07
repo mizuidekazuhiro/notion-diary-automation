@@ -5658,9 +5658,16 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
   if (!isValidDateString(resolvedStart)) return badRequest("invalid start");
 
   const pages = await queryDatabaseAll(env, env.DAILY_LOG_DB_ID, {
-    and: [
-      { property: "Target Date", date: { on_or_after: resolvedStart } },
-      { property: "Target Date", date: { on_or_before: end } },
+    or: [
+      { and: [
+        { property: "Target Date", date: { on_or_after: resolvedStart } },
+        { property: "Target Date", date: { on_or_before: end } },
+      ] },
+      { and: [
+        { property: "Target Date", date: { is_empty: true } },
+        { property: "Date", date: { on_or_after: resolvedStart } },
+        { property: "Date", date: { on_or_before: end } },
+      ] },
     ],
   });
   const healthNames = getDailyLogHealthPropertyNames(env);
@@ -5669,7 +5676,7 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
   const items = pages
     .map((page: any) => {
       const p = page.properties ?? {};
-      const targetDate = getDateStartFromProperty(p["Target Date"]);
+      const targetDate = getDateStartFromProperty(p["Target Date"]) || getDateStartFromProperty(p.Date);
       if (!targetDate) return null;
       const location = resolveLocationSummaryFields(p, env);
       const doneRelationIds = getRelationIdsFromProperty(p["Done Tasks"]);

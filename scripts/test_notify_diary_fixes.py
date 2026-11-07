@@ -82,7 +82,8 @@ def test_expense_f_query_failed_logs_exception(monkeypatch) -> None:
     with patch("scripts.expense_f_aggregator._fetch_schema", return_value=(schema, {"ok": True})), patch("scripts.expense_f_aggregator.requests.post", side_effect=RuntimeError("boom")):
         result = aggregate_expense_f_for_dates(["2026-03-28"])["2026-03-28"]
     assert result.data_status == "query_failed"
-    assert result.debug_summary["query_exception_message"] == "boom"
+    assert result.debug_summary["query_exception_message"] == "RuntimeError"
+    assert "boom" not in str(result.debug_summary)
 
 
 def test_f_risk_notify_runtime_no_longer_stops_on_backend(monkeypatch) -> None:

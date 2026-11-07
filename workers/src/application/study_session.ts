@@ -356,12 +356,31 @@ async function aggregateTargetDate(
   env: StudySessionEnv,
   databaseId: string,
   targetDate: string,
+  confirmedWrites: Record<string, any>[] = [],
 ): Promise<StudyTotals> {
   const pages = await queryDatabaseAll(env, databaseId, {
     property: "Target Date",
     date: { equals: targetDate },
   });
-  return aggregateStudyPages(pages);
+  // Retain a confirmed write missing from the index, while respecting later edits.
+  const combined = new Map<string, Record<string, any>>();
+  const key = (page: Record<string, any>) => getRichText(page, "Session ID") || String(page.id);
+  for (const page of pages) {
+    const previous = combined.get(key(page));
+    if (!previous || Date.parse(pageRecency(page)) > Date.parse(pageRecency(previous))) {
+      combined.set(key(page), page);
+    }
+  }
+  for (const written of confirmedWrites) {
+    if (getDate(written, "Target Date") !== targetDate) continue;
+    const indexed = combined.get(key(written));
+    const indexedAt = Date.parse(String(indexed?.last_edited_time || ""));
+    const writtenAt = Date.parse(String(written.last_edited_time || ""));
+    if (!indexed || !Number.isFinite(indexedAt) || (Number.isFinite(writtenAt) && writtenAt >= indexedAt)) {
+      combined.set(key(written), written);
+    }
+  }
+  return aggregateStudyPages([...combined.values()]);
 }
 
 async function syncDailyLogTotals(
@@ -410,8 +429,9 @@ async function reconcileTargetDate(
   env: StudySessionEnv,
   databaseId: string,
   targetDate: string,
+  confirmedWrites: Record<string, any>[] = [],
 ): Promise<{ totals: StudyTotals; dailyLog: { updated: boolean; pageId: string | null } }> {
-  const totals = await aggregateTargetDate(env, databaseId, targetDate);
+  const totals = await aggregateTargetDate(env, databaseId, targetDate, confirmedWrites);
   const dailyLog = await syncDailyLogTotals(env, targetDate, totals);
   return { totals, dailyLog };
 }
@@ -452,7 +472,9 @@ export async function handleStudyAnkiDaily(request: Request, env: StudySessionEn
     } else {
       page = await create_page(env, databaseId, aggregateProperties);
     }
-    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, aggregate.targetDate);
+    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, aggregate.targetDate, [
+      { ...page, id: page?.id ?? existing?.id, properties: aggregateProperties },
+    ]);
     return jsonResponse({
       ok: true,
       created: !existing,
@@ -553,12 +575,16 @@ export async function handleStudySession(request: Request, env: StudySessionEnv)
   const databaseId = env.APP_USAGE_SESSIONS_DB_ID?.trim() || DEFAULT_APP_USAGE_SESSIONS_DB_ID;
   try {
     const existing = await findSessionById(env, databaseId, session.sessionId);
+    if (existing && getDate(existing, "Target Date") !== session.targetDate) {
+      return jsonResponse({ error: "session_id_date_conflict", updated: false }, 409);
+    }
     let createdPage = existing;
     let duplicate = Boolean(existing);
+    let confirmedWrites: Record<string, any>[] = existing ? [existing] : [];
 
     if (!existing) {
       const title = `${session.app} ${session.targetDate} ${formatJstTime(Date.parse(session.startedAt))}`;
-      createdPage = await create_page(env, databaseId, {
+      const properties = {
         Name: titleProperty(title),
         "Session ID": richTextProperty(session.sessionId),
         "Start At": dateProperty(session.startedAt),
@@ -568,11 +594,13 @@ export async function handleStudySession(request: Request, env: StudySessionEnv)
         App: selectProperty(session.app),
         Device: richTextProperty(session.device),
         Source: selectProperty(session.source),
-      });
+      };
+      createdPage = await create_page(env, databaseId, properties);
+      confirmedWrites = [{ ...createdPage, properties }];
       duplicate = false;
     }
 
-    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, session.targetDate);
+    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, session.targetDate, confirmedWrites);
     return jsonResponse({
       ok: true,
       created: !duplicate,

@@ -76,3 +76,14 @@ def test_unavailable_risk_can_abstain_but_successful_risk_requires_audit_metadat
         report=preflight_report(row,mail,expense_f=expense,f_risk=risk,run_id='test')
         issues=[issue for issue in report['issues'] if issue['code']=='f_risk_observability_missing']
         assert bool([issue for issue in issues if issue['severity']=='error']) is should_block
+
+
+def test_diary_fallback_remains_deliverable_with_quality_warning(monkeypatch):
+    row,_,expense,risk=setup_publish(monkeypatch)
+    metadata=json.loads(row.generation_metadata)
+    metadata['diary']={'status':'degraded','fallback_used':True,'method':'deterministic'}
+    row=replace(row,generation_metadata=json.dumps(metadata))
+    mail=render_mail(row,expense_f_alert=expense,f_risk_alert=risk)
+    report=preflight_report(row,mail,expense_f=expense,f_risk=risk,run_id='test')
+    assert report['error_count']==0
+    assert any(issue['code']=='diary_fallback_used' and issue['severity']=='warning' for issue in report['issues'])

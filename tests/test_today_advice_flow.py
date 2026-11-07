@@ -157,8 +157,8 @@ def test_render_daily_log_text_includes_sleep_sections_in_order() -> None:
     summary = _summary()
     rendered = render_daily_log_text(_payload(summary))
     assert rendered.index("Today advice") < rendered.index("Diary") < rendered.index("Sleep & Condition")
-    assert "- Sleep Analysis JP:" in rendered
-    assert "- Today Condition Forecast JP:" in rendered
+    assert "- 睡眠の振り返り:" in rendered
+    assert "- 翌日の見通し（2026-03-21）:" in rendered
     assert "- 就寝時間: 23:45" in rendered
     assert "- 起床時間: 07:00" in rendered
     assert "- 睡眠時間: 7時間15分" in rendered

@@ -36,6 +36,12 @@ def mask_unavailable_summary(summary: Any) -> Any:
     from copy import copy
     states = source_states(summary)
     changes = {}
+    try:
+        generation = json.loads(getattr(summary, "generation_metadata", None) or "{}")
+        if generation.get("sleep", {}).get("status") == "failed":
+            changes.update({name: None for name in ("sleep_analysis_jp", "today_condition_forecast_jp") if hasattr(summary, name)})
+    except (ValueError, TypeError, AttributeError):
+        pass
     if states.get("sleep", {}).get("status") in UNAVAILABLE:
         for name in ("sleep_start", "sleep_end", "sleep_duration_min", "resolved_sleep_duration_min", "resolved_sleep_duration_hours", "resolved_sleep_duration_text", "sleep_score", "sleep_source", "sleep_analysis_jp", "today_condition_forecast_jp", "sleep_heart_rate", "deep_duration_min", "rem_duration_min", "readiness_stars", "readiness_hrv", "readiness_bpm", "baseline_hrv", "baseline_waking_bpm"):
             if hasattr(summary, name): changes[name] = None
