@@ -8,8 +8,11 @@ from typing import Any
 
 import requests
 
+from scripts.ai_models import request_settings
+from ingest.http_client import _parse_retry_after_seconds
+
 DEFAULT_CONNECT_TIMEOUT = 5.0
-DEFAULT_READ_TIMEOUT = 60.0
+DEFAULT_READ_TIMEOUT = 120.0
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF_BASE = 0.8
 DEFAULT_BACKOFF_MAX = 8.0
@@ -69,8 +72,11 @@ def _build_chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[s
     ]
 
 
-def chat_completion(*, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+def chat_completion(*, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.3,
+                    usage_sink: list[dict[str, Any]] | None = None,
+                    response_format: dict[str, Any] | None = None,
+                    api_key: str | None = None) -> str:
+    api_key = api_key or os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is missing")
     connect_timeout = _env_float("OPENAI_CONNECT_TIMEOUT_SEC", DEFAULT_CONNECT_TIMEOUT)
@@ -84,18 +90,23 @@ def chat_completion(*, model: str, system_prompt: str, user_prompt: str, tempera
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 2):
         started = time.perf_counter()
+        response = None
+        retry_after = None
+        usage_recorded = False
         try:
+            payload = {"model": model, "messages": _build_chat_messages(system_prompt=system_prompt, user_prompt=user_prompt),
+                       **request_settings(model)}
+            if not model.startswith("gpt-6"):
+                payload["temperature"] = temperature
+            if response_format is not None:
+                payload["response_format"] = response_format
             response = requests.post(
                 f"{base_url}/chat/completions",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {api_key}",
                 },
-                json={
-                    "model": model,
-                    "temperature": temperature,
-                    "messages": _build_chat_messages(system_prompt=system_prompt, user_prompt=user_prompt),
-                },
+                json=payload,
                 timeout=(connect_timeout, read_timeout),
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
@@ -112,7 +123,22 @@ def chat_completion(*, model: str, system_prompt: str, user_prompt: str, tempera
                 response.raise_for_status()
             response.raise_for_status()
             data = response.json()
+            usage = data.get("usage") or {}
+            details = usage.get("prompt_tokens_details") or {}
+            completion_details = usage.get("completion_tokens_details") or {}
+            record = {"model": data.get("model", model), "attempt": attempt, "latency_ms": latency_ms,
+                      "input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens"),
+                      "reasoning_tokens": completion_details.get("reasoning_tokens"),
+                      "cached_tokens": details.get("cached_tokens"), "cache_write_tokens": details.get("cache_write_tokens"),
+                      "status": response.status_code, "usage_known": bool(usage)}
+            if usage_sink is not None:
+                usage_sink.append(record)
+            usage_recorded = True
+            logger.info("[OpenAIUsage] %s", __import__("json").dumps(record, sort_keys=True))
             content = _extract_message_content(data)
+            choice = (data.get("choices") or [{}])[0]
+            if choice.get("finish_reason") in {"length", "content_filter"} or choice.get("message", {}).get("refusal"):
+                raise RuntimeError("OpenAI output was incomplete or refused")
             if not content:
                 raise RuntimeError("OpenAI response did not include content")
             return content
@@ -120,6 +146,8 @@ def chat_completion(*, model: str, system_prompt: str, user_prompt: str, tempera
             last_error = exc
             status_code = exc.response.status_code if exc.response is not None else None
             retryable = status_code == 429 or (isinstance(status_code, int) and 500 <= status_code <= 599)
+            if exc.response is not None:
+                retry_after = _parse_retry_after_seconds(getattr(exc.response, "headers", {}).get("Retry-After"))
         except (requests.ReadTimeout, requests.ConnectionError) as exc:
             last_error = exc
             retryable = True
@@ -128,6 +156,10 @@ def chat_completion(*, model: str, system_prompt: str, user_prompt: str, tempera
             retryable = False
 
         latency_ms = int((time.perf_counter() - started) * 1000)
+        if usage_sink is not None and not usage_recorded:
+            usage_sink.append({"model": model, "attempt": attempt, "latency_ms": latency_ms,
+                               "status": response.status_code if response is not None else None,
+                               "usage_known": False, "error_type": type(last_error).__name__})
         logger.warning(
             "[OpenAI] model=%s attempt=%s latency_ms=%s input_bytes=%s retryable=%s error=%s",
             model,
@@ -139,7 +171,7 @@ def chat_completion(*, model: str, system_prompt: str, user_prompt: str, tempera
         )
         if (not retryable) or attempt > max_retries:
             break
-        time.sleep(_retry_sleep_seconds(attempt, base=backoff_base, max_backoff=backoff_max))
+        time.sleep(retry_after if retry_after is not None else _retry_sleep_seconds(attempt, base=backoff_base, max_backoff=backoff_max))
 
     raise RuntimeError(
         f"OpenAI chat completion failed after retries: {type(last_error).__name__ if last_error else 'unknown_error'}"

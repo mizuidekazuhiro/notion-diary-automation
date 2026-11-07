@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
+import json
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,22 @@ from publish.read_daily_log import DailyLogSummary, ExpenseSummary
 from scripts import daily_job, voice_diary_notes
 from scripts.location_for_weather import ResolvedLocation
 from scripts.mood_advice_generator import MoodAdviceResult
+from scripts.diary_generator import DiaryResult
+
+
+def _diary_result(text: str) -> DiaryResult:
+    return DiaryResult(text, "success", "ai_with_verification", False, [], "test", "test", {})
+
+
+def _memory_generation_store(monkeypatch, summary, save_calls):
+    state = {"summary": summary}
+    def save(*args, **kwargs):
+        save_calls.append(kwargs)
+        state["summary"] = replace(state["summary"], **kwargs["payload"])
+        return {"updated": True, "reason": "updated"}
+    monkeypatch.setattr(daily_job, "_save_daily_log_fields", save)
+    monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda *args: state["summary"])
+    return state
 from scripts.sleep_condition_generator import build_sleep_insight_context, generate_sleep_insights
 
 
@@ -228,10 +245,10 @@ def test_diary_existing_with_same_hash_skips(monkeypatch) -> None:
     diary_input_fields, _, _, _ = daily_job.build_diary_input_fields(summary)
     hash_payload, _ = daily_job._build_diary_hash_payload(summary, diary_input_fields)
     current_hash, _, _ = daily_job._build_input_hash(hash_payload)
-    summary = _summary(diary="existing diary", diary_input_hash=current_hash)
+    summary = _summary(diary="existing diary", diary_input_hash=current_hash, generation_metadata='{"diary":{"status":"success"}}')
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
-    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    monkeypatch.setattr(daily_job, "generate_diary_result", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
     monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
 
     result = daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
@@ -246,8 +263,8 @@ def test_diary_existing_with_changed_hash_regenerates(monkeypatch) -> None:
     save_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
-    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: "regenerated diary")
-    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+    monkeypatch.setattr(daily_job, "generate_diary_result", lambda *args, **kwargs: _diary_result("regenerated diary"))
+    _memory_generation_store(monkeypatch, summary, save_calls)
 
     daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
 
@@ -289,7 +306,7 @@ def test_weather_roundtrip_compare_ignores_unfetched_fields() -> None:
 
 
 @pytest.mark.parametrize("valid_length", [True, False])
-def test_today_advice_existing_with_same_hash_skips_only_valid_length(monkeypatch, valid_length) -> None:
+def test_today_advice_existing_with_same_hash_reuses_only_healthy_result(monkeypatch, valid_length) -> None:
     summary = _summary(today_advice="existing advice")
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     save_calls: list[dict[str, object]] = []
@@ -306,6 +323,7 @@ def test_today_advice_existing_with_same_hash_skips_only_valid_length(monkeypatc
     }
     current_hash, _, _ = daily_job._build_input_hash(
         {
+            "generation_policy": daily_job._advice_generation_policy(),
             "judgment_input": fake_context["judgment_input"],
             "today_facts": {
                 "today_sleep": fake_context["today_state"]["today_sleep"],
@@ -315,21 +333,23 @@ def test_today_advice_existing_with_same_hash_skips_only_valid_length(monkeypatc
             },
         }
     )
-    advice = "既存の助言。" * 40 if valid_length else "existing advice"
-    summary = _summary(today_advice=advice, today_advice_input_hash=current_hash)
+    advice = "記録から新たな提案はありません。"
+    summary = _summary(today_advice=advice, today_advice_input_hash=current_hash,
+                      generation_metadata=json.dumps({"advice": {"status": "success" if valid_length else "degraded"}}))
 
     monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
     generation_calls = []
     def generate(**kwargs):
         generation_calls.append(kwargs)
-        return SimpleNamespace(today_advice="再生成した助言。" * 30, history_count=30, high_mood_sample_count=0, low_mood_sample_count=0, judgment_json={})
+        return SimpleNamespace(today_advice="再生成した助言。", history_count=30, high_mood_sample_count=0, low_mood_sample_count=0,
+                               judgment_json={"analysis_json": {"final_status": "success", "fallback_used": False}})
     monkeypatch.setattr(daily_job, "generate_today_advice", generate)
-    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+    state = _memory_generation_store(monkeypatch, summary, save_calls)
 
     result = daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
-    assert result == summary
+    assert result == state["summary"]
     assert len(generation_calls) == (0 if valid_length else 1)
     assert len(save_calls) == (0 if valid_length else 1)
 
@@ -384,7 +404,7 @@ def test_today_advice_existing_with_changed_hash_regenerates(monkeypatch) -> Non
     monkeypatch.setattr(daily_job, "build_today_advice_generation_context", lambda **kwargs: fake_context)
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda config, target_date: summary)
     monkeypatch.setattr(daily_job, "generate_today_advice", lambda **kwargs: advice_result)
-    monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: save_calls.append(kwargs) or {"updated": True, "reason": "updated"})
+    _memory_generation_store(monkeypatch, summary, save_calls)
 
     daily_job._generate_and_save_today_advice(config, summary=summary, run_id="run")
 
@@ -725,10 +745,11 @@ def test_diary_save_success_marks_voice_notes_used(monkeypatch) -> None:
     called = {"marked": 0}
 
     monkeypatch.setattr(daily_job, "fetch_voice_diary_notes", lambda target_date: [note])
-    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: "new diary")
+    monkeypatch.setattr(daily_job, "generate_diary_result", lambda *args, **kwargs: _diary_result("new diary"))
     monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: {"updated": True, "reason": "ok"})
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda *args, **kwargs: summary)
     monkeypatch.setattr(daily_job, "mark_voice_diary_notes_used", lambda notes, *, daily_log_page_id: called.__setitem__("marked", called["marked"] + len(list(notes))))
+    _memory_generation_store(monkeypatch, summary, [])
 
     daily_job._generate_and_save_diary(config, summary=summary, run_id="run")
     assert called["marked"] == 1
@@ -740,13 +761,13 @@ def test_diary_skip_does_not_mark_voice_notes_used(monkeypatch) -> None:
     fields, _, _, _ = daily_job.build_diary_input_fields(summary, voice_diary_notes_text="[00:00] x")
     payload, _ = daily_job._build_diary_hash_payload(summary, fields)
     current_hash, _, _ = daily_job._build_input_hash(payload)
-    summary = _summary(diary="existing", diary_input_hash=current_hash)
+    summary = _summary(diary="existing", diary_input_hash=current_hash, generation_metadata='{"diary":{"status":"success"}}')
     config = _Config(daily_log_read_url="read", bearer_token=None, diary_generate_url="gen")
     called = {"marked": 0}
 
     monkeypatch.setattr(daily_job, "fetch_voice_diary_notes", lambda target_date: [note])
     monkeypatch.setattr(daily_job, "_refresh_daily_log_summary", lambda *args, **kwargs: summary)
-    monkeypatch.setattr(daily_job, "generate_diary_from_daily_log", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    monkeypatch.setattr(daily_job, "generate_diary_result", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
     monkeypatch.setattr(daily_job, "mark_voice_diary_notes_used", lambda *args, **kwargs: called.__setitem__("marked", 1))
 
     daily_job._generate_and_save_diary(config, summary=summary, run_id="run")

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import logging
+import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from delivery import email_sender
 from scripts import daily_job
+
+
+@pytest.fixture(autouse=True)
+def isolate_preflight_for_transport_unit_tests(monkeypatch):
+    monkeypatch.setattr(daily_job, "preflight_report", lambda *args, **kwargs: {
+        "run_id": kwargs["run_id"], "status": "pass", "error_count": 0, "warning_count": 0, "issues": [],
+        "inspection_stage": "before_send"})
 
 
 def test_run_publish_logs_metadata_failure_when_save_raises(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
@@ -44,8 +54,10 @@ def test_run_publish_logs_metadata_failure_when_save_raises(monkeypatch: pytest.
     monkeypatch.setattr(daily_job, "send_mail", lambda *args, **kwargs: None)
     monkeypatch.setattr(daily_job, "_save_daily_log_fields", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("save_failed")))
     caplog.set_level(logging.ERROR)
-    with pytest.raises(RuntimeError):
-        daily_job.run_publish(cfg, "2026-03-10", "r1")
+    daily_job.run_publish(cfg, "2026-03-10", "r1")
+    report = json.loads((Path(os.environ["DAILY_MAIL_ARTIFACT_DIR"]) / "quality_report.json").read_text(encoding="utf-8"))
+    assert report["delivery_status"] == "sent"
+    assert report["metadata_status"] == "failed"
     assert "mail_sent_but_metadata_persist_failed=true" in caplog.text
     assert "save_failed" in caplog.text
 

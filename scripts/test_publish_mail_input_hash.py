@@ -4,12 +4,24 @@ import datetime as dt
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import json
+import os
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import daily_job
+
+
+@pytest.fixture(autouse=True)
+def isolate_preflight_for_hash_and_receipt_unit_tests(monkeypatch):
+    # P/H below are transport stubs, not full rendered emails. Real preflight
+    # behavior is exercised in test_mail_preflight_flow.py.
+    monkeypatch.setattr(daily_job, "preflight_report", lambda *args, **kwargs: {
+        "run_id": kwargs["run_id"], "status": "pass", "error_count": 0, "warning_count": 0, "issues": [],
+        "inspection_stage": "before_send"})
 
 
 def _summary(**kwargs):
@@ -207,7 +219,7 @@ def test_publish_uses_today_jst_for_f_risk_target_date(monkeypatch):
     assert captured["target_date_override"] == "2026-04-02"
 
 
-def test_publish_raises_when_persistence_verification_fails(monkeypatch):
+def test_publish_records_post_send_verification_failure_separately(monkeypatch):
     summary = _summary()
     stale = _summary(mail_input_hash=None, mail_version=None, mail_sent_at=None)
     reads = [summary, stale]
@@ -219,9 +231,10 @@ def test_publish_raises_when_persistence_verification_fails(monkeypatch):
     monkeypatch.setattr("scripts.daily_job._save_daily_log_fields", lambda *_args, **_kwargs: {"updated": True})
     monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "2")
     monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "0")
-    import pytest
-    with pytest.raises(RuntimeError, match="attempts=2"):
-        daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    report = json.loads((Path(os.environ["DAILY_MAIL_ARTIFACT_DIR"]) / "quality_report.json").read_text(encoding="utf-8"))
+    assert report["delivery_status"] == "sent"
+    assert report["post_delivery_check"] == "failed"
 
 
 def test_publish_passes_expense_f_alert_to_render_and_snapshot(monkeypatch):
@@ -311,6 +324,5 @@ def test_publish_persist_verify_backoff_zero_skips_sleep(monkeypatch):
     monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_RETRIES", "2")
     monkeypatch.setenv("MAIL_METADATA_PERSIST_VERIFY_BACKOFF_SECONDS", "0")
     import pytest
-    with pytest.raises(RuntimeError):
-        daily_job.run_publish(_cfg(), "2026-04-01", "r1")
+    daily_job.run_publish(_cfg(), "2026-04-01", "r1")
     assert sleeps == []

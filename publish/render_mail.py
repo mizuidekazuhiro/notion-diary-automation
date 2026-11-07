@@ -6,11 +6,14 @@ import hashlib
 import hmac
 import os
 import time
+import html
 from typing import Any, Optional
 
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary
 from scripts.weather_client import build_weather_summary
+from scripts.data_status import metric_available
+from publish.source_disclosures import source_disclosures
 
 
 @dataclass(frozen=True)
@@ -91,10 +94,10 @@ def render_mail(
         "sleep_analysis_jp": summary.sleep_analysis_jp,
         "today_condition_forecast_jp": summary.today_condition_forecast_jp,
         "today_advice": summary.today_advice,
-        "study_minutes": summary.study_minutes,
-        "study_sessions": summary.study_sessions,
+        "study_minutes": summary.study_minutes if metric_available(summary, "study", summary.study_minutes) else None,
+        "study_sessions": summary.study_sessions if metric_available(summary, "study", summary.study_minutes) else None,
         "study_last_used_at": summary.study_last_used_at,
-        "workout_done": summary.workout_done,
+        "workout_done": summary.workout_done if metric_available(summary, "workout", summary.workout_duration_min) else None,
         "workout_sessions": summary.workout_sessions,
         "workout_gym": summary.workout_gym,
         "workout_duration_min": summary.workout_duration_min,
@@ -103,7 +106,7 @@ def render_mail(
         "workout_calories": summary.workout_calories,
         "workout_exercises": summary.workout_exercises,
         "workout_summary": summary.workout_summary,
-        "f_risk_alert_payload": f_risk_alert or {},
+        "f_risk_alert_payload": f_risk_alert if not f_risk_alert or f_risk_alert.get("data_status") == "ok" else {**f_risk_alert, "matched": False},
         "sleep_start": summary.sleep_start,
         "sleep_end": summary.sleep_end,
         "sleep_duration_min": summary.resolved_sleep_duration_min,
@@ -142,6 +145,11 @@ Mood / Notes を入力:
         plain_text = f"{plain_text.rstrip()}\n\n{mood_notes_text.strip()}\n"
 
     html_body = render_daily_log_html(payload)
+    disclosures = source_disclosures(summary, expense_f_alert, f_risk_alert)
+    if disclosures:
+        plain_text += "\n\n" + "\n".join(text for _, text in disclosures) + "\n"
+        notice = "<div>" + "<br>".join(html.escape(text) for _, text in disclosures) + "</div>"
+        html_body = html_body.replace("</body>", notice + "</body>") if "</body>" in html_body else html_body + notice
     if mood_notes_url:
         mood_notes_html = f"""
 <div style="margin-top:16px">

@@ -23,16 +23,25 @@ class TodayAdviceAuditLogger:
         self.payload["analysis_audit"][key] = value
 
     def info(self, message: str, *args: Any) -> None:
-        logging.info(message, *args)
+        # Full inputs and health measurements belong in the private Notion
+        # evidence record, never public Actions logs (including debug mode).
+        safe_prefixes = ("[TodayAdvice][Fetch] target_date=", "[TodayAdvice][Notes] total=",
+                         "[TodayAdvice][Notes] fallback_reasons:", "[TodayAdvice][Notes] classifier_success_rate=",
+                         "[TodayAdvice][Features] rows=", "[TodayAdvice][Regression] available=",
+                         "[TodayAdvice][LightGBM] available=", "[TodayAdvice][SleepAvailability] sleep_available=")
+        if message.startswith(safe_prefixes):
+            logging.info(message, *args)
+        else:
+            logging.info("today_advice_private_detail_omitted target_date=%s event=%s", self.target_date, message.split(" ", 1)[0])
 
     def dump_json(self, key: str, value: Mapping[str, Any]) -> None:
         if not self.debug:
             return
-        self.info("[TodayAdvice][%s] %s", key, json.dumps(value, ensure_ascii=False, default=str))
+        self.info("[TodayAdvice][%s] keys=%s", key, sorted(value.keys()))
 
     def emit_final(self) -> None:
         if self.debug:
-            self.info("[TodayAdvice][AnalysisAudit] %s", json.dumps(self.payload, ensure_ascii=False, default=str))
+            self.info("[TodayAdvice][AnalysisAudit] stages=%s", sorted(self.payload["analysis_audit"].keys()))
 
 
 def safe_json(value: Any) -> str:

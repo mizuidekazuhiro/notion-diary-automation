@@ -376,6 +376,10 @@ class DailyLogSummary:
     payload_has_location_summary_gpt: bool = False
     payload_has_meal_photos_raw: bool = False
     duplicate_info: Mapping[str, Any] = field(default_factory=dict)
+    generation_metadata: Optional[str] = None
+    data_status_json: Optional[str] = None
+    location_evidence_json: Optional[str] = None
+    diary_evidence_json: Optional[str] = None
 
 
 def read_daily_log(
@@ -383,6 +387,10 @@ def read_daily_log(
 ) -> Optional[DailyLogSummary]:
     url = f"{daily_log_read_url}?{urlencode({'date': target_date})}"
     payload = fetch_json(url, bearer_token)
+    return parse_daily_log_payload(payload, target_date=target_date)
+
+
+def parse_daily_log_payload(payload: Mapping[str, Any], *, target_date: str) -> Optional[DailyLogSummary]:
     if not payload.get("found"):
         return None
 
@@ -559,6 +567,10 @@ def read_daily_log(
         notes_sleep_issue_flag=_safe_bool(_get_case_insensitive_value(payload, "Notes Sleep Issue Flag", "notes_sleep_issue_flag")),
         notes_flags_json=_safe_text(_get_case_insensitive_value(payload, "Notes Flags JSON", "notes_flags_json")),
         notes_tags_json=_safe_text(_get_case_insensitive_value(payload, "Notes Tags JSON", "notes_tags_json")),
+        generation_metadata=_safe_text(_get_case_insensitive_value(payload, "Generation Metadata", "generation_metadata")),
+        diary_evidence_json=_safe_text(_get_case_insensitive_value(payload, "Diary Evidence JSON", "diary_evidence_json")),
+        data_status_json=_safe_text(_get_case_insensitive_value(payload, "Data Status JSON", "data_status_json")),
+        location_evidence_json=_safe_text(_get_case_insensitive_value(payload, "Location Evidence JSON", "location_evidence_json")),
         mail_input_hash=_safe_text(_get_case_insensitive_value(payload, "Mail Input Hash", "mail_input_hash")),
         mail_input_snapshot_json=_safe_text(_get_case_insensitive_value(payload, "Mail Input Snapshot", "mail_input_snapshot_json", "mail_input_snapshot")),
         mail_sent_at=_safe_text(_get_case_insensitive_value(payload, "Mail Sent At", "mail_sent_at")),

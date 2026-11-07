@@ -27,7 +27,8 @@ def test_today_advice_renderer_uses_analysis_json_as_primary_input() -> None:
     }
     out = render_today_advice_from_analysis(analysis_json=analysis_json, model="x", chat_completion=_fake_chat_completion)
     assert out.strip()
-    assert "analysis=" in captured["user_prompt"]
+    assert "分析資料=" in captured["user_prompt"]
+    assert out == "分析JSONに沿った短い助言です。"
     assert "daily_records" not in captured["user_prompt"]
 
 

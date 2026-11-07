@@ -184,7 +184,8 @@ def resolve_sleep_for_target_date(
             )
         )
 
-    preferred = [c for c in candidates if c.get("source") == "today_saved_properties" and c.get("candidate_valid_flag")]
+    preferred = [c for c in candidates if c.get("source") == "today_saved_properties"
+                 and c.get("candidate_target_date") == target_date and c.get("candidate_valid_flag")]
     if preferred:
         selected = dict(preferred[0])
         selected["selection_reason"] = "use_saved_today_properties"

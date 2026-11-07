@@ -19,10 +19,10 @@ DEFAULT_TIMEOUT = (5, 60)  # (connect, read)
 
 # リトライ設定（瞬間的な遅延/429/5xx を吸収）
 _RETRY = Retry(
-    total=3,
-    connect=3,
-    read=3,
-    status=3,
+    total=0,
+    connect=0,
+    read=0,
+    status=0,
     backoff_factor=1.0,  # 1s, 2s, 4s...
     status_forcelist=(429, 500, 502, 503, 504),
     allowed_methods=frozenset(["GET", "POST"]),
@@ -71,7 +71,7 @@ def _extract_response(response: Optional[requests.Response]) -> tuple[Optional[i
         for key, value in response.headers.items()
         if key.lower() in ("content-type", "cf-ray", "server", "x-request-id")
     }
-    response_text = response.text[:1000] if response.text else ""
+    response_text = "[redacted]" if response.text else ""
     return response.status_code, response_headers, response_text
 
 
@@ -140,7 +140,7 @@ def _compute_retry_wait_seconds(response: requests.Response, retry_count: int) -
 
 
 def fetch_json(url: str, bearer_token: Optional[str]) -> Dict[str, Any]:
-    headers: Dict[str, str] = {}
+    headers: Dict[str, str] = {"User-Agent": "NotionDiaryAutomation/2.0"}
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
 
@@ -195,7 +195,7 @@ def fetch_json(url: str, bearer_token: Optional[str]) -> Dict[str, Any]:
             time.sleep(wait_seconds)
             continue
 
-        response_preview = (resp.text or "")[:300]
+        response_preview = "[redacted]" if resp.text else ""
         retry_after = resp.headers.get("Retry-After")
         logging.error(
             "fetch_json final_failure=true url=%s status_code=%s retry_after=%s retry_count=%s response_preview=%s",
@@ -214,7 +214,7 @@ def fetch_json(url: str, bearer_token: Optional[str]) -> Dict[str, Any]:
 
 
 def post_json(url: str, payload: Dict[str, Any], bearer_token: Optional[str]) -> Dict[str, Any]:
-    headers = {"Content-Type": "application/json; charset=utf-8"}
+    headers = {"Content-Type": "application/json; charset=utf-8", "User-Agent": "NotionDiaryAutomation/2.0"}
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")

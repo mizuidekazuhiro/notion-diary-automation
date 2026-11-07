@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from scripts.advice_evidence import is_quality_feature, observed_targets
+
 FEATURES = [
     "sleep_valid_flag",
     "sleep_hours",
@@ -51,15 +53,21 @@ FEATURES = [
 
 
 def run_low_mood_regression(df: Any) -> dict[str, Any]:
+    train, counts, reason = observed_targets(df.sort_values("date"))
+    features = [name for name in FEATURES if not is_quality_feature(name)]
     base = {
         "available": False,
-        "sample_size": max(0, len(df)),
+        "sample_size": len(train),
+        "target_counts": counts,
+        "scope": "exploratory_association",
         "regression_target_name": "today_low_mood_flag",
         "regression_feature_names": list(FEATURES),
         "top_positive_risk_features": [],
         "top_protective_features": [],
         "skipped_reason": None,
     }
+    if reason:
+        return {**base, "skipped_reason": reason}
     import importlib
 
     sk_spec = importlib.util.find_spec("sklearn")
@@ -69,24 +77,15 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
     Pipeline = importlib.import_module("sklearn.pipeline").Pipeline
     StandardScaler = importlib.import_module("sklearn.preprocessing").StandardScaler
 
-    work = df.copy().sort_values("date").reset_index(drop=True)
-    work["target"] = (work["mood"].fillna(5) <= 2).astype(int)
-    train = work.copy()
-
-    if len(train) < 10:
-        return {**base, "sample_size": len(train), "skipped_reason": "insufficient_samples"}
-    if train["target"].nunique() < 2:
-        return {**base, "sample_size": len(train), "skipped_reason": "single_class_target"}
-
-    for col in FEATURES:
-        if col not in train.columns:
-            train[col] = 0.0
-
     for col in ("sleep_hours", "bedtime_min", "sleep_score", "sleep_vs_7d_delta", "sleep_score_vs_7d_delta"):
-        if col in train:
+        if col in train and "sleep_valid_flag" in train:
             train.loc[~train["sleep_valid_flag"].fillna(False), col] = float("nan")
 
-    x = train[FEATURES].copy().fillna(0.0)
+    features = [col for col in features if col in train and train[col].notna().all()]
+    if not features:
+        return {**base, "skipped_reason": "insufficient_observed_features"}
+
+    x = train[features].copy()
     for col in x.columns:
         if x[col].dtype == bool:
             x[col] = x[col].astype(int)
@@ -99,7 +98,7 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
         ])
         model.fit(x, y)
         coef = model.named_steps["clf"].coef_[0]
-        pairs = sorted(zip(FEATURES, coef), key=lambda p: p[1], reverse=True)
+        pairs = sorted(zip(features, coef), key=lambda p: p[1], reverse=True)
     except Exception:
         return {**base, "sample_size": len(train), "skipped_reason": "fit_exception"}
 
@@ -109,7 +108,9 @@ def run_low_mood_regression(df: Any) -> dict[str, Any]:
         "available": True,
         "sample_size": len(train),
         "regression_target_name": "today_low_mood_flag",
-        "regression_feature_names": list(FEATURES),
+        "regression_feature_names": features,
+        "target_counts": counts,
+        "scope": "exploratory_association",
         "top_positive_risk_features": top_positive,
         "top_protective_features": top_negative,
         "skipped_reason": None,

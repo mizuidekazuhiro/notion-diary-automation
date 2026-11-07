@@ -213,7 +213,7 @@ def test_mail_shows_f_risk_section_when_matched(monkeypatch) -> None:
     mail = render_mail(
         _summary(),
         expense_f_alert={"matched": False},
-        f_risk_alert={"matched": True, "alert_text": "visible", "score": 0.8, "matched_patterns": ["p1"], "reason": "r"},
+        f_risk_alert={"matched": True, "alert_text": "visible", "data_status": "ok", "score": 0.8, "matched_patterns": ["p1"], "reason": "r"},
     )
     assert "F Risk Alert" in mail.plain_text
     assert "visible" in mail.plain_text
