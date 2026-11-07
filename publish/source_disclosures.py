@@ -10,7 +10,7 @@ def source_disclosures(summary: Any, expense_f: dict | None, f_risk: dict | None
         status = source_states(summary).get(group, {}).get("status")
         if status in {"query_failed", "parse_failed", "invalid"}:
             result.append((group, f"{label}：取得または読み取りを完了できず、保存済みの値を今回の判定には使っていません。"))
-        elif status in {"missing", "unknown"}:
+        elif status in {"missing", "unknown", "stale"}:
             result.append((group, f"{label}：この日の記録を確認できません。0とは扱いません。"))
     if expense_f and expense_f.get("data_status") not in {"ok", "no_results"}:
         result.append(("expense_f", "支出の要注意項目：取得を確認できず、0件とは判断できません。"))

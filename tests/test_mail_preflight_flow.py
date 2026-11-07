@@ -66,3 +66,13 @@ def test_missing_f_data_is_disclosed_and_never_claimed_low_risk(monkeypatch):
     assert "低リスク" not in mail.plain_text
     assert report["error_count"] == 0
     assert any(issue.get("explicitly_disclosed") for issue in report["issues"])
+
+
+def test_unavailable_risk_can_abstain_but_successful_risk_requires_audit_metadata(monkeypatch):
+    row, _, expense, _ = setup_publish(monkeypatch)
+    for status, should_block in [('unavailable', False), ('ok', True)]:
+        risk={'matched':False,'data_status':status}
+        mail=render_mail(row,expense_f_alert=expense,f_risk_alert=risk)
+        report=preflight_report(row,mail,expense_f=expense,f_risk=risk,run_id='test')
+        issues=[issue for issue in report['issues'] if issue['code']=='f_risk_observability_missing']
+        assert bool([issue for issue in issues if issue['severity']=='error']) is should_block

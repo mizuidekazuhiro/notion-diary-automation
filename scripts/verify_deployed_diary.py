@@ -44,6 +44,7 @@ def main():
         report = preflight_report(summary, mail, expense_f=expense, f_risk=risk, run_id=os.getenv('GITHUB_RUN_ID', 'local'))
         inspected.append({'case': len(inspected), 'error_count': report['error_count'], 'warning_count': report['warning_count']})
     report = {'worker': health, 'checkout_sha': os.getenv('GITHUB_SHA'),
+        'inspection_scope': {'diary_evidence_and_render': 'checked', 'f_risk_prediction': 'not_evaluated', 'smtp': 'not_invoked'},
         'effective_models': {role: {'model': model_for(role), 'settings': request_settings(model_for(role))} for role in ROLE_DEFAULTS},
         'history_fetches': 1, 'history_rows': len(rows), 'history_elapsed_ms': elapsed,
         'grounded_diaries_checked': inspected, 'source_mutations': 0, 'mails_sent': 0}

@@ -20,8 +20,11 @@ def preflight_report(summary: Any, mail: Any, *, expense_f: dict, f_risk: dict, 
                  if text in mail.plain_text and text in mail.html_body}
     for issue in report["issues"]:
         code = issue["code"]
+        unavailable_risk_metadata = (code == "f_risk_observability_missing" and "f_risk" in disclosed
+            and f_risk.get("data_status") != "ok" and not f_risk.get("matched"))
         if (("expense_f" in disclosed and code in {"expense_f_status_missing", "expense_f_unavailable"})
-                or ("f_risk" in disclosed and code in {"f_risk_state_read_failed", "f_risk_state_missing", "f_risk_not_ok", "f_risk_fallback_used"})):
+                or ("f_risk" in disclosed and code in {"f_risk_state_read_failed", "f_risk_state_missing", "f_risk_not_ok", "f_risk_fallback_used"})
+                or unavailable_risk_metadata):
             issue.update(severity="warning", explicitly_disclosed=True)
     report["error_count"] = sum(issue["severity"] == "error" for issue in report["issues"])
     report["warning_count"] = sum(issue["severity"] == "warning" for issue in report["issues"])

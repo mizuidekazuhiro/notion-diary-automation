@@ -969,6 +969,8 @@ def _generate_and_save_sleep_insights(
     summary: "DailyLogSummary",
     run_id: str,
 ) -> "DailyLogSummary":
+    from scripts.data_status import mask_unavailable_summary
+    summary = mask_unavailable_summary(summary)
     history_summaries = load_recent_daily_logs(
         daily_log_read_url=config.daily_log_read_url,
         bearer_token=config.bearer_token,

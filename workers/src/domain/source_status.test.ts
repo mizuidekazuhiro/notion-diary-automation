@@ -10,4 +10,6 @@ assert.equal(from("degraded", ["weight"]).sleep.status, "missing");
 assert.equal(from("degraded", ["sleep_duration_min"]).sleep.status, "observed");
 assert.equal(from("degraded", ["kcal"]).nutrition.status, "observed");
 assert.equal(from("failed").study.status, "confirmed_zero");
+assert.equal(from("stale", ["sleep_duration_min", "kcal"]).sleep.status, "stale");
+assert.equal(from("stale", ["sleep_duration_min", "kcal"]).nutrition.status, "stale");
 assert.equal(mergeIngestSourceStatus(undefined, before), null);

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from scripts.ai_models import model_for
+from scripts.data_status import UNAVAILABLE
 from scripts.openai_chat_utils import chat_completion
 
 DIARY_PROMPT_VERSION = "sourced-sentences-v2"
@@ -41,10 +42,10 @@ class DiaryResult:
 
 
 def unavailable_metric(name: str, input_fields: Mapping[str, str]) -> bool:
-    group = "study" if name.startswith("Study ") else "workout" if name.startswith("Workout ") else "expenses" if name.startswith("Expenses") else "sleep" if "Sleep" in name else "nutrition" if name in {"Kcal", "Protein", "Fat", "Carb"} else None
+    group = "study" if name.startswith("Study ") else "workout" if name.startswith("Workout ") else "expenses" if name.startswith("Expenses") else "sleep" if "Sleep" in name else "nutrition" if name in {"Kcal", "Protein", "Fat", "Carb", "Meal summary"} else None
     try:
         state = json.loads(input_fields.get("Data Status", "{}"))
-        return bool(group and state.get(group, {}).get("status") in {"missing", "unknown", "query_failed", "parse_failed", "invalid", "unverified_zero"})
+        return bool(group and state.get(group, {}).get("status") in UNAVAILABLE)
     except (ValueError, TypeError, AttributeError):
         return False
 
@@ -94,7 +95,7 @@ def safe_diary(input_fields: Mapping[str, str], target_date: str) -> str:
         parts.append(f"学習時間の記録は{input_fields['Study Minutes']}分。")
     if input_fields.get("Workout Duration Min") and not unavailable_metric("Workout Duration Min", input_fields) and float(input_fields["Workout Duration Min"]) > 0:
         parts.append(f"筋トレ時間の記録は{input_fields['Workout Duration Min']}分。")
-    if input_fields.get("Sleep Duration Text"):
+    if input_fields.get("Sleep Duration Text") and not unavailable_metric("Sleep Duration Text", input_fields):
         parts.append(f"睡眠時間の記録は{input_fields['Sleep Duration Text']}。")
     if len(parts) == 1:
         parts.append("確認できる記録が少ないため、この日の詳しい振り返りは控える。")

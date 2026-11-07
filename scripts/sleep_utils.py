@@ -162,6 +162,9 @@ def resolve_sleep_for_target_date(
     today_summary: Any,
     history_summaries: Sequence[Any],
 ) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]], str]:
+    from scripts.data_status import mask_unavailable_summary
+    today_summary = mask_unavailable_summary(today_summary)
+    history_summaries = [mask_unavailable_summary(item) for item in history_summaries]
     candidates: list[dict[str, Any]] = [
         build_sleep_candidate(
             candidate_date=str(getattr(today_summary, "target_date", target_date)),

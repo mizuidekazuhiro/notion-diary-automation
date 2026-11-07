@@ -866,6 +866,8 @@ def build_today_advice_generation_context(
         today_state["today_sleep"]["sleep_available"] = True
         today_state["today_sleep"]["duration_source"] = selected_sleep_candidate.get("duration_source")
     else:
+        for key in ("sleep_duration_min", "sleep_score", "sleep_start", "sleep_end"):
+            today_state["today_sleep"][key] = None
         today_state["today_sleep"]["sleep_available"] = False
         today_state["today_sleep"]["duration_source"] = "missing"
     today_sleep_context = {

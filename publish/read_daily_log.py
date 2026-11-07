@@ -460,7 +460,8 @@ def parse_daily_log_payload(payload: Mapping[str, Any], *, target_date: str) -> 
     resolved_sleep_duration_hours = (round(resolved_sleep_duration_min / 60.0, 2) if resolved_sleep_duration_min is not None else None)
     resolved_sleep_duration_text = format_sleep_duration_text(resolved_sleep_duration_min)
 
-    return DailyLogSummary(
+    from scripts.data_status import mask_unavailable_summary
+    return mask_unavailable_summary(DailyLogSummary(
         target_date=_safe_text(payload.get("target_date")) or target_date,
         date=_safe_text(payload.get("date")),
         target_date_value=_safe_text(payload.get("target_date_value")),
@@ -579,4 +580,4 @@ def parse_daily_log_payload(payload: Mapping[str, Any], *, target_date: str) -> 
         payload_has_location_summary_gpt=payload_has_location_summary_gpt,
         payload_has_meal_photos_raw=payload_has_meal_photos_raw,
         duplicate_info=_safe_mapping(payload.get("duplicate_info")),
-    )
+    ))

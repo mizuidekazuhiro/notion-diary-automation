@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-UNAVAILABLE = {"missing", "unknown", "query_failed", "parse_failed", "invalid", "unverified_zero"}
+UNAVAILABLE = {"missing", "unknown", "query_failed", "parse_failed", "invalid", "unverified_zero", "stale"}
 
 
 def source_states(summary: Any) -> dict:
@@ -29,3 +29,20 @@ def metric_status(summary: Any, source: str, value: Any) -> str:
 
 def metric_available(summary: Any, source: str, value: Any) -> bool:
     return metric_status(summary, source, value) not in UNAVAILABLE
+
+
+def mask_unavailable_summary(summary: Any) -> Any:
+    from dataclasses import is_dataclass, replace
+    from copy import copy
+    states = source_states(summary)
+    changes = {}
+    if states.get("sleep", {}).get("status") in UNAVAILABLE:
+        for name in ("sleep_start", "sleep_end", "sleep_duration_min", "resolved_sleep_duration_min", "resolved_sleep_duration_hours", "resolved_sleep_duration_text", "sleep_score", "sleep_source", "sleep_analysis_jp", "today_condition_forecast_jp", "sleep_heart_rate", "deep_duration_min", "rem_duration_min", "readiness_stars", "readiness_hrv", "readiness_bpm", "baseline_hrv", "baseline_waking_bpm"):
+            if hasattr(summary, name): changes[name] = None
+    if states.get("nutrition", {}).get("status") in UNAVAILABLE:
+        changes.update({name: None for name in ("kcal", "protein", "fat", "carb", "meal_summary") if hasattr(summary, name)})
+    if not changes: return summary
+    if is_dataclass(summary): return replace(summary, **changes)
+    result = copy(summary)
+    for name, value in changes.items(): setattr(result, name, value)
+    return result

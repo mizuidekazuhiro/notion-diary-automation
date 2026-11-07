@@ -13,7 +13,7 @@ from typing import Any, Optional
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary
 from scripts.weather_client import build_weather_summary
-from scripts.data_status import metric_available, source_states, UNAVAILABLE
+from scripts.data_status import metric_available, mask_unavailable_summary
 from publish.source_disclosures import source_disclosures
 
 
@@ -55,13 +55,7 @@ def render_mail(
     f_risk_alert: Optional[dict[str, Any]] = None,
 ) -> MailContent:
     original_summary = summary
-    states = source_states(summary)
-    masked = {}
-    if states.get("sleep", {}).get("status") in UNAVAILABLE:
-        masked.update({key: None for key in ("sleep_start", "sleep_end", "sleep_duration_min", "resolved_sleep_duration_min", "resolved_sleep_duration_hours", "resolved_sleep_duration_text", "sleep_score", "sleep_source")})
-    if states.get("nutrition", {}).get("status") in UNAVAILABLE:
-        masked.update({key: None for key in ("kcal", "protein", "fat", "carb")})
-    summary = replace(summary, **masked)
+    summary = mask_unavailable_summary(summary)
     subject = f"Daily Log | {summary.target_date}"
     mood_notes_url = _build_mood_notes_url(summary.target_date)
     weather_summary = (summary.weather_summary or "").strip()

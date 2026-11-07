@@ -81,3 +81,21 @@ def test_unverified_workout_and_probability_are_not_delivered_as_facts(monkeypat
     assert mail.html_body.index(notice) < mail.html_body.index('</body>')
     report = preflight_report(row, mail, expense_f=expense, f_risk=risk, run_id='test')
     assert any(issue['code'] == 'uncalibrated_personal_probability' for issue in report['issues'])
+
+
+@pytest.mark.parametrize('status',['query_failed','stale','missing'])
+def test_unavailable_sleep_and_nutrition_cannot_reuse_old_explanations(monkeypatch,status):
+    from scripts.diary_generator import safe_diary, diary_sources
+    row,_,expense,risk=setup_publish(monkeypatch)
+    state=json.dumps({'sleep':{'status':status},'nutrition':{'status':status}})
+    row=replace(row,sleep_duration_min=420,sleep_score=80,sleep_start=None,sleep_end=None,
+        resolved_sleep_duration_text='7時間0分',sleep_analysis_jp='古い睡眠解説',
+        today_condition_forecast_jp='古い体調予測',kcal=2000,meal_summary='古い栄養要約',data_status_json=state)
+    _,selected,_=resolve_sleep_for_target_date(target_date=row.target_date,today_summary=row,history_summaries=[row])
+    assert selected is None
+    mail=render_mail(row,expense_f_alert=expense,f_risk_alert=risk)
+    for old in ('古い睡眠解説','古い体調予測','古い栄養要約','7時間0分'):
+        assert old not in mail.plain_text and old not in mail.html_body
+    fields={'Data Status':state,'Sleep Duration Text':'7時間0分','Meal summary':'古い栄養要約'}
+    assert '7時間0分' not in safe_diary(fields,row.target_date)
+    assert 'Meal summary' not in diary_sources(fields)
