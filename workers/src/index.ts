@@ -1,19 +1,14 @@
 import {
   type NotionPropertyType,
   type ExpectedProperty,
-  normalizeNotionPropertyName,
-  findExactOrNormalizedPropertyMatches,
-  findPropertyMatchesWithAliases,
   resolvePropertyName,
   resolveExactPropertyName,
   hasPropertyType,
   getResolvedProperty,
-  resolvePropertyNameOrWarn,
   canUseProperty,
 } from "./infrastructure/notion/property_resolver";
 import {
   NOTES_RICH_TEXT_LIMIT,
-  type NotionFilePropertyValue,
   getPageTitleFromProperty,
   createTitleProperty,
   createRichTextProperty,
@@ -24,8 +19,6 @@ import {
   createFilesProperty,
   createRelationProperty,
   createCheckboxProperty,
-  splitIntoChunks,
-  splitRichText,
   getPlainTextFromRichText,
   getStringFromProperty,
   getDateTimeFromProperty,
