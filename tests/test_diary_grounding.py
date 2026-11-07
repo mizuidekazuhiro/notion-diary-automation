@@ -76,3 +76,49 @@ def test_event_assertion_is_rejected_independently_of_certainty_or_emotion():
     reasons = diary.validate_sentences([{"text": "完了タスクの取引先との協議を行った。",
                                         "sources": ["Done Tasks Detail"], "certainty": "status_change"}], sources)
     assert reasons == ["unsupported_event"]
+import pytest
+
+
+@pytest.mark.parametrize("claim", [
+    "滞在先で働きました。", "滞在先で働いていました。",
+    "滞在先で仕事をしました。", "滞在先で勤務しました。",
+])
+def test_location_alone_does_not_establish_work_in_polite_or_continuous_form(claim):
+    from scripts.diary_generator import diary_sources, validate_sentences
+
+    sources = diary_sources({"Location Stays": "職場として記録された場所に滞在"})
+    reasons = validate_sentences([
+        {"text": claim, "sources": ["Location Stays"], "certainty": "recorded"},
+    ], sources)
+    assert "unsupported_activity_from_location" in reasons
+
+
+def test_location_stay_and_personally_reported_work_remain_supported():
+    from scripts.diary_generator import diary_sources, validate_sentences
+
+    fields = {"Location Stays": "職場として記録された場所に滞在", "Notes": "滞在先で働きました。"}
+    sources = diary_sources(fields)
+    assert validate_sentences([
+        {"text": "職場として記録された場所に滞在しました。", "sources": ["Location Stays"], "certainty": "recorded"},
+    ], sources) == []
+    assert validate_sentences([
+        {"text": "滞在先で働きました。", "sources": ["Notes"], "certainty": "reported"},
+    ], sources) == []
+
+
+def test_unsupported_polite_work_claim_is_rejected_before_consistency_api(monkeypatch):
+    import json
+    from scripts import diary_generator
+
+    calls = []
+    def respond(**kwargs):
+        calls.append(kwargs["model"])
+        if len(calls) == 1:
+            return json.dumps({"sentences": [{"text": "滞在先で働きました。", "sources": ["Location Stays"], "certainty": "recorded"}]})
+        return json.dumps({"grounded": True, "violations": []})
+    monkeypatch.setattr(diary_generator, "chat_completion", respond)
+    result = diary_generator.generate_diary_result({"Location Stays": "職場として記録された場所に滞在"}, "2026-11-06")
+    assert result.status == "degraded"
+    assert result.fallback_used is True
+    assert "unsupported_activity_from_location" in result.rejection_reasons
+    assert len(calls) == 1

@@ -102,6 +102,12 @@ def safe_diary(input_fields: Mapping[str, str], target_date: str) -> str:
     return "\n".join(parts)
 
 
+LOCATION_ONLY_SOURCES = frozenset({"Location Stays", "Location Window", "Place", "Location summary"})
+# Location establishes presence, not work. Include polite/continuous forms;
+# personally reported work uses Notes/Voice Diary Notes and is unaffected.
+LOCATION_ACTIVITY_CLAIM = re.compile(r"働[いきくけこか]|仕事(?:を)?[しすさ]|勤務(?:を)?[しすさ]|業務を行")
+
+
 def validate_sentences(sentences: Any, sources: Mapping[str, Mapping[str, str]]) -> list[str]:
     if not isinstance(sentences, list) or not sentences:
         return ["empty_generation"]
@@ -128,7 +134,7 @@ def validate_sentences(sentences: Any, sources: Mapping[str, Mapping[str, str]])
         if "status_change" in certainties and not re.search(r"タスク|完了|取りやめ|中止", text):
             reasons.append("status_change_not_disclosed")
         normalized_text = text.replace(",", "")
-        if set(refs).issubset({"Location Stays", "Location Window", "Place", "Location summary"}) and re.search(r"働いた|仕事(?:を)?し|勤務した|業務を行", text):
+        if set(refs).issubset(LOCATION_ONLY_SOURCES) and LOCATION_ACTIVITY_CLAIM.search(text):
             reasons.append("unsupported_activity_from_location")
         for key, unit in (("Study Minutes", "分"), ("Workout Duration Min", "分"), ("Expenses Total", "円"),
                           ("Done Count", "件"), ("Drop Count", "件")):
