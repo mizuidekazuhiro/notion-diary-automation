@@ -92,7 +92,7 @@ CI must not print Notes, exact locations/addresses, merchants, raw health detail
 
 ## Enforced final quality gate
 
-Daily Diary 04 keeps mail delivery before enforcement. Its final step reads the redacted quality artifact and fails the workflow when a critical source or analysis is not trustworthy. Missing or low-completeness Health and no target-date sleep candidate are warnings only, so they do not interrupt the daily chain. Critical failures still include missing/unavailable Expense F status, unreadable or missing F Risk state, degraded F Risk, fallback scoring, and missing F Risk observability metadata.
+Daily Diary 04 now validates the exact rendered message before SMTP. Critical content contradictions block sending; missing inputs that are explicitly disclosed remain warnings. Delivery, quality, metadata persistence and post-delivery verification have separate states. See [the current evidence and delivery contract](diary-evidence-operation.md).
 
 The GitHub step summary contains status names, completeness, field names, reason codes, counts, and hashes only. It does not contain Notes text, locations, merchants, raw Health values, or the mail body. A warning remains non-blocking by default; any error makes Daily Diary 04 red after the mail attempt.
 
