@@ -93,8 +93,8 @@ def _normalize_result(date: str, payload: Mapping[str, Any]) -> NoteLabel:
             mapped_tags.append("recovery_action")
         if flags_payload.get("sleep_issue"):
             mapped_tags.append("sleep_issue")
-        tags_raw = mapped_tags
-    allowed_tags = [str(tag).strip() for tag in tags_raw if str(tag).strip() in ALLOWED_TAGS]
+        tags_raw = list(tags_raw) + mapped_tags
+    allowed_tags = list(dict.fromkeys(str(tag).strip() for tag in tags_raw if str(tag).strip() in ALLOWED_TAGS))
     if not signals_raw and allowed_tags:
         signals_raw = [_signal_from_tag(tag) for tag in allowed_tags]
     if not signals_raw and any(k in payload for k in ["fatigue_flag", "stress_flag", "sleep_issue_flag", "achievement_flag", "social_load_flag"]):

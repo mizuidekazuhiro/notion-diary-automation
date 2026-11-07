@@ -56,3 +56,14 @@ def test_location_stay_does_not_establish_work():
         return validate_sentences([{'text':text,'sources':['Location Stays'],'certainty':'recorded'}],sources)
     assert 'unsupported_activity_from_location' in reasons('勤務先で仕事をした。')
     assert reasons('勤務先に滞在した記録がある。') == []
+
+
+def test_behavior_tags_survive_complete_false_state_flags():
+    row={'id':'note1','date':'2000-01-01','notes':'ジムで筋トレをした。'}
+    raw=json.dumps({'rows':[{'id':'note1','date':'2000-01-01','sentiment':'neutral',
+        'flags':{key:False for key in ('fatigue','stress','social_load','achievement','self_care','sleep_issue')},
+        'tags':['gym','exercise'],'confidence':.95}]})
+    labels=note_batch_labeler.parse_note_label_json(raw,[row])
+    tags={signal['tag'] for signal in labels[0].signals}
+    assert tags=={'gym','exercise'}
+    assert labels[0].fatigue_flag is False
