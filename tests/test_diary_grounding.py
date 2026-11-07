@@ -138,7 +138,10 @@ def test_auxiliary_references_do_not_turn_location_into_work_evidence(extra, val
     ], diary.diary_sources(fields))
 
 
-@pytest.mark.parametrize("text", ["「働くカフェ」に滞在しました。", "働くカフェで過ごしました。", "働いていたかは記録から不明です。"])
+@pytest.mark.parametrize("text", [
+    "「働くカフェ」に滞在しました。", "働くカフェで過ごしました。", "働いていたかは記録から不明です。",
+    "勤務先に滞在したが、働いていたかどうかは記録から分からない。",
+])
 def test_location_names_and_explicitly_unknown_work_are_not_work_assertions(text):
     fields = {"Location Stays": json.dumps([{"location": "働くカフェ", "start_iso": "2026-11-06T10:00:00+09:00", "end_iso": "2026-11-06T11:00:00+09:00"}])}
     assert diary.validate_sentences([

@@ -138,7 +138,7 @@ def _asserts_work(text: str, names: set[str], *, allow_plan: bool) -> bool:
     text = _mask_location_names(text, names)
     for match in LOCATION_ACTIVITY_CLAIM.finditer(text):
         tail = re.split(r"[。！？!?、\n]", text[match.end():], maxsplit=1)[0]
-        if re.match(r"(?:か(?:どうか)?(?:は|も)?|とは)", tail) and re.search(r"不明|未確認|わから|確認でき|断定でき", tail):
+        if re.match(r"(?:か(?:どうか)?(?:は|も)?|とは)", tail) and re.search(r"不明|未確認|わから|分から|確認でき|断定でき", tail):
             continue
         if allow_plan and re.match(r"予定|つもり|ことになって", tail):
             continue
