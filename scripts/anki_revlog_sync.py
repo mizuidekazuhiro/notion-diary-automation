@@ -337,14 +337,24 @@ def parse_card_reviews(rows: Iterable[Any]) -> list[Review]:
 
 
 def collect_reviews_via_anki_connect(
-    client: AnkiConnectClient, *, start_ms: int
+    client: AnkiConnectClient, *, start_ms: int, timeout_seconds: float = 20
 ) -> list[Review]:
-    deck_names = client.invoke("deckNames")
+    deadline = time.monotonic() + timeout_seconds
+    def read(action: str, params: dict | None = None) -> Any:
+        for attempt in range(20):
+            try:
+                return client.invoke(action, params) if params is not None else client.invoke(action)
+            except SyncError as exc:
+                if "lifecycle operation is active" not in str(exc).lower() or time.monotonic() >= deadline or attempt == 19:
+                    raise
+                time.sleep(min(1, max(0, deadline - time.monotonic())))
+        raise SyncError("Anki read deadline exceeded")
+    deck_names = read("deckNames")
     if not isinstance(deck_names, list) or not all(isinstance(name, str) for name in deck_names):
         raise SyncError("AnkiConnect deckNames returned an unexpected value")
     rows: list[Any] = []
     for deck_name in deck_names:
-        deck_rows = client.invoke("cardReviews", {"deck": deck_name, "startID": start_ms})
+        deck_rows = read("cardReviews", {"deck": deck_name, "startID": start_ms})
         if not isinstance(deck_rows, list):
             raise SyncError(f"AnkiConnect cardReviews returned an invalid result for deck {deck_name!r}")
         rows.extend(deck_rows)
@@ -364,15 +374,19 @@ def collection_path(profile: str) -> Path:
 
 
 def collect_reviews_via_sqlite_backup(
-    *, profile: str, start_ms: int, end_ms: int
+    *, profile: str, start_ms: int, end_ms: int, timeout_seconds: float = 20
 ) -> list[Review]:
     path = collection_path(profile)
     if not path.is_file():
         raise SyncError(f"Anki collection was not found for profile {profile!r}: {path}")
-    source = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=30)
+    source = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=min(1, timeout_seconds))
     snapshot = sqlite3.connect(":memory:")
+    deadline = time.monotonic() + timeout_seconds
+    def check_deadline(_status: int, _remaining: int, _total: int) -> None:
+        if time.monotonic() >= deadline:
+            raise SyncError("Anki SQLite backup deadline exceeded; no aggregate was sent")
     try:
-        source.backup(snapshot)
+        source.backup(snapshot, pages=32, progress=check_deadline, sleep=0.01)
         rows = snapshot.execute(
             "SELECT id, time FROM revlog WHERE id >= ? AND id < ? ORDER BY id",
             (start_ms, end_ms),
