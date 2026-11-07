@@ -105,7 +105,45 @@ def safe_diary(input_fields: Mapping[str, str], target_date: str) -> str:
 LOCATION_ONLY_SOURCES = frozenset({"Location Stays", "Location Window", "Place", "Location summary"})
 # Location establishes presence, not work. Include polite/continuous forms;
 # personally reported work uses Notes/Voice Diary Notes and is unaffected.
-LOCATION_ACTIVITY_CLAIM = re.compile(r"働[いきくけこか]|仕事(?:を)?[しすさ]|勤務(?:を)?[しすさ]|業務を行")
+LOCATION_ACTIVITY_CLAIM = re.compile(
+    r"働(?:いていました|いていた|いています|いている|きました|きます|いた|[いきくけこか])"
+    r"|(?:仕事(?:を)?|勤務(?:を)?)(?:していました|していた|しています|している|しました|します|した|する|[しすさ])"
+    r"|業務を行(?:っていました|っていた|いました|った|う|い)"
+)
+
+
+def _location_names(sources: Mapping[str, Mapping[str, str]]) -> set[str]:
+    names = {sources.get("Place", {}).get("value", "")}
+    try:
+        stays = json.loads(sources.get("Location Stays", {}).get("value", "[]"))
+    except (ValueError, TypeError):
+        stays = []
+    if isinstance(stays, list):
+        for stay in stays:
+            if isinstance(stay, dict):
+                names.update(value for key in ("location", "place", "place_label", "label")
+                             if isinstance(value := stay.get(key), str))
+    return names - {""}
+
+
+def _mask_location_names(text: str, names: set[str]) -> str:
+    for name in sorted(names, key=len, reverse=True):
+        literal = re.escape(name)
+        # Mask a recorded name only when quoted or used as a location phrase.
+        text = re.sub(rf"「{literal}」|『{literal}』|{literal}(?=に|で|へ|から|まで|付近|周辺|という場所|という施設)", "[場所]", text)
+    return text
+
+
+def _asserts_work(text: str, names: set[str], *, allow_plan: bool) -> bool:
+    text = _mask_location_names(text, names)
+    for match in LOCATION_ACTIVITY_CLAIM.finditer(text):
+        tail = re.split(r"[。！？!?、\n]", text[match.end():], maxsplit=1)[0]
+        if re.match(r"(?:か(?:どうか)?(?:は|も)?|とは)", tail) and re.search(r"不明|未確認|わから|確認でき|断定でき", tail):
+            continue
+        if allow_plan and re.match(r"予定|つもり|ことになって", tail):
+            continue
+        return True
+    return False
 
 
 def validate_sentences(sentences: Any, sources: Mapping[str, Mapping[str, str]]) -> list[str]:
@@ -113,6 +151,7 @@ def validate_sentences(sentences: Any, sources: Mapping[str, Mapping[str, str]])
         return ["empty_generation"]
     reasons = []
     used = set()
+    location_names = _location_names(sources)
     for sentence in sentences:
         if not isinstance(sentence, dict) or not isinstance(sentence.get("text"), str):
             reasons.append("invalid_sentence")
@@ -134,7 +173,13 @@ def validate_sentences(sentences: Any, sources: Mapping[str, Mapping[str, str]])
         if "status_change" in certainties and not re.search(r"タスク|完了|取りやめ|中止", text):
             reasons.append("status_change_not_disclosed")
         normalized_text = text.replace(",", "")
-        if set(refs).issubset(LOCATION_ONLY_SOURCES) and LOCATION_ACTIVITY_CLAIM.search(text):
+        # Extra quality fields or unrelated Notes cannot establish work.
+        # A related personal report only permits the normal semantic verifier;
+        # it never bypasses that verifier or proves the claim by itself.
+        related_report = any(re.search(r"働|仕事|勤務|業務", _mask_location_names(sources[ref]["value"], location_names))
+                             for ref in refs if ref in {"Notes", "Voice Diary Notes"})
+        plan_disclosed = "planned" in certainties and sentence.get("certainty") == "planned"
+        if any(ref in LOCATION_ONLY_SOURCES for ref in refs) and _asserts_work(text, location_names, allow_plan=plan_disclosed) and not related_report:
             reasons.append("unsupported_activity_from_location")
         for key, unit in (("Study Minutes", "分"), ("Workout Duration Min", "分"), ("Expenses Total", "円"),
                           ("Done Count", "件"), ("Drop Count", "件")):
