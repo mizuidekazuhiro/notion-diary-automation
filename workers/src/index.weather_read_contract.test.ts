@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import worker, { __test__ } from "./index";
 
 const rich = (plain_text: string) => ({ rich_text: [{ plain_text }] });
-const timestamp = "2026-11-06T12:34:00+09:00";
+const retrievedAt = "2026-11-06T12:34:00+09:00";
+const generatedAt = "2026-11-07T01:02:00+09:00";
 const originalFetch = globalThis.fetch;
 const scenarios = [
   { weather: { select: { name: "晴れ" } }, summary: rich("午後は曇り"), expectedWeather: "晴れ", expectedSummary: "午後は曇り" },
@@ -21,8 +22,8 @@ try {
       Weather: scenario.weather, "Weather Summary": scenario.summary,
       // Exact properties must win over these otherwise matching aliases.
       weather: { select: { name: "誤った別項目" } }, weather_summary: rich("誤った別項目"),
-      "Weather Retrieved At": { formula: { string: timestamp } },
-      "Weather Generated At": rich(timestamp),
+      "Weather Retrieved At": { formula: { string: retrievedAt } },
+      "Weather Generated At": rich(generatedAt),
     } };
     globalThis.fetch = async (url, init) => {
       const method = init?.method || "GET";
@@ -39,8 +40,8 @@ try {
     const data = await response.json() as any;
     assert.equal(data.weather, scenario.expectedWeather);
     assert.equal(data.weather_summary, scenario.expectedSummary);
-    assert.equal(data.weather_retrieved_at, timestamp);
-    assert.equal(data.weather_generated_at, timestamp);
+    assert.equal(data.weather_retrieved_at, retrievedAt);
+    assert.equal(data.weather_generated_at, generatedAt);
     assert.equal(writes, 0);
   }
 } finally {
