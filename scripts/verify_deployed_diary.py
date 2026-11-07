@@ -50,6 +50,8 @@ def main():
     output = Path('artifacts/production_check'); output.mkdir(parents=True, exist_ok=True)
     (output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False))
+    if len(inspected) < int(os.getenv('MIN_GROUNDED_DIARIES', '1')):
+        raise RuntimeError('no_persisted_diaries_verified')
     if any(row['error_count'] for row in inspected):
         raise RuntimeError('persisted_diary_preflight_failed')
 

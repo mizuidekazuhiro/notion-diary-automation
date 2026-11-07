@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 from publish.read_daily_log import DailyLogSummary
 from scripts.note_batch_labeler import NoteLabel
 from scripts.sleep_utils import resolve_sleep_duration_minutes, resolve_sleep_target_date
-from scripts.data_status import metric_available
+from scripts.data_status import metric_available, source_states, UNAVAILABLE
 from scripts.location_features import extract_location_flags
 
 FORBIDDEN_GPT_FIELDS = {
@@ -55,6 +55,8 @@ def _safe_float(value: object) -> float | None:
 
 
 def _sleep_validity(summary: DailyLogSummary) -> tuple[bool, str | None, float | None]:
+    if source_states(summary).get("sleep", {}).get("status") in UNAVAILABLE:
+        return False, "sleep_source_unavailable", None
     all_invalid = summary.sleep_duration_min is None and summary.sleep_start is None and summary.sleep_end is None
     if all_invalid:
         return False, "missing_all_sleep_fields", None
@@ -262,6 +264,9 @@ def build_daily_feature_table(histories: Sequence[DailyLogSummary], note_labels:
             for col in df.columns:
                 if col.startswith("notes_") and col not in {"notes_present_flag", "notes_parse_quality_score"}:
                     df.at[index, col] = np.nan
+        if source_states(item).get("nutrition", {}).get("status") in UNAVAILABLE:
+            for col in ("kcal", "protein", "fat", "carb", "low_protein_flag", "high_fat_flag", "high_carb_flag"):
+                df.at[index, col] = np.nan
         try:
             weather_date = json.loads(item.generation_metadata or "{}").get("weather", {}).get("target_date")
         except (ValueError, TypeError, AttributeError):

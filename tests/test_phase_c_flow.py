@@ -233,6 +233,7 @@ def test_already_notified_still_runs_generation(monkeypatch) -> None:
     monkeypatch.setattr(daily_job, "_generate_and_save_sleep_insights", lambda config, *, summary, run_id: order.append("sleep") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_today_advice", lambda config, *, summary, run_id: order.append("advice") or summary)
     monkeypatch.setattr(daily_job, "_generate_and_save_diary", lambda config, *, summary, run_id, **kwargs: order.append("diary") or summary)
+    monkeypatch.setattr(daily_job, "_generate_and_save_weather", lambda config, *, summary, run_id: summary)
 
     daily_job.run_notify_diary(config, "2026-03-20", "run")
     assert order == ["sleep", "advice", "diary"]

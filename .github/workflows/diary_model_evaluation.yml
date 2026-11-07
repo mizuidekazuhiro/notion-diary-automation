@@ -4,6 +4,28 @@ on:
   push:
     branches: ["fix/diary-evidence-integrity"]
 jobs:
+  controls:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[model-controls]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MAX_RETRIES: "0"
+        run: python scripts/check_model_controls.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diary-model-controls-${{ github.run_id }}
+          path: artifacts/model_controls
+          retention-days: 7
   evaluate:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[diary-eval]')
     runs-on: ubuntu-latest

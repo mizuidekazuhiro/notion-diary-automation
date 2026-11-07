@@ -479,7 +479,8 @@ def test_generate_today_advice_prompt_omits_today_non_sleep_fields(monkeypatch) 
     )
 
     assert result is not None
-    assert prompts == []  # Three past days cannot support a personal prediction.
+    # Historical-note extraction may run, but three days cannot trigger advice generation.
+    assert all("rows" in json.loads(prompt) for prompt in prompts)
     combined_prompt = "\n".join(prompts)
     assert "当日の場所" not in combined_prompt
     assert result.judgment_json["analysis_json"]["assessment_status"] == "insufficient_data"

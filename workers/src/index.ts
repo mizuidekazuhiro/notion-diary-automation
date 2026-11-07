@@ -15,6 +15,7 @@ import {
 } from "./infrastructure/notion/client";
 import { formatMealSummary } from "./domain/meal_summary";
 import { validateWorkoutSummary } from "./domain/workout_summary";
+import { mergeIngestSourceStatus } from "./domain/source_status";
 import {
   buildFallbackLocationSummary,
   resolveLocationWindow,
@@ -2658,6 +2659,8 @@ async function handleDailyLogUpsert(request: Request, env: Env): Promise<Respons
   });
 
   const resolvedPageId = pageId ?? existingPage?.id;
+  const sourceStatus = mergeIngestSourceStatus(dataJson, getPlainTextFromRichText(existingPage?.properties?.["Data Status JSON"]) || "{}");
+  if (sourceStatus) properties["Data Status JSON"] = createRichTextProperty(sourceStatus);
   const { sanitizedProperties, removedEmptyMealPhotos } =
     sanitizeMealPhotosPatchProperties(properties);
   logDailyLogPatchKeys({
@@ -5673,6 +5676,15 @@ async function handleDailyLogHistory(request: Request, env: Env): Promise<Respon
         page_id: page.id,
         title: getPlainTextFromTitle(p[TITLE_PROPERTIES.dailyLog]) || "",
         generation_metadata: getPlainTextFromRichText(p["Generation Metadata"]) || null,
+        diary: getPlainTextFromRichText(p["Diary"]) || null,
+        diary_input_hash: getPlainTextFromRichText(p["Diary Input Hash"]) || null,
+        diary_evidence_json: getPlainTextFromRichText(p["Diary Evidence JSON"]) || null,
+        today_advice: getPlainTextFromRichText(p["Today advice"]) || null,
+        today_advice_input_hash: getPlainTextFromRichText(p["Today Advice Input Hash"]) || null,
+        weather_summary: getPlainTextFromRichText(p["Weather Summary"]) || null,
+        weather_location: getPlainTextFromRichText(p["Weather Location"]) || null,
+        weather_retrieved_at: getDateTimeFromProperty(p["Weather Retrieved At"]),
+        expense_f_data_status: getStringFromProperty(p["Expense F Data Status"]) || null,
         data_status_json: getPlainTextFromRichText(p["Data Status JSON"]) || null,
         location_evidence_json: getPlainTextFromRichText(p["Location Evidence JSON"]) || null,
         activity_summary: getPlainTextFromRichText(p["Activity Summary"]) || null,

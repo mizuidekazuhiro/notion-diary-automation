@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import base64
 import hashlib
 import hmac
@@ -13,7 +13,7 @@ from typing import Any, Optional
 from publish.email_templates import render_daily_log_html, render_daily_log_text
 from publish.read_daily_log import DailyLogSummary
 from scripts.weather_client import build_weather_summary
-from scripts.data_status import metric_available
+from scripts.data_status import metric_available, source_states, UNAVAILABLE
 from publish.source_disclosures import source_disclosures
 
 
@@ -54,6 +54,14 @@ def render_mail(
     expense_f_alert: Optional[dict[str, Any]] = None,
     f_risk_alert: Optional[dict[str, Any]] = None,
 ) -> MailContent:
+    original_summary = summary
+    states = source_states(summary)
+    masked = {}
+    if states.get("sleep", {}).get("status") in UNAVAILABLE:
+        masked.update({key: None for key in ("sleep_start", "sleep_end", "sleep_duration_min", "resolved_sleep_duration_min", "resolved_sleep_duration_hours", "resolved_sleep_duration_text", "sleep_score", "sleep_source")})
+    if states.get("nutrition", {}).get("status") in UNAVAILABLE:
+        masked.update({key: None for key in ("kcal", "protein", "fat", "carb")})
+    summary = replace(summary, **masked)
     subject = f"Daily Log | {summary.target_date}"
     mood_notes_url = _build_mood_notes_url(summary.target_date)
     weather_summary = (summary.weather_summary or "").strip()
@@ -153,7 +161,7 @@ Mood / Notes を入力:
         plain_text = f"{plain_text.rstrip()}\n\n{mood_notes_text.strip()}\n"
 
     html_body = render_daily_log_html(payload)
-    disclosures = source_disclosures(summary, expense_f_alert, f_risk_alert)
+    disclosures = source_disclosures(original_summary, expense_f_alert, f_risk_alert)
     if disclosures:
         plain_text += "\n\n" + "\n".join(text for _, text in disclosures) + "\n"
         notice = "<div>" + "<br>".join(html.escape(text) for _, text in disclosures) + "</div>"

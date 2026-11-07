@@ -41,7 +41,7 @@ class DiaryResult:
 
 
 def unavailable_metric(name: str, input_fields: Mapping[str, str]) -> bool:
-    group = "study" if name.startswith("Study ") else "workout" if name.startswith("Workout ") else "expenses" if name.startswith("Expenses") else "sleep" if "Sleep" in name else None
+    group = "study" if name.startswith("Study ") else "workout" if name.startswith("Workout ") else "expenses" if name.startswith("Expenses") else "sleep" if "Sleep" in name else "nutrition" if name in {"Kcal", "Protein", "Fat", "Carb"} else None
     try:
         state = json.loads(input_fields.get("Data Status", "{}"))
         return bool(group and state.get(group, {}).get("status") in {"missing", "unknown", "query_failed", "parse_failed", "invalid", "unverified_zero"})
