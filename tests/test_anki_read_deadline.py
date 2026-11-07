@@ -27,7 +27,7 @@ def test_exclusive_sqlite_lock_has_deadline_and_never_returns_zero(tmp_path, mon
 def test_lifecycle_busy_read_recovers_without_syncing(monkeypatch):
     class Client:
         attempts = 0
-        def invoke(self, action, params=None):
+        def invoke(self, action, params=None, **kwargs):
             assert action in {"deckNames", "cardReviews"}
             if action == "deckNames":
                 self.attempts += 1
@@ -40,3 +40,32 @@ def test_lifecycle_busy_read_recovers_without_syncing(monkeypatch):
     result = sync.collect_reviews_via_anki_connect(client, start_ms=0)
     assert result == [sync.Review(1000, 2000)]
     assert client.attempts == 2
+
+
+def test_slow_http_read_respects_remaining_collection_deadline(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            time.sleep(0.25)
+            try:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"result":[],"error":null}')
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(sync, "ANKI_CONNECT_URL", f"http://127.0.0.1:{server.server_port}")
+    try:
+        started = time.monotonic()
+        with pytest.raises(sync.SyncError):
+            sync.collect_reviews_via_anki_connect(sync.AnkiConnectClient(), start_ms=0, timeout_seconds=0.05)
+        assert time.monotonic() - started < 0.2
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

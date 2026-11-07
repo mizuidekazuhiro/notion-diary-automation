@@ -221,7 +221,7 @@ class AnkiConnectClient:
         self.key = key
         self.timeout_seconds = timeout_seconds
 
-    def invoke(self, action: str, params: dict[str, Any] | None = None) -> Any:
+    def invoke(self, action: str, params: dict[str, Any] | None = None, *, timeout_seconds: float | None = None) -> Any:
         payload: dict[str, Any] = {
             "action": action,
             "version": ANKI_CONNECT_VERSION,
@@ -236,7 +236,7 @@ class AnkiConnectClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            with urlopen(request, timeout=self.timeout_seconds if timeout_seconds is None else min(self.timeout_seconds, timeout_seconds)) as response:
                 result = json.load(response)
         except (URLError, TimeoutError, OSError) as exc:
             raise SyncError(
@@ -342,8 +342,14 @@ def collect_reviews_via_anki_connect(
     deadline = time.monotonic() + timeout_seconds
     def read(action: str, params: dict | None = None) -> Any:
         for attempt in range(20):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SyncError("Anki read deadline exceeded")
             try:
-                return client.invoke(action, params) if params is not None else client.invoke(action)
+                value = client.invoke(action, params, timeout_seconds=remaining)
+                if time.monotonic() > deadline:
+                    raise SyncError("Anki read deadline exceeded")
+                return value
             except SyncError as exc:
                 if "lifecycle operation is active" not in str(exc).lower() or time.monotonic() >= deadline or attempt == 19:
                     raise
