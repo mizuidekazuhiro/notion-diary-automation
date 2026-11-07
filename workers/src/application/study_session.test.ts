@@ -167,6 +167,8 @@ let aggregateExists = false;
 let createCount = 0;
 let aggregateUpdateCount = 0;
 let dailyUpdateCount = 0;
+let indexLag = false;
+let lastDailyPatch: any = null;
 globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -174,10 +176,10 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     if (body.filter?.property === "Session ID") {
       return Response.json({ results: aggregateExists ? [{ ...pcAnki, id: "pc-anki", url: "https://notion.test/pc-anki" }] : [], has_more: false });
     }
-    return Response.json({ results: [legacyAnki, pcAnki, itojuku], has_more: false });
+    return Response.json({ results: indexLag ? [legacyAnki, itojuku] : [legacyAnki, pcAnki, itojuku], has_more: false });
   }
   if (url.endsWith("/databases/daily/query")) {
-    return Response.json({ results: [{ id: "daily-page", last_edited_time: "2026-08-11T00:00:00.000Z" }], has_more: false });
+    return Response.json({ results: [{ id: "daily-page", last_edited_time: "2026-08-11T00:00:00.000Z", properties: { "Data Status JSON": {rich_text:[]} } }], has_more: false });
   }
   if (url.endsWith("/databases/missing-daily/query")) {
     return Response.json({ results: [], has_more: false });
@@ -193,6 +195,7 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   if (url.endsWith("/pages/daily-page")) {
     dailyUpdateCount += 1;
+    lastDailyPatch = body;
     return Response.json({ id: "daily-page" });
   }
   return Response.json({ error: "unexpected mock request", url, body }, { status: 500 });
@@ -209,6 +212,7 @@ const requestBody = {
 };
 const env = { NOTION_TOKEN: "notion", DAILY_LOG_DB_ID: "daily", WORKERS_BEARER_TOKEN: "worker" };
 for (const expectedCreated of [true, false]) {
+  indexLag = true;
   const response = await handleStudyAnkiDaily(new Request("https://worker.test/execute/api/study/anki-daily", {
     method: "POST",
     headers: { authorization: "Bearer worker", "content-type": "application/json" },
@@ -220,7 +224,10 @@ for (const expectedCreated of [true, false]) {
   assert.equal(result.daily_totals.study_minutes, 120.17);
   assert.equal(result.daily_totals.study_sessions, 9);
   assert.equal(result.daily_totals.anki_revlog_authoritative, true);
+  assert.equal(lastDailyPatch.properties["Study Minutes"].number, 120.17);
+  assert.equal(JSON.parse(lastDailyPatch.properties["Data Status JSON"].rich_text[0].text.content).study.status, "observed");
 }
+indexLag = false;
 const missingDailyResponse = await handleStudyReconcile(new Request("https://worker.test/execute/api/study/reconcile", {
   method: "POST",
   headers: { authorization: "Bearer worker", "content-type": "application/json" },

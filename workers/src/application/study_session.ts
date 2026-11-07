@@ -356,12 +356,19 @@ async function aggregateTargetDate(
   env: StudySessionEnv,
   databaseId: string,
   targetDate: string,
+  confirmedWrites: Record<string, any>[] = [],
 ): Promise<StudyTotals> {
   const pages = await queryDatabaseAll(env, databaseId, {
     property: "Target Date",
     date: { equals: targetDate },
   });
-  return aggregateStudyPages(pages);
+  // A successful write receipt is newer evidence than an eventually consistent query.
+  const writtenIds = new Set(confirmedWrites.map((page) => page.id));
+  const writtenSessions = new Set(confirmedWrites.map((page) => getRichText(page, "Session ID")).filter(Boolean));
+  return aggregateStudyPages([
+    ...pages.filter((page) => !writtenIds.has(page.id) && !writtenSessions.has(getRichText(page, "Session ID"))),
+    ...confirmedWrites,
+  ]);
 }
 
 async function syncDailyLogTotals(
@@ -410,8 +417,9 @@ async function reconcileTargetDate(
   env: StudySessionEnv,
   databaseId: string,
   targetDate: string,
+  confirmedWrites: Record<string, any>[] = [],
 ): Promise<{ totals: StudyTotals; dailyLog: { updated: boolean; pageId: string | null } }> {
-  const totals = await aggregateTargetDate(env, databaseId, targetDate);
+  const totals = await aggregateTargetDate(env, databaseId, targetDate, confirmedWrites);
   const dailyLog = await syncDailyLogTotals(env, targetDate, totals);
   return { totals, dailyLog };
 }
@@ -452,7 +460,9 @@ export async function handleStudyAnkiDaily(request: Request, env: StudySessionEn
     } else {
       page = await create_page(env, databaseId, aggregateProperties);
     }
-    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, aggregate.targetDate);
+    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, aggregate.targetDate, [
+      { ...page, id: page?.id ?? existing?.id, properties: aggregateProperties },
+    ]);
     return jsonResponse({
       ok: true,
       created: !existing,
@@ -555,10 +565,11 @@ export async function handleStudySession(request: Request, env: StudySessionEnv)
     const existing = await findSessionById(env, databaseId, session.sessionId);
     let createdPage = existing;
     let duplicate = Boolean(existing);
+    let confirmedWrites: Record<string, any>[] = existing ? [existing] : [];
 
     if (!existing) {
       const title = `${session.app} ${session.targetDate} ${formatJstTime(Date.parse(session.startedAt))}`;
-      createdPage = await create_page(env, databaseId, {
+      const properties = {
         Name: titleProperty(title),
         "Session ID": richTextProperty(session.sessionId),
         "Start At": dateProperty(session.startedAt),
@@ -568,11 +579,13 @@ export async function handleStudySession(request: Request, env: StudySessionEnv)
         App: selectProperty(session.app),
         Device: richTextProperty(session.device),
         Source: selectProperty(session.source),
-      });
+      };
+      createdPage = await create_page(env, databaseId, properties);
+      confirmedWrites = [{ ...createdPage, properties }];
       duplicate = false;
     }
 
-    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, session.targetDate);
+    const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, session.targetDate, confirmedWrites);
     return jsonResponse({
       ok: true,
       created: !duplicate,
