@@ -12,6 +12,8 @@
 | 助言の履歴取得 | mood_advice_generator | 取得facadeを維持。generation_context指定時は再取得しない |
 | 助言の履歴比較・入力型 | mood_advice_generator内 | today_advice_context。振り返り日・助言対象日・睡眠候補を区別 |
 | 分類結果の品質と隔離 | generate_today_advice内162行 | notes_quality。ラベルと品質計測をNotesQualityResultで返す |
+| 本人メモの成果候補の採用 | 分類ラベルを直接採用 | note_outcome_validatorで意味と原文引用を検査。note_batch_labelerが採否・失敗を受け渡す |
+| メモ分類キャッシュの保存形式 | 平文JSON | note_label_cacheで認証付き暗号化と不透明な識別子。I/Oと書込結果はlabelerに残す |
 | 生成状態JSONの結合・参照・読戻し比較 | daily_jobとphase_cに分散 | generation_state。取得そのものは呼出側に残す |
 | WorkerのNotion名・型解決 | index.ts内 | infrastructure/notion/property_resolver。schema取得とcacheは移さない |
 | WorkerのNotion値変換 | index.ts内 | infrastructure/notion/property_values。0/欠損、分割長、formula順序を保持 |
@@ -43,7 +45,7 @@ Healthcare側はlegacy_health_daily_pureへ正規化・検証・共有field tabl
 - Study独自のtext.content fallback、Dropbox URLの重複判定、用途別04/05時境界は意味が異なるため統合しない。
 - 旧prompt構築関数・定数等はrepo内の静的参照がないものもあるが、外部CLI/import利用を否定できないため削除しない。互換専用であることを明示する。
 - legacy Worker位置生成入口は既存APIとして保持する。正式な位置要約workflowの用途別設定と混同しない。
-- 無関係な機能の整形、依存更新、新framework導入は行わない。睡眠送信元の未確定原因を、整理で解決したとは扱わない。
+- 無関係な機能の整形、依存の一斉更新、新framework導入は行わない。睡眠送信元の未確定原因を、整理で解決したとは扱わない。
 
 ## 比較で確認した追加不具合（整理と別コミット）
 
@@ -51,5 +53,15 @@ Healthcare側はlegacy_health_daily_pureへ正規化・検証・共有field tabl
 - 5986363: 位置AI出力は保存直前に先頭6文、さらにNotion項目構築時に先頭1900文字へ切られていた。正規化は表示だけを整え、保存形式は全量を既存の項目サイズで分割する。後半の滞在と翌日表示、1900文字を跨ぐ内容、title/rich_text両方を検査する。
 - モデル評価もraw出力だけでなく実際の正規化・保存形式を通し、saved_textを非公開の暗号化artifactへ保持する。保存相当の結果をモデル比較へ使う。
 - bb55e3e: 上記の動作変更後に、表示整形とNotion項目変換をtext_outputへ移動する純粋な整理を独立コミットにした。
-- 最終対照では状態変更だけのメモがachievementになる分類結果も再現した。分類の採用前に、状態変更を除いた本人メモに明示的な成果・進捗があるかを確認する。根拠のないachievement/productiveだけを除き、運動や疲労等は保持する。原文は変えず、除外件数を記録し、契約v5で旧キャッシュを区別する。これは完全な日本語意味解析や、成果が無かったという断定ではない。
+- 最終対照では状態変更だけのメモがachievementになる分類結果も再現した。v5の語句判定には否定・推量の誤採用と明示成果の誤棄却が残ったため、v6ではSolに新しい成果候補だけをまとめて照合させる。原文と一致する引用、入力id・候補tagの完全な対応を検査し、根拠のないachievement/productiveだけを除く。運動や疲労等は保持し、成果が無かったとは断定しない。
+- 検査失敗はfailedとして助言を短い縮退へ進め、成功に見せない。失敗ラベルは同一run/attempt内だけ再利用し、次の実行では再試行する。Notion保存済みの同じhashでも失敗ラベルは正常結果として再利用しない。正常な同一入力では追加の分類・検査を呼ばない。
+- 分類自体のJSON/日付照合失敗も同じく失敗状態を保持する。正常cache/Notion hitは入力のhash・モデル・日付を検証した根拠を監査へ引き継ぎ、品質検査で未照合と誤認しない。分類APIの試行数はバッチ数ではなく実際の再試行を含める。品質の閾値は変更しない。
+- Notes保存はupdatedと読戻しを確認し、保存未確認をphase成功にしない。原文検証が失敗した場合のF判定は、その実行だけ控えてfailedと理由を保存する。通常のF・支出機能と日記の処理は維持する。助言とFの再利用署名にも、分類・意味照合のモデル/設定/プロンプト/契約と実装版を含める。
 - 分類だけを変更した場合は評価workflowのscope=controlsで、同じ本番分類経路の合成対照だけを実施できる。既定allの比較範囲は変えない。変更のない文章生成の有料呼出しとNotion再取得を繰り返さない。
+
+## 根拠情報の保存
+
+- 原文引用を含むメモラベルのcacheは、既存API credentialからメモリ内で用途を分けて導出した鍵でAES-GCM暗号化する。鍵そのものは保存せず、ランダムnonceと識別子を認証する。ファイル名はHMACで、日付や入力の単純hashを露出しない。
+- workflowはv3-encryptedのcacheだけ復元する。旧平文、改竄、別の識別子、鍵変更はcache missにし、read/write失敗のログには匿名の段階・例外型だけを残す。分類のraw debug保存も同じ認証暗号を使う。新しい認証情報は不要。鍵が無い場合は保存失敗として監査し、平文へ戻さない。
+- 実装根拠は[cryptography AES-GCM](https://cryptography.io/en/latest/hazmat/primitives/aead/)と[HKDF](https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/)。[GitHubのcacheアクセス範囲](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)を踏まえ、artifactだけでなく分類cacheも保護する。cryptographyは検証した50.0.2に固定する。
+- 依存監査でRequests 2.32.3の既知の2件を検出したため、Python 3.11対応の最小修正版2.33.0だけに更新する（[公式advisory 1](https://github.com/psf/requests/security/advisories/GHSA-9hjg-9r4m-mvj7)、[2](https://github.com/psf/requests/security/advisories/GHSA-gc5v-m9x4-r6x2)）。本repoにextract_zipped_pathsの直接呼出しは無い。netrc利用による実漏洩が発生したとは認定しない。
