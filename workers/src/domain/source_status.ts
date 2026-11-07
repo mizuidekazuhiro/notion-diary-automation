@@ -10,7 +10,9 @@ export function mergeIngestSourceStatus(dataJson: string | undefined, previousJs
   const failed = health.status === "failed";
   const missing = health.status === "no_data";
   const stale = health.status === "stale";
-  const statusFor = (prefixes: string[]) => failed ? "query_failed" : missing ? "missing" : stale ? "stale"
+  const timestampSleep = health.payload?.health_quality?.source_availability?.sleep?.status === "observed";
+  const statusFor = (prefixes: string[]) => failed ? "query_failed" : stale ? "stale"
+    : prefixes.includes("sleep") && timestampSleep ? "observed" : missing ? "missing"
     : available.some((name) => prefixes.some((prefix) => name.startsWith(prefix))) ? "observed" : "missing";
   const state = (status: string) => ({ status, source: "health_ingest", reason: String(health.error_code || health.status) });
   return JSON.stringify({ ...previous,

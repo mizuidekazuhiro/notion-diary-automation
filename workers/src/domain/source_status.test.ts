@@ -13,3 +13,8 @@ assert.equal(from("failed").study.status, "confirmed_zero");
 assert.equal(from("stale", ["sleep_duration_min", "kcal"]).sleep.status, "stale");
 assert.equal(from("stale", ["sleep_duration_min", "kcal"]).nutrition.status, "stale");
 assert.equal(mergeIngestSourceStatus(undefined, before), null);
+const timestampOnly = JSON.parse(mergeIngestSourceStatus(JSON.stringify({ raw: { health: {
+  status: "no_data", available_fields: [], payload: { health_quality: { source_availability: { sleep: { status: "observed" } } } },
+} } }), before)!);
+assert.equal(timestampOnly.sleep.status, "observed");
+assert.equal(timestampOnly.nutrition.status, "missing");

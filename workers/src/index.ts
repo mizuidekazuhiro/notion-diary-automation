@@ -2868,6 +2868,9 @@ async function handleDailyLogHealthIngest(
     last_valid_at: lastValidAt,
     completeness: healthCompleteness,
     available_fields: availableHealthFields,
+    source_availability: {
+      sleep: { status: (sleepStart || sleepEnd || sleepDurationMin !== null || sleepScore !== null) ? "observed" : "missing" },
+    },
     error_code:
       healthStatus === "stale"
         ? "data_date_mismatch"
@@ -2882,7 +2885,8 @@ async function handleDailyLogHealthIngest(
     `Health ingest quality for ${targetDate}: status=${healthQuality.status} completeness=${healthQuality.completeness} available_fields=${healthQuality.available_fields.join(",") || "none"} error_code=${healthQuality.error_code || "none"}`,
   );
 
-  if (healthQuality.status === "no_data" || healthQuality.status === "stale") {
+  // Keep the eight-field completeness warning while accepting valid timestamp-only sleep.
+  if (healthQuality.status === "stale" || (healthQuality.status === "no_data" && !sleepStart && !sleepEnd)) {
     return new Response(
       JSON.stringify({
         ok: true,
