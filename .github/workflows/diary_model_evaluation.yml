@@ -2,7 +2,7 @@ name: Diary Models - Read-only Evaluation
 on:
   workflow_dispatch:
   push:
-    branches: ["fix/diary-evidence-integrity"]
+    branches: ["fix/diary-evidence-integrity", "fix/verify-written-study-snapshot"]
 jobs:
   controls:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[model-controls]')

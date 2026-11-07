@@ -282,7 +282,7 @@ def _safe_read_daily_log_for_advice(*, daily_log_read_url: str, bearer_token: Op
             "today_advice_history_read_skipped date=%s reason=%s error=%s",
             day,
             type(exc).__name__,
-            str(exc)[:300],
+            "source_read_failed",
         )
         return SafeDailyLogReadResult(summary=None, failed=True, error_type=type(exc).__name__)
 

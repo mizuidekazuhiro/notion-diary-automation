@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 from publish.read_daily_log import parse_daily_log_payload
 from scripts.note_batch_labeler import label_notes_in_batches
 from scripts.openai_chat_utils import chat_completion
+from scripts.sleep_condition_generator import build_sleep_insight_context, generate_sleep_insights
 
 
 def main():
@@ -40,6 +41,14 @@ def main():
             report.append({'role':'consistency','model':model,'control_expected_grounded':expected,
                            'passed':decision.get('grounded') is expected, 'usage':usage})
     output=Path('artifacts/model_controls');output.mkdir(parents=True,exist_ok=True)
+    sleep_row=parse_daily_log_payload({'found':True,'page_id':'synthetic-sleep','sleep_start':'2000-01-03T23:00:00+09:00',
+        'sleep_end':'2000-01-04T07:00:00+09:00'},target_date='2000-01-03')
+    sleep_metadata={}
+    sleep_result=generate_sleep_insights(target_date='2000-01-03',
+        context=build_sleep_insight_context(today_summary=sleep_row,history_summaries=[]),diagnostics=sleep_metadata)
+    report.append({'role':'sleep_synthetic_control','model':sleep_metadata.get('model'),
+        'passed':sleep_metadata.get('status')=='success' and set(sleep_result)=={'sleep_analysis_jp','today_condition_forecast_jp'},
+        'usage':sleep_metadata.get('usage',[])})
     (output/'report.json').write_text(json.dumps({'results':report,'source_mutations':0,'mails_sent':0},ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps({'results':[{k:v for k,v in row.items() if k!='usage'} for row in report]}))
     if not all(row['passed'] for row in report if row['model'] in {'gpt-6-luna','gpt-6.1-sol'}):

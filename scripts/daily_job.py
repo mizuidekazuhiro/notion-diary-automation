@@ -1065,11 +1065,15 @@ def _generate_and_save_sleep_insights(
         sleep_score=selected_sleep.get("sleep_score"),
         sleep_duration_source=str(selected_sleep.get("duration_source") or "missing"),
     )
+    sleep_generation: dict[str, Any] = {}
     sleep_payload = maybe_generate_sleep_insights(
         target_date=summary.target_date,
         today_summary=resolver_applied_summary,
         history_summaries=history_summaries,
+        diagnostics=sleep_generation,
     )
+    if sleep_generation.get("reused"):
+        return summary
     if not sleep_payload:
         logging.info(
             "phase_c_sleep_skipped target_date(JST)=%s run_id=%s skip_reason=no_sleep_signal generated_properties=[]",
@@ -1091,6 +1095,8 @@ def _generate_and_save_sleep_insights(
         run_id,
         sorted(sleep_payload.keys()),
     )
+    if sleep_generation:
+        sleep_payload["generation_metadata"] = _generation_metadata(summary, "sleep", sleep_generation)
     save_result = _save_daily_log_fields(config, target_date=summary.target_date, payload=sleep_payload)
     logging.info(
         "phase_c_sleep_saved target_date(JST)=%s run_id=%s updated=%s reason=%s generated_properties=%s",
@@ -1108,7 +1114,7 @@ def _advice_generation_policy() -> dict[str, Any]:
     return {**generation_signature("advice", (
         "scripts/today_advice_renderer.py", "scripts/advice_evidence.py", "scripts/today_advice_feature_builder.py",
         "scripts/today_advice_pattern_analyzer.py", "scripts/today_advice_regression.py", "scripts/today_advice_lightgbm.py",
-        "scripts/mood_advice_generator.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py",
+        "scripts/mood_advice_generator.py", "scripts/prompts/notes_structured_prompt.json", "scripts/ai_models.py", "scripts/note_batch_labeler.py",
     )), "notes_model": model_for("notes"), "max_chars": today_advice_char_limits()[1]}
 
 
@@ -1664,7 +1670,7 @@ def _compute_expense_f_alert(
         summary.target_date,
         matched,
         aggregate.count,
-        aggregate.total,
+        "redacted",
         len(aggregate.merchants),
         aggregate.data_status,
         aggregate.skip_reason,
@@ -1676,7 +1682,7 @@ def _compute_expense_f_alert(
         aggregate.debug_summary.get("query_exception_class"),
         aggregate.debug_summary.get("query_exception_message"),
         aggregate.debug_summary.get("matched_count"),
-        aggregate.debug_summary.get("total_amount"),
+        "redacted",
         reason_labels,
     )
     if matched:

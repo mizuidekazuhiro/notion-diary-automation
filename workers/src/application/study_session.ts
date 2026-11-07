@@ -362,13 +362,20 @@ async function aggregateTargetDate(
     property: "Target Date",
     date: { equals: targetDate },
   });
-  // A successful write receipt is newer evidence than an eventually consistent query.
-  const writtenIds = new Set(confirmedWrites.map((page) => page.id));
-  const writtenSessions = new Set(confirmedWrites.map((page) => getRichText(page, "Session ID")).filter(Boolean));
-  return aggregateStudyPages([
-    ...pages.filter((page) => !writtenIds.has(page.id) && !writtenSessions.has(getRichText(page, "Session ID"))),
-    ...confirmedWrites,
-  ]);
+  // Retain a confirmed write missing from the index, while respecting later edits.
+  const combined = new Map<string, Record<string, any>>();
+  const key = (page: Record<string, any>) => getRichText(page, "Session ID") || String(page.id);
+  for (const page of pages) combined.set(key(page), page);
+  for (const written of confirmedWrites) {
+    if (getDate(written, "Target Date") !== targetDate) continue;
+    const indexed = combined.get(key(written));
+    const indexedAt = Date.parse(String(indexed?.last_edited_time || ""));
+    const writtenAt = Date.parse(String(written.last_edited_time || ""));
+    if (!indexed || !Number.isFinite(indexedAt) || (Number.isFinite(writtenAt) && writtenAt >= indexedAt)) {
+      combined.set(key(written), written);
+    }
+  }
+  return aggregateStudyPages([...combined.values()]);
 }
 
 async function syncDailyLogTotals(
@@ -563,6 +570,9 @@ export async function handleStudySession(request: Request, env: StudySessionEnv)
   const databaseId = env.APP_USAGE_SESSIONS_DB_ID?.trim() || DEFAULT_APP_USAGE_SESSIONS_DB_ID;
   try {
     const existing = await findSessionById(env, databaseId, session.sessionId);
+    if (existing && getDate(existing, "Target Date") !== session.targetDate) {
+      return jsonResponse({ error: "session_id_date_conflict", updated: false }, 409);
+    }
     let createdPage = existing;
     let duplicate = Boolean(existing);
     let confirmedWrites: Record<string, any>[] = existing ? [existing] : [];

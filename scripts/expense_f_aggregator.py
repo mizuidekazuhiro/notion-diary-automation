@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -32,22 +33,24 @@ def _auth_header(token: str) -> dict[str, str]:
 
 
 def _sanitize_error_text(value: object, *, limit: int = 300) -> str:
-    """Return a single-line, bounded Notion error message safe for public CI logs."""
-    text = " ".join(str(value or "").split())
-    return text[:limit]
+    """Public diagnostics must not echo input-dependent upstream messages."""
+    return type(value).__name__ if isinstance(value, BaseException) else "upstream_error_details_redacted"
 
 
 def _notion_error_summary(response: requests.Response, *, filter_strategy: str) -> dict[str, Any]:
+    body: Any = {}
     notion_code: Optional[str] = None
     response_message = "Notion request failed"
     try:
         body = response.json()
         if isinstance(body, dict):
-            notion_code = _sanitize_error_text(body.get("code")) or None
+            code = str(body.get("code") or "")
+            notion_code = code if code in {"validation_error", "rate_limited", "unauthorized", "restricted_resource", "object_not_found", "conflict_error", "internal_server_error", "service_unavailable"} else "upstream_error"
             response_message = _sanitize_error_text(body.get("message")) or response_message
     except (ValueError, TypeError):
         response_message = "Notion returned a non-JSON error response"
     return {
+        "request_id": (str(body.get("request_id")) if isinstance(body, dict) and re.fullmatch(r"[a-fA-F0-9-]{16,64}", str(body.get("request_id") or "")) else None),
         "http_status": response.status_code,
         "status": response.status_code,  # backwards-compatible debug key
         "notion_error_code": notion_code,

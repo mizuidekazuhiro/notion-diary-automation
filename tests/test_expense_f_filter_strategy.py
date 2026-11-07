@@ -160,5 +160,6 @@ def test_http_error_exposes_sanitized_notion_fields(monkeypatch):
     assert out.debug_summary["http_status"] == 400
     assert out.debug_summary["notion_error_code"] == "validation_error"
     assert out.debug_summary["exception_class"] == "HTTPError"
-    assert out.debug_summary["response_message"] == "bad checkbox filter"
+    assert "bad checkbox filter" not in str(out.debug_summary)
+    assert out.debug_summary["response_message"] == "upstream_error_details_redacted"
     assert "secret-token" not in str(out.debug_summary)

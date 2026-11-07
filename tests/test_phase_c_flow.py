@@ -33,6 +33,7 @@ from scripts.sleep_condition_generator import build_sleep_insight_context, gener
 
 
 class _DummyResponse:
+    status_code = 200
     def __init__(self, content: str) -> None:
         self._content = content
 

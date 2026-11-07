@@ -10,6 +10,7 @@ ROLE_DEFAULTS = {
     "location": ("LOCATION_SUMMARY_MODEL", "gpt-6.1-terra"),
     "diary": ("DIARY_MODEL", "gpt-6.1-terra"),
     "advice": ("TODAY_ADVICE_FINAL_MODEL", "gpt-6.1-sol"),
+    "sleep": ("SLEEP_INSIGHT_MODEL", "gpt-6.1-sol"),
     "consistency": ("DIARY_CONSISTENCY_MODEL", "gpt-6.1-sol"),
 }
 

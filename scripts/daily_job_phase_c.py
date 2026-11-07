@@ -165,7 +165,7 @@ def run_phase_c(config: Any, *, target_date: str, run_id: str, deps: PhaseCDeps)
             summary.target_date,
             run_id,
             expense_f_alert.get("matched"),
-            (expense_f_alert.get("reasons") or [])[:3],
+            [str(reason).split(":", 1)[0] for reason in (expense_f_alert.get("reasons") or [])[:3]],
         )
 
     notify_result = deps.run_notify(summary)

@@ -478,7 +478,7 @@ def generate_f_risk(
         risk_json["f_event_count"],
         risk_json["usable_f_event_count"],
         risk_json["event_case_count"],
-        risk_json["matched_case_dates"][:3],
+        len(risk_json["matched_case_dates"]),
     )
     logging.info(
         "[FRisk][Similarity] total=%s overlap=%s sequence=%s type=%s strength=%s",

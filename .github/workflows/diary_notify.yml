@@ -65,6 +65,7 @@ jobs:
           DIARY_MODEL: gpt-6.1-terra
           TODAY_ADVICE_FINAL_MODEL: gpt-6.1-sol
           DIARY_CONSISTENCY_MODEL: gpt-6.1-sol
+          SLEEP_INSIGHT_MODEL: gpt-6.1-sol
           DAILY_MAIL_TODAY_ADVICE_MIN_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MIN_CHARS }}
           DAILY_MAIL_TODAY_ADVICE_MAX_CHARS: ${{ vars.DAILY_MAIL_TODAY_ADVICE_MAX_CHARS }}
           GITHUB_TOKEN: ${{ github.token }}

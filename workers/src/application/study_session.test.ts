@@ -4,6 +4,7 @@ import {
   aggregateStudyPages,
   handleStudyAnkiDaily,
   handleStudyReconcile,
+  handleStudySession,
   parseAnkiDailyPayload,
   parseStudyDayStartHour,
   parseStudySessionPayload,
@@ -109,6 +110,7 @@ function page(input: {
       "Duration Min": { number: input.duration },
       "Session Count": { number: input.sessionCount ?? 0 },
       "End At": { date: { start: input.end } },
+      "Target Date": { date: { start: "2026-08-10" } },
     },
   };
 }
@@ -169,6 +171,7 @@ let aggregateUpdateCount = 0;
 let dailyUpdateCount = 0;
 let indexLag = false;
 let lastDailyPatch: any = null;
+let newerIndexed = false;
 globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -176,7 +179,8 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     if (body.filter?.property === "Session ID") {
       return Response.json({ results: aggregateExists ? [{ ...pcAnki, id: "pc-anki", url: "https://notion.test/pc-anki" }] : [], has_more: false });
     }
-    return Response.json({ results: indexLag ? [legacyAnki, itojuku] : [legacyAnki, pcAnki, itojuku], has_more: false });
+    const indexed = newerIndexed ? { ...pcAnki, last_edited_time: "2026-08-11T02:00:00Z", properties: {...pcAnki.properties, "Duration Min": {number:120}} } : pcAnki;
+    return Response.json({ results: indexLag && !newerIndexed ? [legacyAnki, itojuku] : [legacyAnki, indexed, itojuku], has_more: false });
   }
   if (url.endsWith("/databases/daily/query")) {
     return Response.json({ results: [{ id: "daily-page", last_edited_time: "2026-08-11T00:00:00.000Z", properties: { "Data Status JSON": {rich_text:[]} } }], has_more: false });
@@ -187,11 +191,11 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.endsWith("/pages") && init?.method === "POST") {
     aggregateExists = true;
     createCount += 1;
-    return Response.json({ id: "pc-anki", url: "https://notion.test/pc-anki" });
+    return Response.json({ id: "pc-anki", url: "https://notion.test/pc-anki", last_edited_time:"2026-08-11T01:00:00Z" });
   }
   if (url.endsWith("/pages/pc-anki")) {
     aggregateUpdateCount += 1;
-    return Response.json({ id: "pc-anki", url: "https://notion.test/pc-anki" });
+    return Response.json({ id: "pc-anki", url: "https://notion.test/pc-anki", last_edited_time:"2026-08-11T01:00:00Z" });
   }
   if (url.endsWith("/pages/daily-page")) {
     dailyUpdateCount += 1;
@@ -228,6 +232,18 @@ for (const expectedCreated of [true, false]) {
   assert.equal(JSON.parse(lastDailyPatch.properties["Data Status JSON"].rich_text[0].text.content).study.status, "observed");
 }
 indexLag = false;
+newerIndexed = true;
+const newerResponse = await handleStudyAnkiDaily(new Request("https://worker.test/execute/api/study/anki-daily", {
+  method:"POST",headers:{authorization:"Bearer worker","content-type":"application/json"},body:JSON.stringify(requestBody),
+}), env);
+assert.equal((await newerResponse.json() as any).daily_totals.study_minutes,150);
+const crossedDate = await handleStudySession(new Request("https://worker.test/execute/api/study/session", {
+  method:"POST",headers:{authorization:"Bearer worker","content-type":"application/json"},body:JSON.stringify({
+    session_id:"anki-revlog:2026-08-10",started_at:"2026-08-11T10:00:00+09:00",ended_at:"2026-08-11T10:30:00+09:00",app:"Anki",
+  }),
+}), env);
+assert.equal(crossedDate.status,409);
+assert.equal((await crossedDate.json() as any).error,"session_id_date_conflict");
 const missingDailyResponse = await handleStudyReconcile(new Request("https://worker.test/execute/api/study/reconcile", {
   method: "POST",
   headers: { authorization: "Bearer worker", "content-type": "application/json" },
@@ -238,8 +254,8 @@ const missingDailyResult = await missingDailyResponse.json() as any;
 assert.equal(missingDailyResult.daily_log_updated, false);
 globalThis.fetch = originalFetch;
 assert.equal(createCount, 1);
-assert.equal(aggregateUpdateCount, 1);
-assert.equal(dailyUpdateCount, 2);
+assert.equal(aggregateUpdateCount, 2);
+assert.equal(dailyUpdateCount, 3);
 
 console.log("study_session.test.ts: ok");
 assert.equal(resolveJstDayKey("2026-08-11T04:59:59+09:00", 5), "2026-08-10");
