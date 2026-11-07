@@ -1,0 +1,37 @@
+name: Diary Models - Read-only Evaluation
+on:
+  workflow_dispatch:
+  push:
+    branches: ["fix/diary-evidence-integrity"]
+jobs:
+  evaluate:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[diary-eval]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt cryptography
+      - name: Compare without Notion writes or mail
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DAILY_LOG_DB_ID: ${{ secrets.DAILY_LOG_DB_ID }}
+          STAY_SESSIONS_DB_ID: ${{ secrets.STAY_SESSIONS_DB_ID }}
+          TASK_DB_ID: ${{ secrets.TASK_DB_ID }}
+          EXPENSES_DB_ID: ${{ secrets.EXPENSES_DB_ID }}
+          PROMPT_DB_ID: ${{ secrets.PROMPT_DB_ID }}
+          DIARY_EVAL_PUBLIC_KEY: ${{ vars.DIARY_EVAL_PUBLIC_KEY }}
+          DIARY_EVAL_MAX_USD: ${{ vars.DIARY_EVAL_MAX_USD || '1.50' }}
+          OPENAI_MAX_RETRIES: "1"
+        run: python scripts/evaluate_diary_models.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diary-model-evaluation-${{ github.run_id }}
+          path: artifacts/model_evaluation
+          retention-days: 7
