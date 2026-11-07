@@ -365,7 +365,12 @@ async function aggregateTargetDate(
   // Retain a confirmed write missing from the index, while respecting later edits.
   const combined = new Map<string, Record<string, any>>();
   const key = (page: Record<string, any>) => getRichText(page, "Session ID") || String(page.id);
-  for (const page of pages) combined.set(key(page), page);
+  for (const page of pages) {
+    const previous = combined.get(key(page));
+    if (!previous || Date.parse(pageRecency(page)) > Date.parse(pageRecency(previous))) {
+      combined.set(key(page), page);
+    }
+  }
   for (const written of confirmedWrites) {
     if (getDate(written, "Target Date") !== targetDate) continue;
     const indexed = combined.get(key(written));

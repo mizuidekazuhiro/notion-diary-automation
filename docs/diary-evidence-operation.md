@@ -42,7 +42,7 @@ SMTP前にautomation-stateブランチへ原文を含まない配信claimをCAS�
 |---|---|---|
 | Notes抽出 | gpt-6-luna | reasoning none |
 | 位置要約・日記 | gpt-6.1-terra | reasoning none |
-| 助言・整合性 | gpt-6.1-sol | reasoning low |
+| 助言・睡眠解説・整合性 | gpt-6.1-sol | reasoning low |
 
 共通OPENAI_MODELによる上書きを避け、用途専用変数で設定する。Chat Completions、構造化出力、4096出力上限、120秒の読取timeout、Retry-After対応を実装。GPT-6系にはtemperatureを送らない。助言の判定材料が不足する日はAIを呼ばない。
 
@@ -57,6 +57,8 @@ SMTP前にautomation-stateブランチへ原文を含まない配信claimをCAS�
 調査対象の旧生成では30日履歴の2回取得が合計約289秒、外側429再試行24回、共通AIログ22回。新経路は同一実行で履歴contextを共有しbulk GET 1回。内側HTTP再試行を除き、外側だけでRetry-After/バックオフを管理する。モデル別usage・試行・遅延、取得時間を分けて記録する。
 
 Notes分類は変更分だけ再実行し、モデル/入力/プロンプト版を含むNotion保存結果またはキャッシュを使う。ファイル保存失敗を計数する。Actionsキャッシュの書込権限とv2キーを設定し、合成canaryで実際の保存を確認した。
+
+睡眠の解説も共通API呼出しへ統合し、専用モデル、使用量、生成方式、検証棄却、代替文、入力版を保存する。正常かつ同じ版・入力の解説は再利用する。睡眠の全入力・promptをstdoutや平文debugファイルへ出さない。支出額・店舗・個別F該当日や、入力を含む上流エラー本文も公開ログへ出さない。
 
 StudyはNotionへの保存直後に検索へ反映されないことが本番の読戻しで確認された。保存成功receiptと検証済みのプロパティを同一実行の集計へ引き継ぎ、同じpage/sessionの検索結果と置換する。検索だけを再試行して0に戻したり、同じセッションを二重加算したりしない。検索API自体の失敗は成功として扱わない。
 
