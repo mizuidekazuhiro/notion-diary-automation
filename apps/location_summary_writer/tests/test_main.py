@@ -17,8 +17,10 @@ from main import (
     _build_valid_or_conditions,
     _validate_filter_structure,
     build_gpt_payload,
+    build_summary_property,
     compute_window,
     generate_location_summary,
+    generate_diary_from_gpt,
     load_config,
     match_tasks,
     merge_sessions,
@@ -107,7 +109,7 @@ class MainTests(unittest.TestCase):
         )
         self.assertEqual(text, "朝に自宅で過ごし、夜に予定があった。")
 
-    def test_normalize_diary_output_flattens_bullets_and_limits_to_6_sentences(self):
+    def test_normalize_diary_output_flattens_bullets_without_dropping_late_events(self):
         raw = """2026-02-15
 - 朝は自宅にいた。
 • 昼は外出した。
@@ -115,12 +117,31 @@ class MainTests(unittest.TestCase):
 夜に予定があった。
 その後に移動した。
 最後に自宅に戻った。
-追加文。"""
+翌日00:40〜01:20は別の場所に滞在した。"""
         normalized = normalize_diary_output(raw)
         self.assertEqual(
             normalized,
-            "2026-02-15 朝は自宅にいた。昼は外出した。夕方に帰宅した。夜に予定があった。その後に移動した。最後に自宅に戻った。",
+            "2026-02-15 朝は自宅にいた。昼は外出した。夕方に帰宅した。夜に予定があった。その後に移動した。最後に自宅に戻った。翌日00:40〜01:20は別の場所に滞在した。",
         )
+
+    def test_summary_property_preserves_text_beyond_one_notion_chunk(self):
+        text = "あ" * 1900 + "翌日00:40〜01:20の滞在も記録されている。"
+        for kind in ("rich_text", "title"):
+            with self.subTest(kind=kind):
+                patch_value = build_summary_property({"properties": {"Summary": {"type": kind}}}, "Summary", text)
+                items = patch_value["Summary"][kind]
+                self.assertEqual("".join(item["text"]["content"] for item in items), text)
+                self.assertTrue(all(len(item["text"]["content"]) <= 1900 for item in items))
+
+    def test_generated_location_text_survives_normalization_and_storage_projection(self):
+        raw = "- 10:00に滞在した。\n" + "記録された場所に滞在した。" * 6 + "翌日00:40〜01:20にも滞在した。"
+        with patch("main.build_location_prompts", return_value=("system", "user")), patch("main.chat_completion", return_value=raw) as chat:
+            text = generate_diary_from_gpt({}, "test-key", "test-model", object(), object())
+        saved = build_summary_property({"properties": {"Summary": {"type": "rich_text"}}}, "Summary", text)
+        restored = "".join(item["text"]["content"] for item in saved["Summary"]["rich_text"])
+        self.assertIn("翌日00:40〜01:20", restored)
+        self.assertEqual(restored, text)
+        self.assertEqual(chat.call_count, 1)
 
     def test_build_gpt_payload_filters_very_short_movement(self):
         window_start = datetime.fromisoformat("2026-02-15T05:00:00+09:00")

@@ -27,6 +27,7 @@ NOTION_VERSION = "2022-06-28"
 LOGGER = logging.getLogger(__name__)
 UNKNOWN_WORDS = {"", "unknown", "不明"}
 MIN_MOVEMENT_DURATION_MIN = 5
+NOTION_TEXT_CHUNK_LENGTH = 1900
 
 
 @dataclass
@@ -834,9 +835,7 @@ def normalize_diary_output(content: str) -> str:
     if not merged:
         return ""
 
-    sentence_chunks = re.findall(r".*?[。！？!?]|.+$", merged)
-    trimmed = "".join(sentence_chunks[:6]).strip()
-    return trimmed
+    return merged
 
 
 def generate_location_summary(
@@ -885,10 +884,9 @@ def build_summary_property(page: dict[str, Any], property_name: str, text: str) 
         raise KeyError(f"Daily Log property not found: {property_name}")
 
     ptype = prop.get("type")
-    if ptype == "rich_text":
-        return {property_name: {"rich_text": [{"type": "text", "text": {"content": text[:1900]}}]}}
-    if ptype == "title":
-        return {property_name: {"title": [{"type": "text", "text": {"content": text[:1900]}}]}}
+    if ptype in ("rich_text", "title"):
+        chunks = [text[i:i + NOTION_TEXT_CHUNK_LENGTH] for i in range(0, len(text), NOTION_TEXT_CHUNK_LENGTH)] or [""]
+        return {property_name: {ptype: [{"type": "text", "text": {"content": chunk}} for chunk in chunks]}}
 
     raise TypeError(f"Property {property_name} type is unsupported for text update: {ptype}")
 
