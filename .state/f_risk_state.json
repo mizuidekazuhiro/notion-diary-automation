@@ -3153,8 +3153,31 @@
       "score": 0.4718660875467825,
       "similarity_score": 0.412,
       "usable_f_event_count": 32
+    },
+    "2026-11-07": {
+      "alert_text": null,
+      "data_status": "ok",
+      "f_event_count": 34,
+      "fallback_used": false,
+      "generated_at": "2026-11-07T09:52:16Z",
+      "history_count": 288,
+      "input_hash": "dd2568a5473d6c3538395cec528975e0c65bc2e54d569d06b512f7477707e44a",
+      "matched_patterns": [
+        "直近でストレス信号",
+        "週末バイアス"
+      ],
+      "ml_skipped_reason": null,
+      "no_alert_reason": "case_similarity_medium_but_rule_insufficient",
+      "quality_warnings": [],
+      "reason": "no_alert:case_similarity_medium_but_rule_insufficient",
+      "risk_level": "medium",
+      "risk_matched": false,
+      "same_score_streak": 1,
+      "score": 0.0006474763051090343,
+      "similarity_score": 0.587,
+      "usable_f_event_count": 34
     }
   },
-  "updated_at": "2026-11-06T10:41:36Z",
+  "updated_at": "2026-11-07T09:52:16Z",
   "version": 1
 }
