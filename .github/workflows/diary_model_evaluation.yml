@@ -1,6 +1,13 @@
 name: Diary Models - Read-only Evaluation
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "比較範囲（controlsは合成対照のみ・Notion取得なし）"
+        type: choice
+        required: false
+        default: all
+        options: [all, controls]
   push:
     branches: ["fix/diary-evidence-integrity", "fix/verify-written-study-snapshot"]
 jobs:
@@ -27,7 +34,7 @@ jobs:
           path: artifacts/model_controls
           retention-days: 7
   evaluate:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[diary-eval]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.scope != 'controls') || contains(github.event.head_commit.message, '[diary-eval]')
     runs-on: ubuntu-latest
     permissions:
       contents: read
