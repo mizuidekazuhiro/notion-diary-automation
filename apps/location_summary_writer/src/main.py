@@ -14,8 +14,10 @@ from zoneinfo import ZoneInfo
 import requests
 try:
     from .env import ConfigError, get_env_bool, get_env_int, get_env_str
+    from .text_output import NOTION_TEXT_CHUNK_LENGTH, build_summary_property, normalize_diary_output
 except ImportError:
     from env import ConfigError, get_env_bool, get_env_int, get_env_str
+    from text_output import NOTION_TEXT_CHUNK_LENGTH, build_summary_property, normalize_diary_output
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -27,7 +29,6 @@ NOTION_VERSION = "2022-06-28"
 LOGGER = logging.getLogger(__name__)
 UNKNOWN_WORDS = {"", "unknown", "不明"}
 MIN_MOVEMENT_DURATION_MIN = 5
-NOTION_TEXT_CHUNK_LENGTH = 1900
 
 
 @dataclass
@@ -814,30 +815,6 @@ def generate_diary_from_gpt(
     return content
 
 
-def normalize_diary_output(content: str) -> str:
-    raw = (content or "").strip()
-    if not raw:
-        return ""
-
-    lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    converted_lines: list[str] = []
-    for line in lines:
-        if line.startswith(("- ", "•", "・")):
-            normalized = line[1:].strip() if line[0] in {"•", "・"} else line[2:].strip()
-            if normalized:
-                converted_lines.append(normalized)
-            continue
-        converted_lines.append(line)
-
-    merged = " ".join(converted_lines)
-    merged = re.sub(r"\s+", " ", merged).strip()
-    merged = re.sub(r"([。！？!?])\s+", r"\1", merged)
-    if not merged:
-        return ""
-
-    return merged
-
-
 def generate_location_summary(
     window_start: datetime,
     window_end: datetime,
@@ -876,19 +853,6 @@ def find_daily_log_page(notion: NotionClient, cfg: Config, diary_date: str) -> d
     }
     pages = notion.query_database(cfg.daily_log_db_id, query)
     return pages[0] if pages else None
-
-
-def build_summary_property(page: dict[str, Any], property_name: str, text: str) -> dict[str, Any]:
-    prop = page.get("properties", {}).get(property_name)
-    if not prop:
-        raise KeyError(f"Daily Log property not found: {property_name}")
-
-    ptype = prop.get("type")
-    if ptype in ("rich_text", "title"):
-        chunks = [text[i:i + NOTION_TEXT_CHUNK_LENGTH] for i in range(0, len(text), NOTION_TEXT_CHUNK_LENGTH)] or [""]
-        return {property_name: {ptype: [{"type": "text", "text": {"content": chunk}} for chunk in chunks]}}
-
-    raise TypeError(f"Property {property_name} type is unsupported for text update: {ptype}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1008,8 +972,8 @@ def run(target_date: str | None = None) -> None:
                      "model": cfg.openai_model})
     if "Location Evidence JSON" in page.get("properties", {}):
         encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
-        patch["Location Evidence JSON"] = {"rich_text": [{"type": "text", "text": {"content": encoded[i:i+1900]}}
-                                                        for i in range(0, len(encoded), 1900)]}
+        patch["Location Evidence JSON"] = {"rich_text": [{"type": "text", "text": {"content": encoded[i:i+NOTION_TEXT_CHUNK_LENGTH]}}
+                                                        for i in range(0, len(encoded), NOTION_TEXT_CHUNK_LENGTH)]}
     notion.update_page_properties(page["id"], patch)
     LOGGER.info(
         "daily_log_updated: diary_date=%s page_id=%s property=%s chars=%s",

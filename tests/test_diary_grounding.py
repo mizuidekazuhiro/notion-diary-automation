@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from scripts import diary_generator as diary
 
 
@@ -76,7 +78,6 @@ def test_event_assertion_is_rejected_independently_of_certainty_or_emotion():
     reasons = diary.validate_sentences([{"text": "完了タスクの取引先との協議を行った。",
                                         "sources": ["Done Tasks Detail"], "certainty": "status_change"}], sources)
     assert reasons == ["unsupported_event"]
-import pytest
 
 
 @pytest.mark.parametrize("claim", [
