@@ -3293,9 +3293,9 @@
       "data_status": "ok",
       "f_event_count": 34,
       "fallback_used": false,
-      "generated_at": "2026-11-12T23:25:23Z",
+      "generated_at": "2026-11-13T10:48:24Z",
       "history_count": 294,
-      "input_hash": "3b34c548058b791c426bb11945d7caaa4e582450bc88ee0acd545f6c9e376083",
+      "input_hash": "c7c581e3da69e7b797df12d9736b1326cd2fff7268d20eda070fce344b4b309c",
       "matched_patterns": [
         "直近でストレス信号"
       ],
@@ -3306,11 +3306,11 @@
       "risk_level": "medium",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.011171463922739492,
+      "score": 0.011171808214652714,
       "similarity_score": 0.598,
       "usable_f_event_count": 34
     }
   },
-  "updated_at": "2026-11-12T23:25:24Z",
+  "updated_at": "2026-11-13T10:48:24Z",
   "version": 1
 }
