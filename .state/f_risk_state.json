@@ -3315,9 +3315,9 @@
       "data_status": "ok",
       "f_event_count": 34,
       "fallback_used": false,
-      "generated_at": "2026-11-14T10:02:26Z",
+      "generated_at": "2026-11-14T10:04:51Z",
       "history_count": 295,
-      "input_hash": "44fc1feb589617674ec088ba364f9b6740b8758a05a2b4ff5d9568475c0bd7d9",
+      "input_hash": "495c3ebc42b052fe964d2560a95972f18f33a0b243fa56a6e4ffb1dcabcb0eec",
       "matched_patterns": [
         "直近でストレス信号",
         "週末バイアス"
@@ -3329,11 +3329,11 @@
       "risk_level": "medium",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.0010422453073703542,
+      "score": 0.0010436267939271222,
       "similarity_score": 0.611,
       "usable_f_event_count": 34
     }
   },
-  "updated_at": "2026-11-14T10:02:27Z",
+  "updated_at": "2026-11-14T10:04:51Z",
   "version": 1
 }
