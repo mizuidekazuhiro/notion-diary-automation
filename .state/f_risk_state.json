@@ -3338,7 +3338,7 @@
       "data_status": "degraded",
       "f_event_count": 34,
       "fallback_used": false,
-      "generated_at": "2026-11-15T10:37:57Z",
+      "generated_at": "2026-11-15T10:40:19Z",
       "history_count": 296,
       "input_hash": "e19adbfbc5c9cec3e086d7c22af53ea6e38f8fbd52f77ed6d8f197f2a01e2605",
       "matched_patterns": [
@@ -3352,11 +3352,11 @@
       "risk_level": "medium",
       "risk_matched": false,
       "same_score_streak": 1,
-      "score": 0.01152246130238322,
+      "score": 0.011521286261911103,
       "similarity_score": 0.589,
       "usable_f_event_count": 34
     }
   },
-  "updated_at": "2026-11-15T10:37:57Z",
+  "updated_at": "2026-11-15T10:40:20Z",
   "version": 1
 }
