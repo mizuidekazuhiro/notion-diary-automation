@@ -1,6 +1,8 @@
 import {
   create_page,
+  getNotionErrorDetails,
   NotionApiError,
+  notionFetch,
   queryDatabaseAll,
   update_page_property,
 } from "../infrastructure/notion/client";
@@ -38,6 +40,7 @@ type AnkiDailyPayload = {
   last_review_at?: unknown;
   review_count?: unknown;
   max_time_review_count?: unknown;
+  session_ranges?: unknown;
   source?: unknown;
 };
 
@@ -66,6 +69,7 @@ export type ParsedAnkiDaily = {
   reviewCount: number;
   maxTimeReviewCount: number;
   source: typeof ANKI_REVLOG_SOURCE;
+  sessionRanges?: { startedAtMs: number; endedAtMs: number }[];
 };
 
 export type StudyTotals = {
@@ -208,6 +212,8 @@ export function parseAnkiDailyPayload(payload: AnkiDailyPayload): ParsedAnkiDail
   const firstReview = optionalIsoDateTime(payload.first_review_at, "first_review_at");
   const lastReview = optionalIsoDateTime(payload.last_review_at, "last_review_at");
   const source = optionalString(payload.source, ANKI_REVLOG_SOURCE, 100);
+  const windowStart = Date.parse(`${targetDate}T04:00:00+09:00`);
+  const windowEnd = windowStart + 24 * 60 * 60 * 1000;
 
   if (source !== ANKI_REVLOG_SOURCE) throw new Error(`source must be ${ANKI_REVLOG_SOURCE}`);
   if (maxTimeReviewCount > reviewCount) {
@@ -231,13 +237,36 @@ export function parseAnkiDailyPayload(payload: AnkiDailyPayload): ParsedAnkiDail
     if (firstReview.epochMs > lastReview.epochMs) {
       throw new Error("last_review_at must not be before first_review_at");
     }
-    const windowStart = Date.parse(`${targetDate}T04:00:00+09:00`);
-    const windowEnd = windowStart + 24 * 60 * 60 * 1000;
     if (
       firstReview.epochMs < windowStart || firstReview.epochMs >= windowEnd
       || lastReview.epochMs < windowStart || lastReview.epochMs >= windowEnd
     ) {
       throw new Error("review timestamps must be inside the target date's 04:00 JST study window");
+    }
+  }
+
+  let sessionRanges: ParsedAnkiDaily["sessionRanges"];
+  if (payload.session_ranges !== undefined) {
+    if (!Array.isArray(payload.session_ranges) || payload.session_ranges.length !== studySessions) {
+      throw new Error("session_ranges must contain one range per study session");
+    }
+    let previousEnd = windowStart;
+    sessionRanges = payload.session_ranges.map((range) => {
+      if (!range || typeof range !== "object") throw new Error("invalid session range");
+      const startedAtMs = parseIsoDateTime(range.started_at, "session_ranges.started_at").epochMs;
+      const endedAtMs = parseIsoDateTime(range.ended_at, "session_ranges.ended_at").epochMs;
+      if (startedAtMs < previousEnd || endedAtMs < startedAtMs || endedAtMs >= windowEnd) {
+        throw new Error("session ranges must be ordered inside the 04:00 JST study window");
+      }
+      previousEnd = endedAtMs;
+      return { startedAtMs, endedAtMs };
+    });
+    const first = sessionRanges[0];
+    if (first && (
+      !firstReview || firstReview.epochMs < first.startedAtMs || firstReview.epochMs > first.endedAtMs
+      || sessionRanges.at(-1)?.endedAtMs !== lastReview?.epochMs
+    )) {
+      throw new Error("session ranges must cover the first and last reviews");
     }
   }
 
@@ -251,6 +280,7 @@ export function parseAnkiDailyPayload(payload: AnkiDailyPayload): ParsedAnkiDail
     reviewCount,
     maxTimeReviewCount,
     source: ANKI_REVLOG_SOURCE,
+    ...(sessionRanges ? { sessionRanges } : {}),
   };
 }
 
@@ -436,6 +466,69 @@ async function reconcileTargetDate(
   return { totals, dailyLog };
 }
 
+const ANKI_DIARY_HEADING = "Anki学習記録";
+const ANKI_DIARY_PREFIX = `${ANKI_DIARY_HEADING}（自動）\n`;
+
+async function syncAnkiDiaryBody(
+  env: StudySessionEnv,
+  pageId: string,
+  aggregate: ParsedAnkiDaily,
+  sessionRanges: NonNullable<ParsedAnkiDaily["sessionRanges"]>,
+): Promise<void> {
+  const clock = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  });
+  const ranges = sessionRanges.map(({ startedAtMs, endedAtMs }) => {
+    const startDay = formatJstDate(startedAtMs);
+    const startTime = clock.format(startedAtMs);
+    const start = `${startDay === aggregate.targetDate ? "" : "翌"}${startTime}`;
+    const end = clock.format(endedAtMs);
+    if (startDay !== formatJstDate(endedAtMs)) return `${start}〜翌${end}`;
+    return startTime === end ? `${start}ごろ` : `${start}〜${end}`;
+  });
+  const seconds = Math.round(aggregate.studyMinutes * 60);
+  const hours = Math.floor(seconds / 3600);
+  const duration = `${hours ? `${hours}時間` : ""}${Math.floor(seconds / 60) % 60}分${seconds % 60}秒`;
+  const summary = `${ANKI_DIARY_PREFIX}合計 ${duration}（${aggregate.reviewCount}回答）`
+    + (ranges.length ? `\n学習した時間帯（日本時間、目安）\n${ranges.join("、")}` : "");
+  const paragraph = {
+    rich_text: (summary.match(/[\s\S]{1,1800}/gu) ?? []).map((content) => ({
+      type: "text", text: { content },
+    })),
+  };
+
+  const childrenPath = `/blocks/${pageId}/children`;
+  let cursor: string | null = null;
+  do {
+    const path = cursor ? `${childrenPath}?start_cursor=${encodeURIComponent(cursor)}` : childrenPath;
+    const response = await notionFetch(env, path);
+    if (!response.ok) throw new NotionApiError(await getNotionErrorDetails(response));
+    const page = await response.json() as { results: Record<string, any>[]; next_cursor: string | null };
+    for (const block of page.results) {
+      const richText = block[block.type]?.rich_text;
+      if (!Array.isArray(richText)) continue;
+      const content = richText.map((part) => part.plain_text ?? part.text?.content ?? "").join("");
+      if (block.type.startsWith("heading_") && content === ANKI_DIARY_HEADING) return;
+      if (block.type === "paragraph" && content.startsWith(ANKI_DIARY_PREFIX)) {
+        if (content === summary) return;
+        const updated = await notionFetch(env, `/blocks/${block.id}`, {
+          method: "PATCH", body: JSON.stringify({ paragraph }),
+        });
+        if (!updated.ok) throw new NotionApiError(await getNotionErrorDetails(updated));
+        return;
+      }
+    }
+    cursor = page.next_cursor;
+  } while (cursor);
+
+  if (aggregate.reviewCount === 0) return;
+  const appended = await notionFetch(env, childrenPath, {
+    method: "PATCH",
+    body: JSON.stringify({ children: [{ object: "block", type: "paragraph", paragraph }] }),
+  });
+  if (!appended.ok) throw new NotionApiError(await getNotionErrorDetails(appended));
+}
+
 export async function handleStudyAnkiDaily(request: Request, env: StudySessionEnv): Promise<Response> {
   if (request.method !== "POST") return jsonResponse({ error: "use POST /execute/api/study/anki-daily" }, 405);
   const authError = authorize(request, env);
@@ -475,6 +568,9 @@ export async function handleStudyAnkiDaily(request: Request, env: StudySessionEn
     const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, aggregate.targetDate, [
       { ...page, id: page?.id ?? existing?.id, properties: aggregateProperties },
     ]);
+    if (dailyLog.pageId && aggregate.sessionRanges) {
+      await syncAnkiDiaryBody(env, dailyLog.pageId, aggregate, aggregate.sessionRanges);
+    }
     return jsonResponse({
       ok: true,
       created: !existing,

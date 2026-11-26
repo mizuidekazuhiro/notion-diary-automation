@@ -52,6 +52,7 @@ class DailyAggregate:
     last_review_at: str | None
     review_count: int
     max_time_review_count: int
+    session_ranges: tuple[tuple[str, str], ...]
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -63,6 +64,10 @@ class DailyAggregate:
             "review_count": self.review_count,
             "max_time_review_count": self.max_time_review_count,
             "source": "anki_revlog",
+            "session_ranges": [
+                {"started_at": started_at, "ended_at": ended_at}
+                for started_at, ended_at in self.session_ranges
+            ],
         }
 
 
@@ -422,31 +427,33 @@ def aggregate_reviews(
         key=lambda item: item.reviewed_at_ms,
     )
     session_gap_ms = session_gap_minutes * 60 * 1000
-    sessions = 0
+    session_ranges_ms: list[tuple[int, int]] = []
     previous_ms: int | None = None
     for review in selected:
-        if previous_ms is None or review.reviewed_at_ms - previous_ms >= session_gap_ms:
-            sessions += 1
-        previous_ms = review.reviewed_at_ms
+        answered_ms = review.reviewed_at_ms
+        if previous_ms is None or answered_ms - previous_ms >= session_gap_ms:
+            started_ms = max(start_ms, previous_ms or start_ms, answered_ms - review.duration_ms)
+            session_ranges_ms.append((started_ms, answered_ms))
+        else:
+            started_ms, _ = session_ranges_ms[-1]
+            session_ranges_ms[-1] = (started_ms, answered_ms)
+        previous_ms = answered_ms
     max_time_count = sum(
         review.duration_ms >= max_answer_seconds * 1000 for review in selected
     )
 
-    def as_iso(review: Review | None) -> str | None:
-        if review is None:
-            return None
-        return datetime.fromtimestamp(review.reviewed_at_ms / 1000, tz=JST).isoformat(
-            timespec="milliseconds"
-        )
+    def as_iso(epoch_ms: int) -> str:
+        return datetime.fromtimestamp(epoch_ms / 1000, tz=JST).isoformat(timespec="milliseconds")
 
     return DailyAggregate(
         target_date=target_date.isoformat(),
         study_minutes=round(sum(review.duration_ms for review in selected) / 60_000, 2),
-        study_sessions=sessions,
-        first_review_at=as_iso(selected[0] if selected else None),
-        last_review_at=as_iso(selected[-1] if selected else None),
+        study_sessions=len(session_ranges_ms),
+        first_review_at=as_iso(selected[0].reviewed_at_ms) if selected else None,
+        last_review_at=as_iso(selected[-1].reviewed_at_ms) if selected else None,
         review_count=len(selected),
         max_time_review_count=max_time_count,
+        session_ranges=tuple((as_iso(start), as_iso(end)) for start, end in session_ranges_ms),
     )
 
 

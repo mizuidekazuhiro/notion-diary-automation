@@ -38,6 +38,16 @@ def test_revlog_time_sum_ten_minute_sessions_and_max_count() -> None:
     assert result.max_time_review_count == 1
     assert result.first_review_at == "2026-08-10T04:00:00.000+09:00"
     assert result.last_review_at == "2026-08-10T04:19:59.000+09:00"
+    assert result.to_payload()["session_ranges"] == [
+        {
+            "started_at": "2026-08-10T04:00:00.000+09:00",
+            "ended_at": "2026-08-10T04:09:59.000+09:00",
+        },
+        {
+            "started_at": "2026-08-10T04:15:58.000+09:00",
+            "ended_at": "2026-08-10T04:19:59.000+09:00",
+        },
+    ]
 
 
 def test_empty_day_payload_is_safe_for_authoritative_zero() -> None:
@@ -51,6 +61,7 @@ def test_empty_day_payload_is_safe_for_authoritative_zero() -> None:
         "review_count": 0,
         "max_time_review_count": 0,
         "source": "anki_revlog",
+        "session_ranges": [],
     }
 
 
