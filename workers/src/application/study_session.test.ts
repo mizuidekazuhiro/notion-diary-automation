@@ -173,8 +173,8 @@ let indexLag = false;
 let lastDailyPatch: any = null;
 let newerIndexed = false;
 let duplicateIndexed = false;
-let diaryBlocks: any[] = [{ id: "notes", type: "paragraph", paragraph: text("手書きの日記") }];
-let diaryWrites = 0;
+const ankiBlocks: any[] = [{ id: "notes", type: "paragraph", paragraph: text("既存のAnkiメモ") }];
+let ankiBlockWrites = 0;
 globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -205,17 +205,17 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     lastDailyPatch = body;
     return Response.json({ id: "daily-page" });
   }
-  if (url.endsWith("/blocks/daily-page/children")) {
+  if (url.endsWith("/blocks/pc-anki/children")) {
     if (init?.method === "PATCH") {
-      diaryWrites += 1;
-      diaryBlocks.push({ ...body.children[0], id: "anki-note" });
+      ankiBlockWrites += 1;
+      ankiBlocks.push({ ...body.children[0], id: "anki-note" });
     }
-    return Response.json({ results: diaryBlocks, has_more: false });
+    return Response.json({ results: ankiBlocks, has_more: false });
   }
   if (url.endsWith("/blocks/anki-note") && init?.method === "PATCH") {
-    diaryWrites += 1;
-    diaryBlocks[1].paragraph = body.paragraph;
-    return Response.json(diaryBlocks[1]);
+    ankiBlockWrites += 1;
+    ankiBlocks[1].paragraph = body.paragraph;
+    return Response.json(ankiBlocks[1]);
   }
   return Response.json({ error: "unexpected mock request", url, body }, { status: 500 });
 };
@@ -275,7 +275,7 @@ assert.equal(missingDailyResult.daily_log_updated, false);
 assert.equal(createCount, 1);
 assert.equal(aggregateUpdateCount, 2);
 assert.equal(dailyUpdateCount, 4);
-assert.equal(diaryWrites, 0);
+assert.equal(ankiBlockWrites, 0);
 
 const timedBody = {
   ...requestBody,
@@ -286,33 +286,32 @@ const timedBody = {
     { started_at: "2026-08-11T00:13:56+09:00", ended_at: "2026-08-11T00:14:15+09:00" },
   ],
 };
-async function postAnkiDiary(body: object, dailyDb = "daily") {
+async function postAnkiRecord(body: object, dailyDb = "daily") {
   return handleStudyAnkiDaily(new Request("https://worker.test/execute/api/study/anki-daily", {
     method: "POST",
     headers: { authorization: "Bearer worker", "content-type": "application/json" },
     body: JSON.stringify(body),
   }), { ...env, DAILY_LOG_DB_ID: dailyDb });
 }
-assert.equal((await postAnkiDiary({ ...timedBody, session_ranges: [] })).status, 400);
-assert.equal((await postAnkiDiary(timedBody, "missing-daily")).status, 200);
-assert.equal(diaryWrites, 0);
-assert.equal((await postAnkiDiary(timedBody)).status, 200);
-assert.equal((await postAnkiDiary(timedBody)).status, 200);
-assert.equal(diaryWrites, 1);
-assert.equal(diaryBlocks.length, 2);
-assert.equal(diaryBlocks[0].paragraph.rich_text[0].plain_text, "手書きの日記");
-const entry = () => diaryBlocks[1].paragraph.rich_text.map((part: any) => part.text.content).join("");
+assert.equal((await postAnkiRecord({ ...timedBody, session_ranges: [] })).status, 400);
+aggregateExists = false;
+const recordWithoutDaily = await postAnkiRecord(timedBody, "missing-daily");
+assert.equal(recordWithoutDaily.status, 200);
+const recordWithoutDailyResult = await recordWithoutDaily.json() as any;
+assert.equal(recordWithoutDailyResult.created, true);
+assert.equal(recordWithoutDailyResult.daily_log_updated, false);
+assert.equal(ankiBlockWrites, 1, "write the new Anki record body even if the diary page does not exist");
+assert.equal((await postAnkiRecord(timedBody)).status, 200);
+assert.equal(ankiBlockWrites, 1);
+assert.equal(ankiBlocks.length, 2);
+assert.equal(ankiBlocks[0].paragraph.rich_text[0].plain_text, "既存のAnkiメモ");
+const entry = () => ankiBlocks[1].paragraph.rich_text.map((part: any) => part.text.content).join("");
 assert.match(entry(), /1時間30分10秒/);
 assert.match(entry(), /04:00〜04:21、翌00:13〜00:14/);
-assert.equal((await postAnkiDiary({ ...timedBody, study_minutes: 91 })).status, 200);
-assert.equal(diaryWrites, 2);
-assert.equal(diaryBlocks.length, 2);
+assert.equal((await postAnkiRecord({ ...timedBody, study_minutes: 91 })).status, 200);
+assert.equal(ankiBlockWrites, 2);
+assert.equal(ankiBlocks.length, 2);
 assert.match(entry(), /1時間31分0秒/);
-
-diaryBlocks = [{ id: "manual-heading", type: "heading_2", heading_2: text("Anki学習記録") }];
-assert.equal((await postAnkiDiary(timedBody)).status, 200);
-assert.equal(diaryWrites, 2);
-assert.equal(diaryBlocks.length, 1);
 globalThis.fetch = originalFetch;
 
 console.log("study_session.test.ts: ok");
