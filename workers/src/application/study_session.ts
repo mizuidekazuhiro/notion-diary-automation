@@ -466,10 +466,9 @@ async function reconcileTargetDate(
   return { totals, dailyLog };
 }
 
-const ANKI_DIARY_HEADING = "Anki学習記録";
-const ANKI_DIARY_PREFIX = `${ANKI_DIARY_HEADING}（自動）\n`;
+const ANKI_RECORD_PREFIX = "Anki学習記録（自動）\n";
 
-async function syncAnkiDiaryBody(
+async function syncAnkiRecordBody(
   env: StudySessionEnv,
   pageId: string,
   aggregate: ParsedAnkiDaily,
@@ -489,7 +488,7 @@ async function syncAnkiDiaryBody(
   const seconds = Math.round(aggregate.studyMinutes * 60);
   const hours = Math.floor(seconds / 3600);
   const duration = `${hours ? `${hours}時間` : ""}${Math.floor(seconds / 60) % 60}分${seconds % 60}秒`;
-  const summary = `${ANKI_DIARY_PREFIX}合計 ${duration}（${aggregate.reviewCount}回答）`
+  const summary = `${ANKI_RECORD_PREFIX}合計 ${duration}（${aggregate.reviewCount}回答）`
     + (ranges.length ? `\n学習した時間帯（日本時間、目安）\n${ranges.join("、")}` : "");
   const paragraph = {
     rich_text: (summary.match(/[\s\S]{1,1800}/gu) ?? []).map((content) => ({
@@ -508,8 +507,7 @@ async function syncAnkiDiaryBody(
       const richText = block[block.type]?.rich_text;
       if (!Array.isArray(richText)) continue;
       const content = richText.map((part) => part.plain_text ?? part.text?.content ?? "").join("");
-      if (block.type.startsWith("heading_") && content === ANKI_DIARY_HEADING) return;
-      if (block.type === "paragraph" && content.startsWith(ANKI_DIARY_PREFIX)) {
+      if (block.type === "paragraph" && content.startsWith(ANKI_RECORD_PREFIX)) {
         if (content === summary) return;
         const updated = await notionFetch(env, `/blocks/${block.id}`, {
           method: "PATCH", body: JSON.stringify({ paragraph }),
@@ -565,18 +563,19 @@ export async function handleStudyAnkiDaily(request: Request, env: StudySessionEn
     } else {
       page = await create_page(env, databaseId, aggregateProperties);
     }
+    const sessionPageId = page?.id ?? existing?.id ?? null;
     const { totals, dailyLog } = await reconcileTargetDate(env, databaseId, aggregate.targetDate, [
-      { ...page, id: page?.id ?? existing?.id, properties: aggregateProperties },
+      { ...page, id: sessionPageId, properties: aggregateProperties },
     ]);
-    if (dailyLog.pageId && aggregate.sessionRanges) {
-      await syncAnkiDiaryBody(env, dailyLog.pageId, aggregate, aggregate.sessionRanges);
+    if (sessionPageId && aggregate.sessionRanges) {
+      await syncAnkiRecordBody(env, sessionPageId, aggregate, aggregate.sessionRanges);
     }
     return jsonResponse({
       ok: true,
       created: !existing,
       updated: Boolean(existing),
       session_id: aggregate.sessionId,
-      session_page_id: page?.id ?? existing?.id ?? null,
+      session_page_id: sessionPageId,
       session_page_url: page?.url ?? existing?.url ?? null,
       target_date: aggregate.targetDate,
       anki: {
